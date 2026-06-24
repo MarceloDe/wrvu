@@ -10,6 +10,7 @@ const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/health",
+  "/api/setup", // token-gated DB setup (checks its own x-setup-token)
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
