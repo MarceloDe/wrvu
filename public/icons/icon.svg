@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="NeuroRVU">
+  <defs>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a212b"/>
+      <stop offset="1" stop-color="#0b0f14"/>
+    </linearGradient>
+    <linearGradient id="teal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2dd4bf"/>
+      <stop offset="1" stop-color="#0d9488"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#metal)"/>
+  <rect x="8" y="8" width="496" height="496" rx="104" fill="none" stroke="#94a3b8" stroke-opacity="0.25" stroke-width="3"/>
+  <g fill="none" stroke="url(#teal)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M196 150c-40 0-66 30-66 64 0 14 5 26 13 35-12 10-19 25-19 41 0 34 28 60 64 60h8V150z"/>
+    <path d="M316 150c40 0 66 30 66 64 0 14-5 26-13 35 12 10 19 25 19 41 0 34-28 60-64 60h-8V150z"/>
+    <line x1="256" y1="150" x2="256" y2="350"/>
+  </g>
+</svg>

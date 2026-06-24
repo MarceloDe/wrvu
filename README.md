@@ -1,86 +1,72 @@
-# NeuroRVU — Vercel deployment
+# NeuroRVU
 
-A Next.js (App Router) version of the NeuroRVU artifact with a real database
-(Vercel KV) and a secure server-side Anthropic proxy. The AI features —
-screenshot → study extraction (vision) and live RVU lookup (web search) — are
-preserved; the API key now lives server-side instead of in the browser.
+A multi-user, invite-only Next.js (App Router) PWA for tracking neuroradiology
+productivity against CMS-2026 wRVU benchmarks. AI screenshot/camera OCR
+extraction and live wRVU lookup are preserved; auth, per-user data isolation, and
+a real relational database are layered on top.
 
 ## Architecture
 
 ```
-Browser (Next.js client, components/NeuroRVU.jsx)
-   │
-   ├─ POST /api/claude  ──►  Anthropic Messages API   (key = ANTHROPIC_API_KEY, server-only)
-   │                         vision + web_search tool pass straight through
-   │
-   └─ GET/POST/DELETE /api/store  ──►  Upstash Redis (Vercel Marketplace)
-                                       keys: neurorvu:me:nrv_log | nrv_baseline | nrv_settings
+Public:
+  /                       Landing page (mobile-first, metal design, PWA-installable)
+  /sign-in /sign-up       Clerk auth (invite-only)
+
+Protected (Clerk middleware → middleware.js):
+  /app                    NeuroRVU dashboard (camera OCR, timeline, benchmarks)
+  /admin                  In-app user management (admins only)
+  /api/claude             Anthropic proxy  (server-only ANTHROPIC_API_KEY, auth-gated)
+  /api/store              Per-user key/value persistence (Neon)  → scoped to userId
+  /api/rvu-tables         wRVU fee-schedule tables (system + user/company)
+
+Auth:   Clerk        (Vercel Marketplace integration)
+Data:   Neon Postgres (Vercel Marketplace integration) via Drizzle ORM
+AI:     Anthropic Messages API (vision + web_search)
 ```
 
-The client never sees the Anthropic key, and your data persists in KV — so it
-loads the same on desktop, web, and phone (same deployment, same account).
+### Data model (`lib/db/schema.js`)
+- `users` — mirror of Clerk users + app role.
+- `user_kv` — per-user blobs backing `/api/store` (`nrv_log`, `nrv_baseline`, `nrv_settings`).
+- `rvu_tables` / `rvu_codes` — **many** wRVU fee schedules. The seeded CMS-2026
+  neuro table is `is_system = true`; future **company uploads** are the same
+  shape (`owner_id` + `source = 'company-upload'`).
 
-## Deploy — two paths
+## One-time setup (paid, plug-and-play via Vercel Marketplace)
 
-### A. Git-linked (recommended "linked application" — auto-deploys on push)
-
-1. Create a new GitHub repo and push this folder:
+1. **Clerk** — Vercel project → Integrations → add **Clerk** → connect to this
+   project. Injects `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` + `CLERK_SECRET_KEY`.
+   In the Clerk dashboard: **Restrictions → Allowlist / "Sign-ups via invitation
+   only"** to enforce invite-only access.
+2. **Neon** — Vercel project → Integrations → add **Neon** → connect. Injects
+   `DATABASE_URL`.
+3. Add env vars: `ANTHROPIC_API_KEY` (already set) and `ADMIN_EMAILS`
+   (comma-separated admin emails, e.g. `mocfelix@gmail.com`).
+4. Push the schema and seed the CMS-2026 table:
    ```bash
-   git init && git add . && git commit -m "NeuroRVU"
-   git branch -M main
-   git remote add origin git@github.com:<you>/neurorvu.git
-   git push -u origin main
+   vercel env pull .env.local
+   npm run db:push      # create tables in Neon
+   npm run db:seed      # load the CMS-2026 neuro wRVU values
    ```
-2. In the Vercel dashboard → **Add New → Project** → import the repo.
-   Framework preset auto-detects **Next.js**. Click Deploy.
-3. **Add the database:** Project → **Storage** → **Create Database** →
-   **Upstash for Redis** → **Connect to project**. This auto-injects
-   `KV_REST_API_URL` and `KV_REST_API_TOKEN`.
-4. **Add the key:** Project → **Settings → Environment Variables** →
-   add `ANTHROPIC_API_KEY` (and optionally `ANTHROPIC_MODEL`). Apply to
-   Production, Preview, Development.
-5. **Redeploy** (Deployments → ⋯ → Redeploy) so the new env vars take effect.
-
-Every future `git push` now auto-builds and deploys. That's the "linked app."
-
-### B. CLI (fastest one-off)
-
-```bash
-npm i -g vercel
-vercel            # links/creates the project, first deploy
-# then in the dashboard: add KV store (step 3) + ANTHROPIC_API_KEY (step 4)
-vercel --prod     # production deploy
-```
+5. Redeploy. Invite users from `/admin` (or the Clerk dashboard).
 
 ## Local development
 
 ```bash
 npm install
-cp .env.example .env.local      # fill in ANTHROPIC_API_KEY
-# pull the KV creds Vercel created:
-vercel env pull .env.local
-npm run dev                     # http://localhost:3000
+vercel env pull .env.local     # pulls Clerk + Neon + Anthropic vars
+npm run db:push && npm run db:seed
+npm run dev                    # http://localhost:3000
 ```
 
-## Notes & limits
-
-- **Function timeout / payload:** vision + web search can be slow; `maxDuration`
-  is set to 60s (Pro plan recommended). Vercel caps request bodies at ~4.5 MB,
-  so very large multi-screenshot uploads can fail — downscale images client-side
-  if you hit this.
-- **Model id:** if `/api/claude` returns a 404 model error, the model string
-  changed — set `ANTHROPIC_MODEL` to the current id from your Anthropic console.
-- **Auth / multi-user:** this ships single-user (KV namespace `neurorvu:me:`).
-  To make it private/multi-user, add NextAuth or Clerk and replace `USER` in
-  `app/api/store/route.js` with the signed-in user id. Or just enable Vercel
-  **Deployment Protection** (Settings → Deployment Protection) for a quick
-  password gate.
-- **Want Firestore instead of KV?** Since you already run Firebase, you can
-  swap `app/api/store/route.js` to read/write a Firestore collection and drop
-  `@vercel/kv` — same route contract, no client changes.
-
-## Cost
-
-- Vercel Hobby is free for personal projects; KV (Upstash) has a free tier.
-- Anthropic API usage is billed per token to your Anthropic account — vision
-  extraction and web-search lookups are the main drivers.
+## Notes
+- **PWA**: installable (`public/manifest.webmanifest` + `public/sw.js`); the
+  dashboard has a **Take photo** button (`capture="environment"`) for phone OCR.
+- **Admin**: `/admin` lists users, sends Clerk invitations, toggles admin role,
+  and removes users. Access is granted by `ADMIN_EMAILS` or Clerk
+  `publicMetadata.role = "admin"`.
+- **Scale**: built for ~10 users; Clerk + Neon free/paid tiers and Vercel Fluid
+  Compute handle this comfortably. Vercel **Pro** is recommended for commercial
+  use and the 60s function timeout used by `/api/claude`.
+- **Design**: the landing page is a self-contained component, ready to push to a
+  claude.ai/design project via `/design-sync` for visual iteration.
+```

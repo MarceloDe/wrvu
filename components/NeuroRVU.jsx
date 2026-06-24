@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
-  Brain, Activity, Upload, Search, Settings as SettingsIcon, Plus, Trash2,
+  Brain, Activity, Upload, Camera, Search, Settings as SettingsIcon, Plus, Trash2,
   TrendingUp, TrendingDown, Loader2, Sparkles, X, FileImage, Calendar,
   Target, DollarSign, Database, Zap, Check, Building2, Layers, AlertTriangle,
   LineChart as LineIcon, CheckCircle2, Info, RotateCcw
@@ -552,7 +552,12 @@ function Tracker({ log, updateLog, settings }) {
             <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFiles} className="hidden" id="shot" />
             <label htmlFor="shot" className="cursor-pointer flex flex-col items-center justify-center gap-2 h-32 rounded-xl border-2 border-dashed border-slate-300 hover:border-teal-400 hover:bg-teal-50/40 transition-colors">
               {busy ? <><Loader2 className="w-5 h-5 animate-spin text-teal-600" /><span className="text-sm text-slate-500">{status}</span></>
-                : <><Upload className="w-5 h-5 text-slate-400" /><span className="text-sm text-slate-600 font-medium">Drop daily productivity screenshots</span><span className="text-[11px] text-slate-400">AI extracts studies, wRVU & detects site (default: {curInst})</span></>}
+                : <><Upload className="w-5 h-5 text-slate-400" /><span className="text-sm text-slate-600 font-medium">Drop or upload daily productivity screenshots</span><span className="text-[11px] text-slate-400">AI extracts studies, wRVU & detects site (default: {curInst})</span></>}
+            </label>
+            {/* Direct camera capture — on phones this opens the rear camera straight into OCR. */}
+            <input type="file" accept="image/*" capture="environment" multiple onChange={handleFiles} className="hidden" id="cam" />
+            <label htmlFor="cam" className="mt-2 cursor-pointer flex items-center justify-center gap-2 h-10 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
+              <Camera className="w-4 h-4" /> Take photo
             </label>
           </div>
           <ManualAdd onAdd={addManual} />

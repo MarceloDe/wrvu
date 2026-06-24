@@ -1,38 +1,44 @@
-// Persistent key-value store backed by Upstash Redis (Vercel Marketplace).
-// Replaces the artifact's window.storage with the same get/set/delete shape.
-//
-// When you add the "Upstash for Redis" integration in the Vercel dashboard and
-// connect it to this project, it injects KV_REST_API_URL and KV_REST_API_TOKEN.
-// Redis.fromEnv() reads those automatically.
-//
-// MULTI-USER: replace USER with the signed-in user id (NextAuth/Clerk) to scope
-// keys per user, e.g. `neurorvu:<userId>:<key>`.
+// Per-user persistence backed by Neon Postgres (user_kv table).
+// Keeps the exact get/set/delete contract the dashboard already uses, but every
+// read/write is scoped to the signed-in Clerk user id — so each user has a fully
+// isolated "instance" of their timeline / baseline / settings.
 
-import { Redis } from "@upstash/redis";
+import { auth } from "@clerk/nextjs/server";
+import { and, eq } from "drizzle-orm";
+import { db, userKv } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-const redis = Redis.fromEnv();
-const USER = "me"; // swap for a real user id once you add auth
-const NS = (k) => `neurorvu:${USER}:${k}`;
-
 export async function GET(req) {
+  const { userId } = await auth();
+  if (!userId) return Response.json({ error: "unauthorized", value: null }, { status: 401 });
+  const key = new URL(req.url).searchParams.get("key");
+  if (!key) return Response.json({ error: "key required" }, { status: 400 });
   try {
-    const { searchParams } = new URL(req.url);
-    const key = searchParams.get("key");
-    if (!key) return Response.json({ error: "key required" }, { status: 400 });
-    const value = await redis.get(NS(key)); // returns parsed JSON or null
-    return Response.json({ key, value: value ?? null });
+    const rows = await db
+      .select({ value: userKv.value })
+      .from(userKv)
+      .where(and(eq(userKv.userId, userId), eq(userKv.key, key)))
+      .limit(1);
+    return Response.json({ key, value: rows[0]?.value ?? null });
   } catch (e) {
     return Response.json({ error: String(e), value: null }, { status: 200 });
   }
 }
 
 export async function POST(req) {
+  const { userId } = await auth();
+  if (!userId) return Response.json({ error: "unauthorized" }, { status: 401 });
   try {
     const { key, value } = await req.json();
     if (!key) return Response.json({ error: "key required" }, { status: 400 });
-    await redis.set(NS(key), value); // stores JSON natively
+    await db
+      .insert(userKv)
+      .values({ userId, key, value })
+      .onConflictDoUpdate({
+        target: [userKv.userId, userKv.key],
+        set: { value, updatedAt: new Date() },
+      });
     return Response.json({ key, ok: true });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
@@ -40,11 +46,12 @@ export async function POST(req) {
 }
 
 export async function DELETE(req) {
+  const { userId } = await auth();
+  if (!userId) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const key = new URL(req.url).searchParams.get("key");
+  if (!key) return Response.json({ error: "key required" }, { status: 400 });
   try {
-    const { searchParams } = new URL(req.url);
-    const key = searchParams.get("key");
-    if (!key) return Response.json({ error: "key required" }, { status: 400 });
-    await redis.del(NS(key));
+    await db.delete(userKv).where(and(eq(userKv.userId, userId), eq(userKv.key, key)));
     return Response.json({ key, deleted: true });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });

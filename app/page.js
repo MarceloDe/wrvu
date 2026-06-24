@@ -1,5 +1,10 @@
-import NeuroRVU from "../components/NeuroRVU";
+import { auth } from "@clerk/nextjs/server";
+import Landing from "../components/Landing";
+import { adminEmails } from "../lib/auth";
 
-export default function Page() {
-  return <NeuroRVU />;
+// Public marketing landing page.
+export default async function Page() {
+  const { userId } = await auth();
+  const admin = adminEmails()[0] || "";
+  return <Landing isSignedIn={Boolean(userId)} adminEmail={admin} />;
 }
