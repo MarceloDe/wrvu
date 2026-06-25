@@ -10,6 +10,7 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine, Cell, PieChart, Pie
 } from "recharts";
+import { extractionSystemPrompt, extractionUserText } from "../lib/ocr-prompt";
 
 /* ============================================================================
    NEURORADIOLOGY CPT REFERENCE — CMS 2026 professional-component work RVU
@@ -159,18 +160,23 @@ const MONTH_LABEL = (k) => { const [y, m] = k.split("-"); return new Date(Number
 /* ============================================================================ ROOT ============================================================================ */
 export default function NeuroRVU() {
   const [tab, setTab] = useState("tracker");
-  const [log, setLog] = useState([]);
+  const [exams, setExams] = useState([]);
   const [baseline, setBaseline] = useState([]);
   const [settings, setSettings] = useState(DEFAULTS);
   const [ready, setReady] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
+  // Exams are the source of truth (dedicated DB table), loaded per Clerk user.
+  async function reloadExams() {
+    try {
+      const r = await fetch("/api/exams");
+      if (r.ok) { const j = await r.json(); setExams(Array.isArray(j.exams) ? j.exams : []); }
+    } catch {}
+  }
+
   useEffect(() => {
     (async () => {
-      const rawLog = await loadKey("nrv_log", []);
-      const migrated = migrateLog(rawLog);
-      setLog(migrated);
-      if (JSON.stringify(migrated) !== JSON.stringify(rawLog)) saveKey("nrv_log", migrated);
+      await reloadExams();
       const bl = await loadKey("nrv_baseline", null);
       // Per-user only: load this user's saved baseline, otherwise start EMPTY.
       // No shared seed — a new user's timeline reflects only their own entries.
@@ -180,7 +186,19 @@ export default function NeuroRVU() {
     })();
   }, []);
 
-  const updateLog = (n) => { setLog(n); saveKey("nrv_log", n); };
+  // Adapter: feed the existing per-month analytics/timeline/exams views from the
+  // exams table. Each exam becomes a single-item "session" keyed by ITS OWN exam
+  // date, so everything visualizes exams-per-date with zero churn downstream.
+  const log = useMemo(() => exams.map((e) => ({
+    id: e.id, batchId: e.batchId,
+    date: (e.examDate ? String(e.examDate) : String(e.uploadedAt || "")).slice(0, 10),
+    items: [{
+      uid: e.id, cpt: e.cpt || "?", desc: e.procedure || "Study", mod: e.modality || "CT",
+      count: 1, wrvu: Number(e.wrvu) || 0, est: !!e.estimated,
+      inst: e.institution || classifyInstitution(e.site),
+    }],
+  })), [exams]);
+
   const updateBaseline = (n) => { setBaseline(n); saveKey("nrv_baseline", n); };
   const updateSettings = (n) => { setSettings(n); saveKey("nrv_settings", n); };
 
@@ -198,6 +216,7 @@ export default function NeuroRVU() {
             <TabBtn active={tab === "tracker"} onClick={() => setTab("tracker")} icon={Activity}>Tracker</TabBtn>
             <TabBtn active={tab === "timeline"} onClick={() => setTab("timeline")} icon={LineIcon}>Timeline</TabBtn>
             <TabBtn active={tab === "exams"} onClick={() => setTab("exams")} icon={Layers}>Exams</TabBtn>
+            <TabBtn active={tab === "uploads"} onClick={() => setTab("uploads")} icon={Upload}>Uploads</TabBtn>
             <TabBtn active={tab === "reference"} onClick={() => setTab("reference")} icon={Database}>Codes</TabBtn>
             <button onClick={() => setShowSettings(true)} className="ml-1 p-2 rounded-lg hover:bg-slate-100 text-slate-500"><SettingsIcon className="w-4 h-4" /></button>
           </div>
@@ -205,9 +224,10 @@ export default function NeuroRVU() {
       </header>
 
       <main className="max-w-6xl mx-auto px-5 py-6">
-        {tab === "tracker" && <Tracker log={log} updateLog={updateLog} settings={settings} />}
+        {tab === "tracker" && <Tracker log={log} reloadExams={reloadExams} settings={settings} />}
         {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} log={log} settings={settings} />}
         {tab === "exams" && <ExamsView log={log} settings={settings} />}
+        {tab === "uploads" && <UploadsView reloadExams={reloadExams} />}
         {tab === "reference" && <Reference settings={settings} />}
       </main>
 
@@ -450,13 +470,12 @@ function NumCell({ v, onChange }) {
 }
 
 /* ============================================================================ TRACKER ============================================================================ */
-function Tracker({ log, updateLog, settings }) {
+function Tracker({ log, reloadExams, settings }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [draft, setDraft] = useState(null);
   const [manualDate, setManualDate] = useState(new Date().toISOString().slice(0, 10));
   const [curInst, setCurInst] = useState("UM");
-  const [confirmClear, setConfirmClear] = useState(false);
   const fileRef = useRef();
 
   async function handleFiles(e) {
@@ -465,57 +484,77 @@ function Tracker({ log, updateLog, settings }) {
     setBusy(true); setStatus(`Reading ${files.length} screenshot${files.length > 1 ? "s" : ""}…`);
     try {
       const imgs = await Promise.all(files.map(async f => ({ type: "image", source: { type: "base64", media_type: f.type || "image/png", data: await toBase64(f) } })));
-      const ref = CODES.map(c => `${c.cpt}=${c.desc} ${c.con} (${c.wrvu})`).join("; ");
-      const system =
-        `You extract radiology productivity from screenshots of a radiologist's worklist, RIS/PACS list, or RVU report. ` +
-        `Map every completed study to its CPT and 2026 work RVU using this neuro reference: ${ref}. ` +
-        `Return EVERY study you can see — never omit a row. If a study isn't in the reference, still return it with your best CPT guess, ` +
-        `a "modality" (CT/CTA/MRI/MRA), and a numeric "wrvu_each" (read it from any RVU column shown, else your best estimate), and set "estimated":true. ` +
-        `If you truly cannot determine a wRVU, return wrvu_each:0 and still include the row. ` +
-        `Also detect the INSTITUTION per study from any site name, facility, accession prefix, or MRN pattern. ` +
-        `Classify institution as "UM" (any site code starting with UM, or University of Miami / UHealth / Sylvester), "JHS" (Jackson / JHM / JMH / Holtz / Ryder), or "Other" if unknown. ` +
-        `Aggregate identical study+institution into a count. Default count 1 if not shown. ` +
-        `Return ONLY a JSON array: [{"cpt":"70553","description":"MRI Brain W/WO","modality":"MRI","count":2,"wrvu_each":2.23,"estimated":false,"institution":"UM"}]`;
-      const data = await callClaude([{ role: "user", content: [...imgs, { type: "text", text: "Extract studies with counts, per-study wRVU, and institution. JSON only." }] }], { system, maxTokens: 4000 });
-      const arr = parseJSON(textOf(data));
+      const data = await callClaude([{ role: "user", content: [...imgs, { type: "text", text: extractionUserText }] }], { system: extractionSystemPrompt(), maxTokens: 8000 });
+      // Response is an object: {valid:true, exams:[...]} OR {valid:false, reason:"..."}
+      const rawText = textOf(data).replace(/```json/gi, "").replace(/```/g, "").trim();
+      const so = rawText.indexOf("{"), eo = rawText.lastIndexOf("}");
+      const parsed = JSON.parse(so !== -1 ? rawText.slice(so, eo + 1) : rawText);
+
+      if (parsed && parsed.valid === false) {
+        setDraft(null);
+        setStatus(parsed.reason || "This doesn't look like an exam worklist (it needs Site, Procedure, and Exam Date columns). Please upload a worklist or RVU report screenshot.");
+        return;
+      }
+      const arr = Array.isArray(parsed?.exams) ? parsed.exams : [];
       let uidc = Date.now();
       const items = arr.map(x => {
         const canon = codeByCpt[String(x.cpt).replace("+", "")];
-        const detected = classifyInstitution(x.institution);
+        const detected = classifyInstitution(x.site || x.institution);
         const inst = detected === "Other" ? curInst : detected;
         const wrvu = canon ? canon.wrvu : (Number(x.wrvu_each) || 0);
-        return { uid: ++uidc, cpt: String(x.cpt || "?"), desc: canon ? `${canon.desc} ${canon.con}` : (x.description || "Unrecognized study"),
-          mod: canon ? canon.mod : (x.modality || "CT"), count: Number(x.count) || 1, wrvu, est: canon ? !!canon.est : true, inst, needsPrice: !(wrvu > 0) };
+        const day = (x.exam_date ? String(x.exam_date) : "").slice(0, 10) || manualDate;
+        return {
+          uid: ++uidc, cpt: String(x.cpt || "?"),
+          desc: x.procedure || (canon ? `${canon.desc} ${canon.con}` : "Unrecognized study"),
+          mod: canon ? canon.mod : (x.modality || "CT"),
+          wrvu, est: canon ? !!canon.est : true, inst, site: x.site || "",
+          date: day, examDate: x.exam_date || `${day}T00:00:00`, needsPrice: !(wrvu > 0),
+        };
       });
-      if (!items.length) setStatus("No studies detected. Try a clearer screenshot or add manually.");
+      if (!items.length) { setDraft(null); setStatus("No exams detected. Try a clearer screenshot or add manually."); }
       else {
-        const totalStudies = items.reduce((s, i) => s + i.count, 0), unpriced = items.filter(i => i.needsPrice).length;
-        setDraft({ date: manualDate, source: "screenshot", items });
-        setStatus(`Detected ${totalStudies} studies across ${items.length} line item${items.length > 1 ? "s" : ""}.` + (unpriced ? ` ${unpriced} couldn't be auto-priced — assign a code below so none are lost.` : " Review sites and confirm."));
+        const unpriced = items.filter(i => i.needsPrice).length;
+        const dates = [...new Set(items.map(i => i.date))].sort();
+        setDraft({ batchId: `batch_${Date.now()}`, source: "screenshot", items });
+        setStatus(`Detected ${items.length} exams across ${dates.length} date${dates.length > 1 ? "s" : ""}.` + (unpriced ? ` ${unpriced} need a code below.` : " Review and save."));
       }
-    } catch { setStatus("Extraction failed — the image may be unreadable. Add studies manually instead."); }
+    } catch { setStatus("Extraction failed — the image may be unreadable. Add exams manually instead."); }
     finally { setBusy(false); if (fileRef.current) fileRef.current.value = ""; }
   }
 
   function addManual(code) {
     setDraft(d => {
-      const base = d || { date: manualDate, source: "manual", items: [] };
-      const existing = base.items.find(i => i.cpt === code.cpt && i.inst === curInst && !i.needsPrice);
-      const items = existing ? base.items.map(i => i === existing ? { ...i, count: i.count + 1 } : i)
-        : [...base.items, { uid: Date.now() + Math.random(), cpt: code.cpt, desc: `${code.desc} ${code.con}`, mod: code.mod, count: 1, wrvu: code.wrvu, est: !!code.est, inst: curInst, needsPrice: false }];
-      return { ...base, items };
+      const base = d || { batchId: `batch_${Date.now()}`, source: "manual", items: [] };
+      const item = { uid: Date.now() + Math.random(), cpt: code.cpt, desc: `${code.desc} ${code.con}`, mod: code.mod,
+        wrvu: code.wrvu, est: !!code.est, inst: curInst, site: "", date: manualDate, examDate: `${manualDate}T00:00:00`, needsPrice: false };
+      return { ...base, items: [...base.items, item] };
     });
   }
-  function editDraftCount(it, delta) { setDraft(d => { const items = d.items.map(i => i.uid === it.uid ? { ...i, count: Math.max(0, i.count + delta) } : i).filter(i => i.count > 0); return items.length ? { ...d, items } : null; }); }
+  function removeDraftItem(it) { setDraft(d => { const items = d.items.filter(i => i.uid !== it.uid); return items.length ? { ...d, items } : null; }); }
   function cycleInst(it) { const order = ["UM", "JHS", "Other"]; setDraft(d => ({ ...d, items: d.items.map(i => i.uid === it.uid ? { ...i, inst: order[(order.indexOf(i.inst) + 1) % 3] } : i) })); }
   function assignCode(it, code) { setDraft(d => ({ ...d, items: d.items.map(i => i.uid === it.uid ? { ...i, cpt: code.cpt, desc: `${code.desc} ${code.con}`, mod: code.mod, wrvu: code.wrvu, est: !!code.est, needsPrice: false } : i) })); }
-  function commitDraft() {
+  async function commitDraft() {
     if (!draft || !draft.items.length) return;
-    updateLog([...log, { id: Date.now(), ...draft }]);
-    const left = draft.items.filter(i => i.needsPrice).length; setDraft(null);
-    setStatus(left ? `Session saved. ${left} unpriced study/studies saved at 0 wRVU — assign codes next time to count their value.` : "Session saved to your cumulative database.");
+    setBusy(true);
+    try {
+      const payload = {
+        batchId: draft.batchId || `batch_${Date.now()}`,
+        source: draft.source || "screenshot",
+        exams: draft.items.map(i => ({
+          examDate: i.examDate || (i.date ? `${i.date}T00:00:00` : null),
+          cpt: i.cpt, procedure: i.desc, site: i.site || "",
+          institution: i.inst, modality: i.mod, wrvu: i.wrvu, estimated: i.est,
+        })),
+      };
+      const r = await fetch("/api/exams", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!r.ok) { setStatus("Save failed — please try again."); return; }
+      const left = draft.items.filter(i => i.needsPrice).length;
+      setDraft(null);
+      await reloadExams();
+      setStatus(left ? `Saved. ${left} exam(s) stored at 0 wRVU — assign codes to count their value.` : `Saved ${payload.exams.length} exams to your database.`);
+    } catch { setStatus("Save failed — please try again."); }
+    finally { setBusy(false); }
   }
-  function clearAll() { updateLog([]); setConfirmClear(false); setStatus("All daily uploads cleared. (Reported baseline in Timeline is untouched.)"); }
 
   const a = useMemo(() => buildAnalytics(log, settings), [log, settings]);
 
@@ -563,65 +602,120 @@ function Tracker({ log, updateLog, settings }) {
         {draft && (
           <div className="mt-4 rounded-xl border border-teal-200 bg-teal-50/50 p-4">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-medium text-teal-900 flex items-center gap-2"><FileImage className="w-4 h-4" />Review — {draft.date} · {draft.source}</div>
-              <div className="text-xs font-mono text-teal-700">{fmt(draft.items.reduce((s, i) => s + i.count, 0), 0)} studies · {fmt(draft.items.reduce((s, i) => s + i.count * i.wrvu, 0), 2)} wRVU</div>
+              <div className="text-sm font-medium text-teal-900 flex items-center gap-2"><FileImage className="w-4 h-4" />Review — {draft.items.length} exams · {draft.source}</div>
+              <div className="text-xs font-mono text-teal-700">{fmt(draft.items.reduce((s, i) => s + i.wrvu, 0), 2)} wRVU</div>
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
               {draft.items.map(i => (
                 <div key={i.uid} className={`flex items-center gap-2 text-sm rounded-lg px-3 py-1.5 border ${i.needsPrice ? "bg-amber-50 border-amber-200" : "bg-white border-teal-100"}`}>
-                  <span className="font-mono text-xs text-slate-500 w-14">{i.cpt}</span>
+                  <span className="font-mono text-[10px] text-slate-400 w-[68px] shrink-0">{i.date}</span>
+                  <span className="font-mono text-xs text-slate-500 w-14 shrink-0">{i.cpt}</span>
                   <span className="flex-1 truncate">{i.desc}{i.est && !i.needsPrice && <span className="text-amber-500 text-[10px] ml-1">est.</span>}{i.needsPrice && <span className="text-amber-600 text-[10px] ml-1 font-semibold uppercase tracking-wide">needs code</span>}</span>
                   {i.needsPrice && <CodeAssign onPick={(c) => assignCode(i, c)} />}
-                  <button onClick={() => cycleInst(i)} className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: instMeta(i.inst).color + "22", color: instMeta(i.inst).color }}>{instMeta(i.inst).short}</button>
-                  <span className="font-mono text-xs text-slate-400">{i.wrvu.toFixed(2)}</span>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => editDraftCount(i, -1)} className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-600">−</button>
-                    <span className="w-7 text-center font-mono text-sm">{i.count}</span>
-                    <button onClick={() => editDraftCount(i, +1)} className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-600">+</button>
-                  </div>
-                  <span className="font-mono text-xs font-semibold w-14 text-right">{(i.count * i.wrvu).toFixed(1)}</span>
+                  <button onClick={() => cycleInst(i)} className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0" style={{ background: instMeta(i.inst).color + "22", color: instMeta(i.inst).color }}>{instMeta(i.inst).short}</button>
+                  <span className="font-mono text-xs text-slate-400 w-12 text-right shrink-0">{i.wrvu.toFixed(2)}</span>
+                  <button onClick={() => removeDraftItem(i)} className="text-slate-300 hover:text-red-500 shrink-0"><X className="w-3.5 h-3.5" /></button>
                 </div>
               ))}
             </div>
             <div className="flex flex-wrap gap-2 mt-3 items-center">
-              <button onClick={commitDraft} className="px-4 py-1.5 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 flex items-center gap-1.5"><Check className="w-4 h-4" />Save session</button>
+              <button onClick={commitDraft} disabled={busy} className="px-4 py-1.5 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50 flex items-center gap-1.5"><Check className="w-4 h-4" />Save {draft.items.length} exams</button>
               <button onClick={() => setDraft(null)} className="px-3 py-1.5 rounded-lg text-slate-500 text-sm hover:bg-slate-100">Discard</button>
-              <span className="text-[11px] text-slate-400">Tap the site badge to reassign UM / JHS / Other. Amber rows need a code.</span>
+              <span className="text-[11px] text-slate-400">Each row is one exam with its own date. Tap the site badge to reassign. Amber rows need a code.</span>
             </div>
           </div>
         )}
       </div>
 
       {log.length > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Session log</h2>
-            {confirmClear ? (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" />Delete all daily uploads?</span>
-                <button onClick={clearAll} className="px-2.5 py-1 rounded-md bg-red-500 text-white text-xs font-medium hover:bg-red-600">Yes, clear</button>
-                <button onClick={() => setConfirmClear(false)} className="px-2.5 py-1 rounded-md text-slate-500 text-xs hover:bg-slate-100">Cancel</button>
-              </div>
-            ) : <button onClick={() => setConfirmClear(true)} className="px-2.5 py-1 rounded-md text-xs font-medium text-red-500 hover:bg-red-50 flex items-center gap-1"><Trash2 className="w-3.5 h-3.5" />Clear all uploads</button>}
+        <p className="text-xs text-slate-400 px-1 flex items-center gap-1.5">
+          <Layers className="w-3.5 h-3.5" />{log.length} exams in your database. View them in the <span className="font-medium text-slate-600">Exams</span> tab, or manage / delete uploads in the <span className="font-medium text-slate-600">Uploads</span> tab.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================================ UPLOADS ============================================================================ */
+function UploadsView({ reloadExams }) {
+  const [batches, setBatches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
+  const [examDay, setExamDay] = useState("");
+  const [uploadDay, setUploadDay] = useState("");
+  const [confirm, setConfirm] = useState(null);
+
+  async function load() {
+    setLoading(true);
+    try { const r = await fetch("/api/exams?batches=1"); const j = await r.json(); setBatches(Array.isArray(j.batches) ? j.batches : []); }
+    catch {} finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function del(params, label) {
+    setBusy(true); setStatus("");
+    try {
+      const r = await fetch(`/api/exams?${params}`, { method: "DELETE" });
+      const j = await r.json();
+      if (r.ok) { setStatus(`Deleted ${j.deleted ?? 0} exam${j.deleted === 1 ? "" : "s"}${label ? ` · ${label}` : ""}.`); await load(); await reloadExams?.(); }
+      else setStatus(j.error || "Delete failed.");
+    } catch { setStatus("Delete failed."); }
+    finally { setBusy(false); setConfirm(null); }
+  }
+
+  const ts = (d) => d ? new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+  const day = (d) => d ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" }) : "—";
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <h2 className="font-semibold flex items-center gap-2 mb-1"><Calendar className="w-4 h-4 text-slate-500" />Delete by day</h2>
+        <p className="text-xs text-slate-400 mb-4">Remove exams by the date shown on the exam, or by the day you uploaded them.</p>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div className="flex items-end gap-2">
+            <label className="flex-1 text-xs text-slate-500">By exam date
+              <input type="date" value={examDay} onChange={e => setExamDay(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono" /></label>
+            <button disabled={!examDay || busy} onClick={() => del(`examDate=${examDay}`, `exam date ${examDay}`)} className="px-3 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-40">Delete</button>
           </div>
-          <div className="space-y-1.5">
-            {[...log].reverse().map(s => {
-              const w = s.items.reduce((a, i) => a + i.count * i.wrvu, 0), n = s.items.reduce((a, i) => a + i.count, 0);
-              const sites = [...new Set(s.items.map(i => classifyInstitution(i.inst)))];
-              return (
-                <div key={s.id} className="flex items-center gap-3 text-sm py-1.5 px-3 rounded-lg hover:bg-slate-50">
-                  <span className="font-mono text-xs text-slate-500 w-24">{s.date}</span>
-                  <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{s.source}</span>
-                  <div className="flex gap-1">{sites.map(si => <span key={si} className="text-[9px] font-semibold px-1.5 py-0.5 rounded" style={{ background: instMeta(si).color + "22", color: instMeta(si).color }}>{instMeta(si).short}</span>)}</div>
-                  <span className="flex-1 text-slate-600">{n} studies</span>
-                  <span className="font-mono font-semibold">{fmt(w, 1)} wRVU</span>
-                  <button onClick={() => updateLog(log.filter(x => x.id !== s.id))} className="text-slate-300 hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
-                </div>
-              );
-            })}
+          <div className="flex items-end gap-2">
+            <label className="flex-1 text-xs text-slate-500">By upload date
+              <input type="date" value={uploadDay} onChange={e => setUploadDay(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono" /></label>
+            <button disabled={!uploadDay || busy} onClick={() => del(`uploadDate=${uploadDay}`, `upload date ${uploadDay}`)} className="px-3 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-40">Delete</button>
           </div>
         </div>
-      )}
+        {status && <p className="mt-3 text-xs text-slate-500 flex items-center gap-1.5"><Info className="w-3.5 h-3.5" />{status}</p>}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-semibold flex items-center gap-2"><Layers className="w-4 h-4 text-slate-500" />Uploaded batches</h2>
+          <span className="text-xs text-slate-400">{batches.length} batch{batches.length === 1 ? "" : "es"}</span>
+        </div>
+        {loading ? <div className="py-10 text-center text-slate-400"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></div>
+          : batches.length === 0 ? <div className="py-10 text-center text-slate-400 text-sm"><Layers className="w-6 h-6 mx-auto mb-2" />No uploads yet. Add exams in the Tracker tab.</div>
+          : (
+            <div className="space-y-2">
+              {batches.map(b => (
+                <div key={b.batchId} className="flex flex-wrap items-center gap-3 text-sm rounded-xl border border-slate-100 px-4 py-3 hover:bg-slate-50">
+                  <div className="flex-1 min-w-[200px]">
+                    <div className="font-medium text-slate-800">{b.count} exam{b.count === 1 ? "" : "s"} · {fmt(b.wrvu, 1)} wRVU</div>
+                    <div className="text-xs text-slate-400">Uploaded {ts(b.uploadedAt)} · exam dates {day(b.firstExam)}{b.firstExam !== b.lastExam ? `–${day(b.lastExam)}` : ""}{b.sites?.length ? ` · ${b.sites.join(", ")}` : ""}</div>
+                  </div>
+                  {confirm === b.batchId ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-red-500">Delete {b.count}?</span>
+                      <button onClick={() => del(`batchId=${encodeURIComponent(b.batchId)}`, "batch")} className="px-2.5 py-1 rounded-md bg-red-500 text-white text-xs font-medium">Yes</button>
+                      <button onClick={() => setConfirm(null)} className="px-2.5 py-1 rounded-md text-slate-500 text-xs hover:bg-slate-100">Cancel</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setConfirm(b.batchId)} className="inline-flex items-center gap-1 text-xs text-red-500 border border-red-200 rounded-md px-2.5 py-1 hover:bg-red-50"><Trash2 className="w-3.5 h-3.5" />Delete cluster</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
     </div>
   );
 }
