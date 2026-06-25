@@ -158,6 +158,14 @@ const monthKey = (iso) => iso.slice(0, 7);
 const MONTH_LABEL = (k) => { const [y, m] = k.split("-"); return new Date(Number(y), Number(m) - 1, 1).toLocaleString("en-US", { month: "short", year: "2-digit" }); };
 
 /* ============================================================================ ROOT ============================================================================ */
+const TABS = [
+  { id: "tracker", label: "Tracker", icon: Activity },
+  { id: "timeline", label: "Timeline", icon: LineIcon },
+  { id: "exams", label: "Exams", icon: Layers },
+  { id: "uploads", label: "Uploads", icon: Upload },
+  { id: "reference", label: "Codes", icon: Database },
+];
+
 export default function NeuroRVU() {
   const [tab, setTab] = useState("tracker");
   const [exams, setExams] = useState([]);
@@ -213,23 +221,40 @@ export default function NeuroRVU() {
             <div><div className="font-semibold tracking-tight leading-none">NeuroRVU</div><div className="text-[11px] text-slate-500 mt-0.5 font-mono">Neuroradiology productivity · CMS 2026</div></div>
           </div>
           <div className="flex items-center gap-1">
-            <TabBtn active={tab === "tracker"} onClick={() => setTab("tracker")} icon={Activity}>Tracker</TabBtn>
-            <TabBtn active={tab === "timeline"} onClick={() => setTab("timeline")} icon={LineIcon}>Timeline</TabBtn>
-            <TabBtn active={tab === "exams"} onClick={() => setTab("exams")} icon={Layers}>Exams</TabBtn>
-            <TabBtn active={tab === "uploads"} onClick={() => setTab("uploads")} icon={Upload}>Uploads</TabBtn>
-            <TabBtn active={tab === "reference"} onClick={() => setTab("reference")} icon={Database}>Codes</TabBtn>
-            <button onClick={() => setShowSettings(true)} className="ml-1 p-2 rounded-lg hover:bg-slate-100 text-slate-500"><SettingsIcon className="w-4 h-4" /></button>
+            {/* Desktop: inline tabs. Mobile uses the bottom bar below. */}
+            <div className="hidden sm:flex items-center gap-1">
+              {TABS.map(t => (
+                <TabBtn key={t.id} active={tab === t.id} onClick={() => setTab(t.id)} icon={t.icon}>{t.label}</TabBtn>
+              ))}
+            </div>
+            <button onClick={() => setShowSettings(true)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-500"><SettingsIcon className="w-4 h-4" /></button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-5 py-6">
+      <main className="max-w-6xl mx-auto px-5 py-6 pb-28 sm:pb-6">
         {tab === "tracker" && <Tracker log={log} reloadExams={reloadExams} settings={settings} />}
         {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} log={log} settings={settings} />}
         {tab === "exams" && <ExamsView log={log} settings={settings} />}
         {tab === "uploads" && <UploadsView reloadExams={reloadExams} />}
         {tab === "reference" && <Reference settings={settings} />}
       </main>
+
+      {/* Mobile bottom tab bar — native PWA navigation, always visible, no lateral scroll. */}
+      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div className="grid grid-cols-5">
+          {TABS.map(t => {
+            const active = tab === t.id;
+            const Icon = t.icon;
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)} aria-label={t.label} className={`flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors ${active ? "text-teal-600" : "text-slate-400 hover:text-slate-600"}`}>
+                <Icon className="w-5 h-5" strokeWidth={active ? 2.4 : 2} />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
 
       {showSettings && <SettingsDrawer settings={settings} onSave={updateSettings} onClose={() => setShowSettings(false)} />}
 

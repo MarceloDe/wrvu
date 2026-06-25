@@ -12,7 +12,7 @@ export default async function AppPage() {
 
   return (
     <div className="min-h-[100dvh] bg-slate-50">
-      <header className="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">
+      <header className="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200" style={{ paddingTop: "env(safe-area-inset-top)" }}>
         <div className="mx-auto max-w-6xl px-4 h-12 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 font-semibold text-slate-800">
             <span className="grid place-items-center w-7 h-7 rounded-lg bg-slate-900">
