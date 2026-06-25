@@ -104,18 +104,12 @@ function migrateLog(raw) {
   })) }));
 }
 
-/* ============================== BASELINE (FY26 reported, verified) ============================== */
-const BASELINE_SEED = [
-  { key:"2025-10", mo:"Oct 25", cfte:0.75, bench:434, base:607, extra:0,   pay:0 },
-  { key:"2025-11", mo:"Nov 25", cfte:1.00, bench:578, base:573, extra:173, pay:13500 },
-  { key:"2025-12", mo:"Dec 25", cfte:1.00, bench:578, base:851, extra:413, pay:32300 },
-  { key:"2026-01", mo:"Jan 26", cfte:1.00, bench:578, base:448, extra:275, pay:21500 },
-  { key:"2026-02", mo:"Feb 26", cfte:1.00, bench:578, base:666, extra:207, pay:16200 },
-  { key:"2026-03", mo:"Mar 26", cfte:1.00, bench:578, base:648, extra:214, pay:18550 },
-  { key:"2026-04", mo:"Apr 26", cfte:1.00, bench:578, base:540, extra:492, pay:43300 },
-];
+/* ============================== BASELINE ==============================
+   No seed data. Each user's reported baseline starts EMPTY and is stored
+   per-user in the database (/api/store, scoped to the Clerk user id). Users
+   build their own months in the Timeline tab; nothing is shared across users. */
 
-const DEFAULTS = { ratePerWrvu: 78, cFTE: 1.0, monthlyBenchmark: 578, privateMult: 1.6, umYTD: 4963, jhsYTD: 1146 };
+const DEFAULTS = { ratePerWrvu: 78, cFTE: 1.0, monthlyBenchmark: 578, privateMult: 1.6, umYTD: 0, jhsYTD: 0 };
 
 /* ============================== API ============================== */
 async function callClaude(messages, { system, tools, maxTokens = 4000 } = {}) {
@@ -166,7 +160,7 @@ const MONTH_LABEL = (k) => { const [y, m] = k.split("-"); return new Date(Number
 export default function NeuroRVU() {
   const [tab, setTab] = useState("tracker");
   const [log, setLog] = useState([]);
-  const [baseline, setBaseline] = useState(BASELINE_SEED);
+  const [baseline, setBaseline] = useState([]);
   const [settings, setSettings] = useState(DEFAULTS);
   const [ready, setReady] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -178,7 +172,9 @@ export default function NeuroRVU() {
       setLog(migrated);
       if (JSON.stringify(migrated) !== JSON.stringify(rawLog)) saveKey("nrv_log", migrated);
       const bl = await loadKey("nrv_baseline", null);
-      if (bl && Array.isArray(bl) && bl.length) setBaseline(bl); else { setBaseline(BASELINE_SEED); saveKey("nrv_baseline", BASELINE_SEED); }
+      // Per-user only: load this user's saved baseline, otherwise start EMPTY.
+      // No shared seed — a new user's timeline reflects only their own entries.
+      setBaseline(Array.isArray(bl) ? bl : []);
       setSettings({ ...DEFAULTS, ...(await loadKey("nrv_settings", DEFAULTS)) });
       setReady(true);
     })();
@@ -325,7 +321,7 @@ function Timeline({ baseline, updateBaseline, log, settings }) {
     updateBaseline([...baseline, { key, mo: MONTH_LABEL(key), cfte: settings.cFTE, bench: Math.round(settings.monthlyBenchmark * settings.cFTE), base: 0, extra: 0, pay: 0 }]);
   }
   function delMonth(key) { updateBaseline(baseline.filter(b => b.key !== key)); }
-  function resetBaseline() { updateBaseline(BASELINE_SEED); }
+  function resetBaseline() { updateBaseline([]); }
 
   return (
     <div className="space-y-5">
@@ -440,7 +436,7 @@ function Timeline({ baseline, updateBaseline, log, settings }) {
               <td className="py-2 text-right"></td>{editing && <td></td>}
             </tr></tfoot>
           </table>
-          <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 mt-px shrink-0 text-emerald-500" />Reconciles to your report: benchmark 3,903, actual 4,335 (+11%, ~65th AAARAD pct), extra 1,774, total 6,109, pay $145,350. "Tracked" shows your daily-log capture vs each reported month.</p>
+          <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 mt-px shrink-0 text-emerald-500" />"Tracked" shows your daily-log capture vs each reported month. Add or edit your reported months above to reconcile your own data against benchmark.</p>
         </div>
       </div>
     </div>
@@ -831,7 +827,7 @@ function SettingsDrawer({ settings, onSave, onClose }) {
           {field("umYTD", "UHealth / UM — YTD wRVU", "Reported institution total")}
           {field("jhsYTD", "Jackson / JHS — YTD wRVU", "Reported institution total")}
         </div>
-        <div className="mt-6 rounded-xl bg-slate-50 p-3 text-[11px] text-slate-500 leading-relaxed"><strong className="text-slate-700">FY26 anchors:</strong> YTD benchmark 3,903 · actual 4,335 (+11%) · total 6,109 (UM 4,963 / JHS 1,146) · cFTE 0.61. Edit baseline months in the Timeline tab.</div>
+        <div className="mt-6 rounded-xl bg-slate-50 p-3 text-[11px] text-slate-500 leading-relaxed"><strong className="text-slate-700">Your data only:</strong> set your reported institution YTD wRVUs above, then add your monthly reported baseline in the Timeline tab. Everything here is private to your account.</div>
         <button onClick={() => { onSave(s); onClose(); }} className="mt-6 w-full py-2.5 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800">Save settings</button>
       </div>
     </div>

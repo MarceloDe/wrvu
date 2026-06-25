@@ -65,6 +65,21 @@ async function handle(req) {
   const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
   if (!url) return Response.json({ error: "no DATABASE_URL" }, { status: 500 });
 
+  // Read-only verification: ?inspect=1 returns per-user row isolation in user_kv
+  // (user ids + which keys each holds + counts). No values exposed.
+  if (new URL(req.url).searchParams.get("inspect")) {
+    try {
+      const sql = neon(url);
+      const perUser = await sql`
+        SELECT user_id, array_agg(key ORDER BY key) AS keys, count(*)::int AS rows
+        FROM user_kv GROUP BY user_id ORDER BY user_id`;
+      const totals = await sql`SELECT count(DISTINCT user_id)::int AS users, count(*)::int AS rows FROM user_kv`;
+      return Response.json({ ok: true, distinctUsers: totals[0]?.users ?? 0, totalRows: totals[0]?.rows ?? 0, perUser });
+    } catch (e) {
+      return Response.json({ error: String(e) }, { status: 500 });
+    }
+  }
+
   try {
     // 1) Schema
     const sql = neon(url);
