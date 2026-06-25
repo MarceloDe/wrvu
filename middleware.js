@@ -1,12 +1,16 @@
 // Clerk auth gate. Everything is protected EXCEPT the public marketing landing
-// page, the sign-in/sign-up flows, and a couple of public endpoints.
-// PWA assets (manifest.webmanifest, sw.js, icons) carry file extensions and are
-// excluded by the matcher below, so they stay publicly fetchable.
+// page, the sign-in/sign-up flows, and a couple of token-gated/public endpoints.
+//
+// We do an explicit auth() check + manual redirect instead of auth.protect(),
+// because auth.protect()'s built-in redirect can't resolve a sign-in URL on a
+// Clerk development instance and throws (MIDDLEWARE_INVOCATION_FAILED). This is
+// deterministic: signed-out users go to /sign-in; signed-out API calls get 401.
 
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 
 const isPublicRoute = createRouteMatcher([
-  "/",                 // landing page
+  "/", // landing page
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/health",
@@ -15,8 +19,16 @@ const isPublicRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
-  if (!isPublicRoute(req)) {
-    await auth.protect();
+  if (isPublicRoute(req)) return;
+
+  const { userId } = await auth();
+  if (!userId) {
+    if (req.nextUrl.pathname.startsWith("/api")) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+    const signInUrl = new URL("/sign-in", req.url);
+    signInUrl.searchParams.set("redirect_url", req.nextUrl.pathname);
+    return NextResponse.redirect(signInUrl);
   }
 });
 
