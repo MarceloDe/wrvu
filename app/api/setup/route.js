@@ -55,6 +55,23 @@ const DDL = [
      meta jsonb
    )`,
   `CREATE INDEX IF NOT EXISTS rvu_codes_table_idx ON rvu_codes (table_id)`,
+  `CREATE TABLE IF NOT EXISTS exams (
+     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+     user_id text NOT NULL,
+     batch_id text NOT NULL,
+     exam_date timestamptz,
+     cpt text,
+     procedure text,
+     site text,
+     institution text,
+     modality text,
+     wrvu numeric NOT NULL DEFAULT 0,
+     estimated boolean NOT NULL DEFAULT false,
+     source text NOT NULL DEFAULT 'screenshot',
+     uploaded_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS exams_user_date_idx ON exams (user_id, exam_date)`,
+  `CREATE INDEX IF NOT EXISTS exams_user_batch_idx ON exams (user_id, batch_id)`,
 ];
 
 async function handle(req) {
