@@ -83,7 +83,7 @@ export default function AdminClient({ users, invitations, seatLimit = 10 }) {
           </button>
         </form>
         <p className="mt-2 text-xs text-slate-400">
-          Sends a Clerk invitation. The user can only sign up via this link (sign-ups are invite-only).
+          Sends a Clerk invitation <span className="font-medium text-slate-500">and</span> allowlists the email — so the person can use the invite link, or just sign up directly with that email if the invite email is delayed. Sign-ups remain restricted to allowlisted/invited people.
         </p>
       </section>
 
