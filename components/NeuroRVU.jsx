@@ -162,6 +162,57 @@ const monthKey = (iso) => iso.slice(0, 7);
 const pad2 = (n) => String(n).padStart(2, "0");
 const localDay = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const localMonth = (d = new Date()) => localDay(d).slice(0, 7);
+const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return localDay(d); };
+// Monday-start week key for a "YYYY-MM-DD" day (built from local parts, so no
+// UTC drift). Returns the Monday's own "YYYY-MM-DD".
+const weekStartKey = (day) => {
+  const [y, m, d] = day.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); // Mon=0 … Sun=6
+  return localDay(dt);
+};
+const WEEK_LABEL = (k) => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d).toLocaleString("en-US", { month: "short", day: "numeric" }); };
+
+// Bucket the tracked exam log into weekly/monthly rows within [start, end]
+// (inclusive, YYYY-MM-DD strings compare lexicographically) and derive range
+// stats. Benchmark is scaled per bucket: monthly = target, weekly = target×12/52.
+function buildRange(log, settings, start, end, gran) {
+  const buckets = {};
+  const activeDays = new Set();
+  let total = 0, studies = 0, um = 0, jhs = 0;
+  for (const s of log) {
+    const day = String(s.date).slice(0, 10);
+    if (!day || (start && day < start) || (end && day > end)) continue;
+    const k = gran === "week" ? weekStartKey(day) : day.slice(0, 7);
+    const b = buckets[k] || (buckets[k] = { key: k, wrvu: 0, studies: 0, um: 0, jhs: 0 });
+    for (const i of s.items) {
+      const cnt = i.count || 1, w = cnt * (Number(i.wrvu) || 0), site = classifyInstitution(i.inst);
+      b.wrvu += w; b.studies += cnt; total += w; studies += cnt;
+      if (site === "UM") { b.um += w; um += w; }
+      if (site === "JHS") { b.jhs += w; jhs += w; }
+    }
+    activeDays.add(day);
+  }
+  let cum = 0;
+  const rows = Object.keys(buckets).sort().map((k) => {
+    const b = buckets[k]; cum += b.wrvu;
+    return { key: k, label: gran === "week" ? WEEK_LABEL(k) : MONTH_LABEL(k),
+      wrvu: Math.round(b.wrvu * 10) / 10, studies: b.studies,
+      um: Math.round(b.um), jhs: Math.round(b.jhs), cum: Math.round(cum * 10) / 10 };
+  });
+  const monthlyBench = settings.monthlyBenchmark * settings.cFTE;
+  const bench = gran === "week" ? (monthlyBench * 12) / 52 : monthlyBench;
+  const nB = rows.length || 1, nDays = activeDays.size || 1;
+  const best = rows.reduce((a, r) => (a && a.wrvu >= r.wrvu ? a : r), null);
+  const stats = {
+    total: Math.round(total * 10) / 10, studies, buckets: rows.length, activeDays: activeDays.size,
+    avgPerBucket: Math.round((total / nB) * 10) / 10, avgPerDay: Math.round((total / nDays) * 10) / 10,
+    vsBenchPct: bench ? ((total / nB / bench) - 1) * 100 : 0,
+    um: Math.round(um), jhs: Math.round(jhs), umPct: (um + jhs) ? (um / (um + jhs)) * 100 : 0,
+    best,
+  };
+  return { rows, stats, bench: Math.round(bench) };
+}
 const MONTH_LABEL = (k) => { const [y, m] = k.split("-"); return new Date(Number(y), Number(m) - 1, 1).toLocaleString("en-US", { month: "short", year: "2-digit" }); };
 
 /* ============================================================================ ROOT ============================================================================ */
@@ -314,6 +365,15 @@ function Kpi({ icon: Icon, label, value, sub, delta, good, accent }) {
   );
 }
 function Empty({ msg }) { return <div className="h-40 flex flex-col items-center justify-center text-slate-400 gap-2"><Activity className="w-6 h-6" /><p className="text-sm">{msg || "No data yet."}</p></div>; }
+function StatTile({ label, value, sub }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+      <div className="text-[10px] uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="mt-1 text-xl font-bold font-mono tracking-tight text-slate-900">{value}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-slate-500">{sub}</div>}
+    </div>
+  );
+}
 
 /* ============================================================================ TIMELINE (merged) ============================================================================ */
 function buildTimeline(baseline, log, settings) {
@@ -357,6 +417,18 @@ function Timeline({ baseline, updateBaseline, log, settings }) {
   const [editing, setEditing] = useState(false);
   const t = useMemo(() => buildTimeline(baseline, log, settings), [baseline, log, settings]);
   const C = { um: "#f97316", jhs: "#0ea5e9", base: "#0d9488", extra: "#5eead4", bench: "#6366f1", cum: "#0f172a", trk: "#0d9488" };
+
+  // ---- Tracked explorer: custom date range × weekly/monthly ----
+  const dataDays = useMemo(() => log.map(s => String(s.date).slice(0, 10)).filter(Boolean).sort(), [log]);
+  const dataMin = dataDays[0] || localDay(), dataMax = dataDays[dataDays.length - 1] || localDay();
+  const [gran, setGran] = useState("week");   // week | month
+  const [rStart, setRStart] = useState("");
+  const [rEnd, setREnd] = useState("");
+  // Seed the range to the full tracked span once data lands (leave user edits alone).
+  useEffect(() => { if (dataDays.length && !rStart && !rEnd) { setRStart(dataMin); setREnd(dataMax); } }, [dataDays.length]);
+  const start = rStart || dataMin, end = rEnd || dataMax;
+  const range = useMemo(() => buildRange(log, settings, start, end, gran), [log, settings, start, end, gran]);
+  const preset = (s, e) => { setRStart(s); setREnd(e); };
   const donut = [{ name: "UHealth / UM", value: settings.umYTD, color: C.um }, { name: "Jackson / JHS", value: settings.jhsYTD, color: C.jhs }];
   const instTotal = settings.umYTD + settings.jhsYTD;
   const instMismatch = Math.abs(instTotal - t.ytd.total) > 5;
@@ -377,6 +449,74 @@ function Timeline({ baseline, updateBaseline, log, settings }) {
 
   return (
     <div className="space-y-5">
+      {/* ===== Tracked explorer: pick a date range + weekly/monthly ===== */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+          <div>
+            <h2 className="font-semibold flex items-center gap-2"><Calendar className="w-4 h-4 text-teal-600" />Tracked explorer</h2>
+            <p className="text-xs text-slate-500">Pick a start &amp; finish date and see your tracked wRVU by week or month.</p>
+          </div>
+          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5 text-xs font-medium">
+            <button onClick={() => setGran("week")} className={`px-3 py-1.5 rounded-md ${gran === "week" ? "bg-white shadow-sm text-slate-900" : "text-slate-500"}`}>Weekly</button>
+            <button onClick={() => setGran("month")} className={`px-3 py-1.5 rounded-md ${gran === "month" ? "bg-white shadow-sm text-slate-900" : "text-slate-500"}`}>Monthly</button>
+          </div>
+        </div>
+
+        {/* Date inputs + quick presets */}
+        <div className="flex flex-wrap items-end gap-3 mb-4">
+          <label className="flex flex-col gap-1 text-[11px] font-medium text-slate-500">Start
+            <input type="date" value={start} min={dataMin} max={end} onChange={e => setRStart(e.target.value)}
+              className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-900 font-mono" /></label>
+          <label className="flex flex-col gap-1 text-[11px] font-medium text-slate-500">Finish
+            <input type="date" value={end} min={start} max={dataMax} onChange={e => setREnd(e.target.value)}
+              className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-900 font-mono" /></label>
+          <div className="flex flex-wrap items-center gap-1 text-[11px] font-medium">
+            {[
+              { l: "This month", s: `${localMonth()}-01`, e: localDay() },
+              { l: "Last 30d", s: daysAgo(30), e: localDay() },
+              { l: "Last 90d", s: daysAgo(90), e: localDay() },
+              { l: "YTD", s: `${new Date().getFullYear()}-01-01`, e: localDay() },
+              { l: "All", s: dataMin, e: dataMax },
+            ].map(p => (
+              <button key={p.l} onClick={() => preset(p.s, p.e)}
+                className="px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200">{p.l}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Range stat tiles */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 mb-4">
+          <StatTile label="Tracked wRVU" value={fmt(range.stats.total, 0)} sub={`${fmt(range.stats.studies, 0)} studies`} />
+          <StatTile label={gran === "week" ? "Avg / week" : "Avg / month"} value={fmt(range.stats.avgPerBucket, 0)}
+            sub={`vs ${fmt(range.bench, 0)} target · ${range.stats.vsBenchPct >= 0 ? "+" : ""}${fmt(range.stats.vsBenchPct, 0)}%`} />
+          <StatTile label="Avg / active day" value={fmt(range.stats.avgPerDay, 1)} sub={`${fmt(range.stats.activeDays, 0)} days logged`} />
+          <StatTile label="UM / JHS split" value={`${fmt(range.stats.umPct, 0)} / ${fmt(100 - range.stats.umPct, 0)}`} sub={`${fmt(range.stats.um, 0)} · ${fmt(range.stats.jhs, 0)} wRVU`} />
+        </div>
+
+        {/* Range chart */}
+        {range.rows.length ? (
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={range.rows} margin={{ top: 10, right: 12, left: -10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef2f6" />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                <YAxis yAxisId="l" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <ReferenceLine yAxisId="l" y={range.bench} stroke={C.bench} strokeDasharray="5 4" strokeWidth={1.5} />
+                <Bar yAxisId="l" dataKey="wrvu" name={gran === "week" ? "Tracked wRVU / week" : "Tracked wRVU / month"} fill={C.trk} radius={[5, 5, 0, 0]} />
+                <Line yAxisId="r" type="monotone" dataKey="cum" name="Cumulative" stroke={C.cum} strokeWidth={2} dot={{ r: 2.5 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        ) : <Empty msg="No tracked exams in this date range." />}
+        <p className="text-[11px] text-slate-400 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />
+          Dashed line = {gran === "week" ? "weekly" : "monthly"} target ({fmt(range.bench, 0)} wRVU{gran === "week" ? ", = monthly ÷ 4.3" : ""}). Weeks start Monday. Buckets use each exam's own date.
+          {range.stats.best && <> Best {gran === "week" ? "week" : "month"}: <span className="font-medium text-slate-500">{range.stats.best.label}</span> ({fmt(range.stats.best.wrvu, 0)} wRVU).</>}
+        </p>
+      </div>
+
       {/* Official YTD KPIs (from reported baseline) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi icon={TrendingUp} label="YTD reported vs benchmark" value={fmt(t.ytd.base)} sub={`vs ${fmt(t.ytd.bench)} · +${fmt(t.ytd.variancePct, 0)}%`} good />
