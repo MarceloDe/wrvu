@@ -155,6 +155,13 @@ async function saveKey(k, v) {
 /* ============================== HELPERS ============================== */
 const fmt = (n, d = 0) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const monthKey = (iso) => iso.slice(0, 7);
+// "Now" must key off the user's LOCAL calendar (e.g. Miami/Eastern), not UTC.
+// new Date().toISOString() is UTC, so near a month boundary it flips "this
+// month" / the default exam date hours early (June 30 8pm ET = July 1 UTC).
+// Stored exam dates keep their own value — this only affects today/this-month.
+const pad2 = (n) => String(n).padStart(2, "0");
+const localDay = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const localMonth = (d = new Date()) => localDay(d).slice(0, 7);
 const MONTH_LABEL = (k) => { const [y, m] = k.split("-"); return new Date(Number(y), Number(m) - 1, 1).toLocaleString("en-US", { month: "short", year: "2-digit" }); };
 
 /* ============================================================================ ROOT ============================================================================ */
@@ -499,7 +506,7 @@ function Tracker({ log, reloadExams, settings }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [draft, setDraft] = useState(null);
-  const [manualDate, setManualDate] = useState(new Date().toISOString().slice(0, 10));
+  const [manualDate, setManualDate] = useState(localDay());
   const [curInst, setCurInst] = useState("UM");
   const fileRef = useRef();
 
@@ -792,7 +799,7 @@ function buildAnalytics(log, settings) {
   }
   const keys = Object.keys(byMonth).sort();
   const months = keys.map(k => { const d = byMonth[k], bench = settings.monthlyBenchmark * settings.cFTE, variance = d.wrvu - bench; return { key: k, label: MONTH_LABEL(k), actual: d.wrvu, bench, studies: d.studies, um: d.um, jhs: d.jhs, variance, variancePct: bench ? (variance / bench) * 100 : 0 }; });
-  const nowKey = new Date().toISOString().slice(0, 7), tm = byMonth[nowKey] || { wrvu: 0 }, tmBench = settings.monthlyBenchmark * settings.cFTE;
+  const nowKey = localMonth(), tm = byMonth[nowKey] || { wrvu: 0 }, tmBench = settings.monthlyBenchmark * settings.cFTE;
   const thisMonth = { actual: tm.wrvu, bench: tmBench, variancePct: tmBench ? ((tm.wrvu - tmBench) / tmBench) * 100 : 0 };
   const ytdActual = months.reduce((s, m) => s + m.actual, 0), ytdStudies = months.reduce((s, m) => s + m.studies, 0), ytdBench = months.reduce((s, m) => s + m.bench, 0);
   const ytd = { actual: ytdActual, studies: ytdStudies, bench: ytdBench, variance: ytdActual - ytdBench, variancePct: ytdBench ? ((ytdActual - ytdBench) / ytdBench) * 100 : 0 };
