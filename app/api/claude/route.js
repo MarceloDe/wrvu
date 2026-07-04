@@ -38,8 +38,20 @@ export async function POST(req) {
     });
 
     const data = await r.json();
+    if (!r.ok) {
+      // Surface Anthropic's own error (bad image format, payload too large, rate
+      // limit, overloaded, …) in the server logs so silent OCR failures are
+      // diagnosable, and pass the human-readable message back to the client.
+      const detail = data?.error?.message || data?.error || `HTTP ${r.status}`;
+      const imgCount = Array.isArray(messages)
+        ? messages.reduce((n, m) => n + ((Array.isArray(m?.content) ? m.content : []).filter(b => b?.type === "image").length), 0)
+        : 0;
+      console.error(`[claude] Anthropic ${r.status} (${imgCount} image${imgCount === 1 ? "" : "s"}):`, detail);
+      return Response.json({ error: detail, status: r.status }, { status: r.status });
+    }
     return Response.json(data, { status: r.status });
   } catch (e) {
+    console.error("[claude] proxy error:", e);
     return Response.json({ error: String(e) }, { status: 500 });
   }
 }

@@ -11,6 +11,7 @@ import {
   ResponsiveContainer, ReferenceLine, Cell, PieChart, Pie
 } from "recharts";
 import { extractionSystemPrompt, extractionUserText } from "../lib/ocr-prompt";
+import { timelineSystemPrompt, timelineUserText } from "../lib/timeline-prompt";
 
 /* ============================================================================
    NEURORADIOLOGY CPT REFERENCE — CMS 2026 professional-component work RVU
@@ -120,8 +121,15 @@ async function callClaude(messages, { system, tools, maxTokens = 4000 } = {}) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ messages, system, tools, maxTokens }),
   });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    // Keep the status + Anthropic's message so callers can give specific feedback.
+    const err = new Error(`API ${res.status}`);
+    err.status = res.status;
+    err.detail = String(data?.error?.message || data?.error || "");
+    throw err;
+  }
+  return data;
 }
 const textOf = (d) => (d.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
 function parseJSON(raw) {
@@ -132,6 +140,120 @@ function parseJSON(raw) {
   return JSON.parse(slice);
 }
 const toBase64 = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(file); });
+
+// The vision API only accepts JPEG/PNG/GIF/WebP and rejects oversized images.
+// Phone photos are often HEIC/HEIF or 12MP+ files that fail silently, so we
+// downscale to a sane edge and re-encode to JPEG before upload. Falls back to
+// the raw file if the browser can't decode it (e.g. HEIC on desktop Chrome).
+const MAX_EDGE = 1568;       // model resizes above this anyway; shrink the payload here
+const SUPPORTED = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+async function prepareImage(file) {
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(new Error("read-failed"));
+      r.readAsDataURL(file);
+    });
+    const img = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => reject(new Error("decode-failed"));
+      im.src = dataUrl;
+    });
+    const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+    const jpeg = canvas.toDataURL("image/jpeg", 0.85);
+    return { type: "image", source: { type: "base64", media_type: "image/jpeg", data: jpeg.split(",")[1] } };
+  } catch (e) {
+    // Couldn't decode (unsupported format like HEIC on this browser). If the raw
+    // type isn't one the API accepts, signal an unsupported-format error so the
+    // user gets actionable guidance instead of a generic failure.
+    if (!SUPPORTED.includes(file.type)) {
+      const err = new Error("unsupported-format");
+      err.code = "unsupported-format";
+      throw err;
+    }
+    return { type: "image", source: { type: "base64", media_type: file.type || "image/png", data: await toBase64(file) } };
+  }
+}
+
+// Turn any OCR failure into a specific, actionable message for the user.
+function ocrErrorMessage(err) {
+  const status = err?.status;
+  const detail = String(err?.detail || err?.message || "").toLowerCase();
+  if (err?.code === "unsupported-format")
+    return "That photo format isn't supported. On iPhone, take a screenshot of the worklist instead of a photo, or set Settings → Camera → Formats → “Most Compatible” (JPEG). PNG/JPEG work best.";
+  if (status === 401 || status === 403)
+    return "Your session expired — sign in again and re-upload.";
+  if (status === 413 || detail.includes("too large") || detail.includes("exceeds") || detail.includes("image dimensions"))
+    return "That image is too large. Crop tightly to the worklist, or upload a screenshot instead of a full-resolution photo.";
+  if (status === 429)
+    return "Too many requests right now — wait a few seconds and try again.";
+  if (status === 529 || detail.includes("overloaded"))
+    return "The AI service is momentarily busy — please retry in a few seconds.";
+  if (status === 504 || status === 408 || detail.includes("timeout") || detail.includes("timed out"))
+    return "That took too long — the photo may be too large or complex. Crop to just the worklist and retry.";
+  if (detail.includes("media type") || detail.includes("invalid_request") || detail.includes("could not process image"))
+    return "The image couldn't be read. Use a clear PNG/JPEG screenshot of the worklist, or add exams manually.";
+  return "Extraction failed — the image may be blurry or low quality. Retake in good light, hold steady, and fill the frame with the worklist (or add exams manually).";
+}
+
+// Build the Anthropic content block for a monthly-report upload. PDFs go through
+// as a `document` block (the /api/claude proxy forwards them untouched); images
+// reuse prepareImage (downscale + JPEG). Used by the Timeline import.
+async function prepareDoc(file) {
+  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name || "")) {
+    return { type: "document", source: { type: "base64", media_type: "application/pdf", data: await toBase64(file) } };
+  }
+  return prepareImage(file);
+}
+
+// Merge OCR'd monthly rows into the user's existing baseline (the per-user
+// monthly database). Consolidation rules per the spec:
+//   - key (YYYY-MM) is the insertion dimension.
+//   - months not yet stored are ADDED.
+//   - months already stored are kept; if an incoming value differs we flag a
+//     DISCREPANCY (old vs new) and take the newer report's value.
+//   - existing months absent from the new report are left untouched.
+// Returns { merged, added, updated, unchanged, discrepancies, skipped }.
+const BASELINE_FIELDS = ["bench", "base", "extra", "pay", "cfte"];
+function consolidateBaseline(existing, incoming) {
+  const byKey = new Map((existing || []).map((b) => [b.key, { ...b }]));
+  const added = [], updated = [], unchanged = [], discrepancies = [], skipped = [];
+  for (const raw of incoming || []) {
+    const key = String(raw.month || raw.key || "").slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(key)) { skipped.push(raw); continue; }
+    const row = {
+      key,
+      mo: MONTH_LABEL(key),
+      cfte: num(raw.cfte),
+      bench: num(raw.bench),
+      base: num(raw.base),
+      extra: num(raw.extra),
+      pay: num(raw.pay),
+    };
+    // Ignore fully-empty months (nothing to store).
+    if (!row.bench && !row.base && !row.extra && !row.pay) { skipped.push(raw); continue; }
+    const prev = byKey.get(key);
+    if (!prev) { byKey.set(key, row); added.push(row); continue; }
+    const changes = [];
+    for (const f of BASELINE_FIELDS) {
+      const eps = f === "pay" ? 1 : f === "cfte" ? 0.01 : 0.5;
+      if (Math.abs((Number(prev[f]) || 0) - row[f]) > eps) changes.push({ field: f, from: Number(prev[f]) || 0, to: row[f] });
+    }
+    if (changes.length) { byKey.set(key, { ...prev, ...row }); updated.push(row); discrepancies.push({ key, mo: row.mo, changes }); }
+    else unchanged.push(row);
+  }
+  const merged = [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
+  return { merged, added, updated, unchanged, discrepancies, skipped };
+}
+const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const FIELD_LABEL = { bench: "Benchmark", base: "Actual (base)", extra: "Extra coverage", pay: "Extra pay ($)", cfte: "cFTE" };
 
 /* ============================== STORAGE ============================== */
 async function loadKey(k, fb) {
@@ -292,7 +414,7 @@ export default function NeuroRVU() {
 
       <main className="max-w-6xl mx-auto px-5 py-6 pb-28 sm:pb-6">
         {tab === "tracker" && <Tracker log={log} reloadExams={reloadExams} settings={settings} />}
-        {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} log={log} settings={settings} />}
+        {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} updateSettings={updateSettings} log={log} settings={settings} />}
         {tab === "exams" && <ExamsView log={log} settings={settings} />}
         {tab === "uploads" && <UploadsView reloadExams={reloadExams} />}
         {tab === "reference" && <Reference settings={settings} />}
@@ -412,10 +534,64 @@ function buildTimeline(baseline, log, settings) {
   return { months, ytd, umShare, jhsShare };
 }
 
-function Timeline({ baseline, updateBaseline, log, settings }) {
+function Timeline({ baseline, updateBaseline, updateSettings, log, settings }) {
   const [view, setView] = useState("coverage"); // coverage | institution | reconcile
   const [editing, setEditing] = useState(false);
   const t = useMemo(() => buildTimeline(baseline, log, settings), [baseline, log, settings]);
+  // --- Monthly-report import (PDF/photo -> consolidate into the baseline) ---
+  const importRef = useRef();
+  const [impBusy, setImpBusy] = useState(false);
+  const [impStatus, setImpStatus] = useState("");
+  const [impPreview, setImpPreview] = useState(null); // { plan, totals, period, syncSettings }
+  const [syncSettings, setSyncSettings] = useState(true);
+
+  async function handleImport(e) {
+    const file = (e.target.files || [])[0];
+    if (!file) return;
+    setImpBusy(true); setImpPreview(null); setImpStatus(`Reading ${file.name || "report"}…`);
+    try {
+      const doc = await prepareDoc(file);
+      const data = await callClaude([{ role: "user", content: [doc, { type: "text", text: timelineUserText }] }], { system: timelineSystemPrompt(), maxTokens: 4000 });
+      const raw = textOf(data).replace(/```json/gi, "").replace(/```/g, "").trim();
+      const so = raw.indexOf("{"), eo = raw.lastIndexOf("}");
+      const parsed = JSON.parse(so !== -1 ? raw.slice(so, eo + 1) : raw);
+      if (parsed && parsed.valid === false) { setImpStatus(parsed.reason || "That doesn't look like a monthly wRVU productivity report. Upload your FY/monthly productivity summary (PDF or photo)."); return; }
+      const months = Array.isArray(parsed?.months) ? parsed.months : [];
+      if (!months.length) { setImpStatus("No monthly rows were detected. Make sure the per-month benchmark/actual table is fully visible, then try again."); return; }
+      const plan = consolidateBaseline(baseline, months);
+      if (!plan.added.length && !plan.discrepancies.length) {
+        setImpPreview({ plan, totals: parsed.totals || {}, period: parsed.period || {} });
+        setImpStatus(`Already up to date — ${plan.unchanged.length} month(s) matched, nothing new to add.`);
+        return;
+      }
+      setImpPreview({ plan, totals: parsed.totals || {}, period: parsed.period || {} });
+      setImpStatus("");
+    } catch (err) {
+      console.error("[timeline-import] failed:", { status: err?.status, code: err?.code, detail: err?.detail, message: err?.message });
+      setImpStatus(ocrErrorMessage(err));
+    } finally {
+      setImpBusy(false);
+      if (importRef.current) importRef.current.value = "";
+    }
+  }
+
+  function applyImport() {
+    if (!impPreview) return;
+    updateBaseline(impPreview.plan.merged);
+    if (syncSettings && updateSettings) {
+      const tot = impPreview.totals || {};
+      const monthlyBench = Math.max(0, ...impPreview.plan.merged.map(m => Number(m.bench) || 0));
+      const next = { ...settings };
+      if (Number.isFinite(tot.uhealth) && tot.uhealth != null) next.umYTD = num(tot.uhealth);
+      if (Number.isFinite(tot.jhs) && tot.jhs != null) next.jhsYTD = num(tot.jhs);
+      if (monthlyBench > 0) next.monthlyBenchmark = Math.round(monthlyBench);
+      updateSettings(next);
+    }
+    const { added, discrepancies } = impPreview.plan;
+    setImpStatus(`Imported — ${added.length} month(s) added${discrepancies.length ? `, ${discrepancies.length} updated` : ""}. Your timeline is consolidated.`);
+    setImpPreview(null);
+  }
+  function cancelImport() { setImpPreview(null); setImpStatus(""); }
   const C = { um: "#f97316", jhs: "#0ea5e9", base: "#0d9488", extra: "#5eead4", bench: "#6366f1", cum: "#0f172a", trk: "#0d9488" };
 
   // ---- Tracked explorer: custom date range × weekly/monthly ----
@@ -596,11 +772,27 @@ function Timeline({ baseline, updateBaseline, log, settings }) {
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold">Reported baseline — monthly database</h2>
             <div className="flex items-center gap-1.5">
+              <input ref={importRef} type="file" accept="application/pdf,image/*" onChange={handleImport} className="hidden" id="tl-import" />
+              <label htmlFor="tl-import" className={`px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1 cursor-pointer ${impBusy ? "bg-slate-100 text-slate-400" : "bg-indigo-600 text-white hover:bg-indigo-500"}`}>
+                {impBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}Import report
+              </label>
               <button onClick={() => setEditing(!editing)} className={`px-2.5 py-1 rounded-md text-xs font-medium ${editing ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{editing ? "Done" : "Edit"}</button>
               {editing && <><button onClick={addMonth} className="px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center gap-1"><Plus className="w-3 h-3" />Month</button>
                 <button onClick={resetBaseline} className="px-2.5 py-1 rounded-md text-xs font-medium text-slate-500 hover:bg-slate-100 flex items-center gap-1"><RotateCcw className="w-3 h-3" />Reset</button></>}
             </div>
           </div>
+
+          {/* Import feedback + review panel (PDF/photo -> consolidated months) */}
+          {impStatus && !impPreview && (
+            <div className="mb-3 text-xs text-slate-600 flex items-start gap-1.5 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2">
+              {impBusy ? <Loader2 className="w-3.5 h-3.5 mt-px shrink-0 animate-spin text-indigo-500" /> : <Info className="w-3.5 h-3.5 mt-px shrink-0 text-indigo-500" />}
+              <span>{impStatus}</span>
+            </div>
+          )}
+          {impPreview && <ImportReview preview={impPreview} syncSettings={syncSettings} setSyncSettings={setSyncSettings} onApply={applyImport} onCancel={cancelImport} settings={settings} />}
+          {!impStatus && !impPreview && !impBusy && (
+            <p className="mb-3 text-[11px] text-slate-400 flex items-start gap-1.5"><Upload className="w-3.5 h-3.5 mt-px shrink-0" />Upload a monthly wRVU report (PDF or photo) to auto-fill this table. Re-uploading a newer report keeps your existing months and adds the new ones — you'll be shown any discrepancies before anything changes.</p>
+          )}
           <table className="w-full text-sm">
             <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
               <th className="py-2 font-medium">Month</th><th className="py-2 font-medium text-right">Bench</th><th className="py-2 font-medium text-right">Actual</th>
@@ -634,6 +826,67 @@ function Timeline({ baseline, updateBaseline, log, settings }) {
     </div>
   );
 }
+// Review panel shown after a monthly report is OCR'd, before it's committed.
+// Surfaces what will be added, what changed (discrepancies), and lets the user
+// confirm — nothing touches the stored timeline until "Apply import".
+function ImportReview({ preview, syncSettings, setSyncSettings, onApply, onCancel, settings }) {
+  const { plan, totals = {}, period = {} } = preview;
+  const { added = [], discrepancies = [], unchanged = [], skipped = [] } = plan;
+  const monthlyBench = Math.max(0, ...plan.merged.map(m => Number(m.bench) || 0));
+  const willSync = [];
+  if (totals.uhealth != null) willSync.push(`UHealth YTD ${fmt(settings.umYTD)} → ${fmt(totals.uhealth)}`);
+  if (totals.jhs != null) willSync.push(`JHS YTD ${fmt(settings.jhsYTD)} → ${fmt(totals.jhs)}`);
+  if (monthlyBench > 0 && Math.round(monthlyBench) !== settings.monthlyBenchmark) willSync.push(`Monthly benchmark ${fmt(settings.monthlyBenchmark)} → ${fmt(Math.round(monthlyBench))}`);
+  const nothingNew = !added.length && !discrepancies.length;
+
+  return (
+    <div className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/50 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm font-semibold text-indigo-900 flex items-center gap-2"><FileImage className="w-4 h-4" />Review import{period.label ? ` · ${period.label}` : ""}</div>
+        <div className="text-[11px] font-mono text-indigo-700">{added.length} new · {discrepancies.length} changed · {unchanged.length} unchanged</div>
+      </div>
+
+      {!!added.length && (
+        <div className="mb-2">
+          <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">Months to add</div>
+          <div className="flex flex-wrap gap-1.5">
+            {added.map(m => <span key={m.key} className="text-xs font-mono rounded-md bg-white border border-emerald-200 text-emerald-700 px-2 py-0.5">{m.mo}: {fmt(m.base)} wRVU</span>)}
+          </div>
+        </div>
+      )}
+
+      {!!discrepancies.length && (
+        <div className="mb-2">
+          <div className="text-[11px] uppercase tracking-wide text-amber-600 mb-1 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" />Discrepancies — existing months whose values changed</div>
+          <div className="space-y-1">
+            {discrepancies.map(d => (
+              <div key={d.key} className="text-xs bg-white border border-amber-200 rounded-md px-2.5 py-1.5">
+                <span className="font-sans font-medium text-slate-700">{d.mo}</span>
+                <span className="ml-2 font-mono text-slate-500">{d.changes.map(c => `${FIELD_LABEL[c.field] || c.field} ${fmt(c.from, c.field === "cfte" ? 2 : 0)}→${fmt(c.to, c.field === "cfte" ? 2 : 0)}`).join(" · ")}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-amber-600 mt-1">The newer report's values will replace these on import.</p>
+        </div>
+      )}
+
+      {nothingNew && <p className="text-xs text-slate-600 mb-2">Every month in this report already matches your timeline — importing will make no changes.</p>}
+      {!!skipped.length && <p className="text-[11px] text-slate-400 mb-2">{skipped.length} blank/empty month row(s) ignored.</p>}
+
+      {!!willSync.length && (
+        <label className="flex items-start gap-2 text-xs text-slate-600 mb-3 cursor-pointer">
+          <input type="checkbox" checked={syncSettings} onChange={e => setSyncSettings(e.target.checked)} className="mt-0.5" />
+          <span>Also update my institution split &amp; benchmark from this report's totals: <span className="font-mono text-slate-500">{willSync.join(" · ")}</span></span>
+        </label>
+      )}
+
+      <div className="flex items-center gap-2">
+        <button onClick={onApply} disabled={nothingNew} className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 ${nothingNew ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-indigo-600 text-white hover:bg-indigo-500"}`}><Check className="w-4 h-4" />Apply import</button>
+        <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-white">Cancel</button>
+      </div>
+    </div>
+  );
+}
 function InstRow({ dot, label, v, bold }) {
   return <div className="flex items-center gap-2 text-sm"><span className="w-2 h-2 rounded-full" style={{ background: dot }} /><span className={`flex-1 ${bold ? "font-semibold" : "text-slate-600"}`}>{label}</span><span className={`font-mono text-xs ${bold ? "font-bold" : ""}`}>{v}</span></div>;
 }
@@ -655,7 +908,7 @@ function Tracker({ log, reloadExams, settings }) {
     if (!files.length) return;
     setBusy(true); setStatus(`Reading ${files.length} screenshot${files.length > 1 ? "s" : ""}…`);
     try {
-      const imgs = await Promise.all(files.map(async f => ({ type: "image", source: { type: "base64", media_type: f.type || "image/png", data: await toBase64(f) } })));
+      const imgs = await Promise.all(files.map(prepareImage));
       const data = await callClaude([{ role: "user", content: [...imgs, { type: "text", text: extractionUserText }] }], { system: extractionSystemPrompt(), maxTokens: 8000 });
       // Response is an object: {valid:true, exams:[...]} OR {valid:false, reason:"..."}
       const rawText = textOf(data).replace(/```json/gi, "").replace(/```/g, "").trim();
@@ -683,14 +936,17 @@ function Tracker({ log, reloadExams, settings }) {
           date: day, examDate: x.exam_date || `${day}T00:00:00`, needsPrice: !(wrvu > 0),
         };
       });
-      if (!items.length) { setDraft(null); setStatus("No exams detected. Try a clearer screenshot or add manually."); }
+      if (!items.length) { setDraft(null); setStatus("No exams detected — the worklist may be cropped or too low-res. Retake a sharper, well-lit shot with the full table in frame, or add manually."); }
       else {
         const unpriced = items.filter(i => i.needsPrice).length;
         const dates = [...new Set(items.map(i => i.date))].sort();
         setDraft({ batchId: `batch_${Date.now()}`, source: "screenshot", items });
         setStatus(`Detected ${items.length} exams across ${dates.length} date${dates.length > 1 ? "s" : ""}.` + (unpriced ? ` ${unpriced} need a code below.` : " Review and save."));
       }
-    } catch { setStatus("Extraction failed — the image may be unreadable. Add exams manually instead."); }
+    } catch (err) {
+      console.error("[OCR] extraction failed:", { status: err?.status, code: err?.code, detail: err?.detail, message: err?.message });
+      setStatus(ocrErrorMessage(err));
+    }
     finally { setBusy(false); if (fileRef.current) fileRef.current.value = ""; }
   }
 
