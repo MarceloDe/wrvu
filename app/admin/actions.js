@@ -58,6 +58,47 @@ export async function inviteUser(formData) {
   return { ok: `Invitation sent to ${email}.` };
 }
 
+export async function createUser(formData) {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized" };
+  const email = String(formData.get("email") || "").trim().toLowerCase();
+  const password = String(formData.get("password") || "");
+  if (!email) return { error: "Email required" };
+  if (password.length < 8) return { error: "Password must be at least 8 characters" };
+
+  const client = await clerkClient();
+
+  // A pending invitation for this email can block direct creation — revoke any
+  // first so the address is free to attach to a real user.
+  try {
+    const pend = await client.invitations.getInvitationList({ status: "pending" });
+    for (const inv of (pend.data || [])) {
+      if (String(inv.emailAddress).toLowerCase() === email) {
+        await client.invitations.revokeInvitation(inv.id).catch(() => {});
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // Allowlist so restricted sign-up mode accepts the address. Non-fatal on dup.
+  try {
+    await client.allowlistIdentifiers.createAllowlistIdentifier({ identifier: email, notify: false });
+  } catch { /* keep going — creation is the real test */ }
+
+  // Create a verified user with a password directly — no invitation/verification
+  // email needed (Backend-API-created emails are trusted as verified). This is
+  // the reliable path on a Clerk development instance where emails are flaky.
+  try {
+    await client.users.createUser({ emailAddress: [email], password, skipPasswordChecks: true });
+  } catch (e) {
+    const err = e?.errors?.[0];
+    const msg = err ? `${err.code || ""}: ${err.longMessage || err.message || ""}`.trim() : String(e?.message || e);
+    return { error: `Create failed — ${msg}` };
+  }
+
+  revalidatePath("/admin");
+  return { ok: `${email} created. They can sign in now with the password you set (no email needed).` };
+}
+
 export async function revokeInvitation(formData) {
   const admin = await requireAdmin();
   if (!admin) return { error: "Not authorized" };

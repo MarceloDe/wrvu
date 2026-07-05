@@ -3,15 +3,17 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
-  UserPlus, Trash2, Shield, ShieldOff, Mail, X, Users, CheckCircle2, AlertTriangle, Loader2,
+  UserPlus, Trash2, Shield, ShieldOff, Mail, X, Users, CheckCircle2, AlertTriangle, Loader2, KeyRound,
 } from "lucide-react";
-import { inviteUser, revokeInvitation, setRole, deleteUser } from "../app/admin/actions";
+import { inviteUser, createUser, revokeInvitation, setRole, deleteUser } from "../app/admin/actions";
 
 export default function AdminClient({ users, invitations, seatLimit = 10 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [banner, setBanner] = useState(null); // { ok } | { error }
   const [email, setEmail] = useState("");
+  const [cEmail, setCEmail] = useState("");
+  const [cPassword, setCPassword] = useState("");
 
   const run = (action, formData) =>
     startTransition(async () => {
@@ -26,6 +28,14 @@ export default function AdminClient({ users, invitations, seatLimit = 10 }) {
     fd.set("email", email);
     run(inviteUser, fd);
     setEmail("");
+  };
+
+  const submitCreate = (e) => {
+    e.preventDefault();
+    const fd = new FormData();
+    fd.set("email", cEmail);
+    fd.set("password", cPassword);
+    run(createUser, fd);
   };
 
   const fd1 = (k, v) => { const f = new FormData(); f.set(k, v); return f; };
@@ -85,6 +95,47 @@ export default function AdminClient({ users, invitations, seatLimit = 10 }) {
         <p className="mt-2 text-xs text-slate-400">
           Sends a Clerk invitation <span className="font-medium text-slate-500">and</span> allowlists the email — so the person can use the invite link, or just sign up directly with that email if the invite email is delayed. Sign-ups remain restricted to allowlisted/invited people.
         </p>
+
+        {/* Direct create — no email round-trip (reliable when invite emails don't arrive) */}
+        <div className="mt-5 pt-5 border-t border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-700 mb-1">Create user directly</h3>
+          <p className="text-xs text-slate-400 mb-3">
+            Makes a ready-to-use account with a password you set — <span className="font-medium text-slate-500">no email needed</span>. Give the person the email + password; they <span className="font-medium text-slate-500">sign in</span> (not sign up). Best when invite emails don’t arrive.
+          </p>
+          <form onSubmit={submitCreate} className="flex flex-col sm:flex-row gap-2">
+            <div className="flex-1 flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2">
+              <Mail className="w-4 h-4 text-slate-400" />
+              <input
+                type="email"
+                required
+                value={cEmail}
+                onChange={(e) => setCEmail(e.target.value)}
+                placeholder="colleague@hospital.org"
+                className="flex-1 text-sm outline-none"
+              />
+            </div>
+            <div className="flex-1 flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2">
+              <KeyRound className="w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                required
+                minLength={8}
+                value={cPassword}
+                onChange={(e) => setCPassword(e.target.value)}
+                placeholder="password (min 8 chars)"
+                className="flex-1 text-sm outline-none font-mono"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={pending || seatsUsed >= seatLimit}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-teal-600 text-white text-sm font-medium px-4 py-2 disabled:opacity-50"
+            >
+              {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+              Create
+            </button>
+          </form>
+        </div>
       </section>
 
       {/* Users table */}
