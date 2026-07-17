@@ -72,6 +72,32 @@ const DDL = [
    )`,
   `CREATE INDEX IF NOT EXISTS exams_user_date_idx ON exams (user_id, exam_date)`,
   `CREATE INDEX IF NOT EXISTS exams_user_batch_idx ON exams (user_id, batch_id)`,
+  `CREATE TABLE IF NOT EXISTS extra_duty_periods (
+     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+     user_id text NOT NULL,
+     bundle_date timestamptz NOT NULL,
+     pay_model text NOT NULL,
+     exam_count integer NOT NULL DEFAULT 0,
+     count_mri integer NOT NULL DEFAULT 0,
+     count_ct integer NOT NULL DEFAULT 0,
+     count_xr integer NOT NULL DEFAULT 0,
+     count_other integer NOT NULL DEFAULT 0,
+     amount numeric NOT NULL DEFAULT 0,
+     rate_snapshot jsonb,
+     label text,
+     batch_id text,
+     source text NOT NULL DEFAULT 'manual',
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS extra_duty_user_date_idx ON extra_duty_periods (user_id, bundle_date)`,
+  `CREATE TABLE IF NOT EXISTS extra_duty_rates (
+     user_id text PRIMARY KEY,
+     per_diem_rate numeric NOT NULL DEFAULT 0,
+     ppc_mri numeric NOT NULL DEFAULT 0,
+     ppc_ct numeric NOT NULL DEFAULT 0,
+     ppc_xr numeric NOT NULL DEFAULT 0,
+     updated_at timestamptz NOT NULL DEFAULT now()
+   )`,
 ];
 
 async function handle(req) {

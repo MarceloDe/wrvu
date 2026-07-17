@@ -337,6 +337,51 @@ function buildRange(log, settings, start, end, gran) {
 }
 const MONTH_LABEL = (k) => { const [y, m] = k.split("-"); return new Date(Number(y), Number(m) - 1, 1).toLocaleString("en-US", { month: "short", year: "2-digit" }); };
 
+/* ============================== EXTRA DUTY ==============================
+   Extra-duty work is paid separately from the monthly wRVU target/flow and is
+   stored as AGGREGATE bundle records (extra_duty_periods) — never as `exams`
+   rows — so none of the wRVU analytics above are affected. Two pay models:
+     - per_diem: flat $ per shift.
+     - ppc (pay-per-click): $ per exam by modality bucket (MRI / CT / XR). */
+// Map a worklist modality onto a PPC pay bucket. The neuro schedule has no XR
+// and OCR defaults unknowns to "CT" — so counts stay user-editable in the UI.
+const PPC_BUCKET = (mod) => {
+  const m = String(mod || "").toUpperCase();
+  if (m.includes("MR")) return "mri";                        // MRI, MRA
+  if (m.includes("CT")) return "ct";                         // CT, CTA
+  if (/XR|CR|DX|X-?RAY|RADIOGRAPH/.test(m)) return "xr";
+  return "other";                                            // US, NM, Add-on… (not paid)
+};
+function bucketCounts(items) {
+  const c = { mri: 0, ct: 0, xr: 0, other: 0 };
+  for (const i of items || []) c[PPC_BUCKET(i.mod)] += (i.count || 1);
+  return c;
+}
+// Bucket extra-duty periods by week/month within [start, end] and total the
+// snapshotted dollars. Pure summation — no rate lookup, no double-count.
+function buildExtraDuty(periods, start, end, gran) {
+  const buckets = {};
+  let total = 0, perDiem = 0, ppc = 0, exams = 0;
+  const inRange = [];
+  for (const p of periods || []) {
+    const day = String(p.bundleDate).slice(0, 10);
+    if (!day || (start && day < start) || (end && day > end)) continue;
+    inRange.push(p);
+    const amt = Number(p.amount) || 0;
+    total += amt; exams += Number(p.examCount) || 0;
+    if (p.payModel === "ppc") ppc += amt; else perDiem += amt;
+    const k = gran === "week" ? weekStartKey(day) : day.slice(0, 7);
+    buckets[k] = (buckets[k] || 0) + amt;
+  }
+  const rows = Object.keys(buckets).sort().map((k) => ({
+    key: k, label: gran === "week" ? WEEK_LABEL(k) : MONTH_LABEL(k), amount: Math.round(buckets[k]),
+  }));
+  return {
+    rows, total: Math.round(total), perDiem: Math.round(perDiem), ppc: Math.round(ppc), exams,
+    periods: inRange.sort((a, b) => String(b.bundleDate).localeCompare(String(a.bundleDate))),
+  };
+}
+
 /* ============================================================================ ROOT ============================================================================ */
 const TABS = [
   { id: "tracker", label: "Tracker", icon: Activity },
@@ -353,6 +398,10 @@ export default function NeuroRVU() {
   const [settings, setSettings] = useState(DEFAULTS);
   const [ready, setReady] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Extra-duty (paid separately from the wRVU target): aggregate period records
+  // + the user's pay rates. Both live in dedicated DB tables, per Clerk user.
+  const [extraPeriods, setExtraPeriods] = useState([]);
+  const [extraRates, setExtraRates] = useState({ perDiemRate: 0, ppcMri: 0, ppcCt: 0, ppcXr: 0 });
 
   // Exams are the source of truth (dedicated DB table), loaded per Clerk user.
   async function reloadExams() {
@@ -362,9 +411,27 @@ export default function NeuroRVU() {
     } catch {}
   }
 
+  async function reloadExtra() {
+    try {
+      const [pr, rr] = await Promise.all([fetch("/api/extra-duty"), fetch("/api/extra-duty/rates")]);
+      if (pr.ok) { const j = await pr.json(); setExtraPeriods(Array.isArray(j.periods) ? j.periods : []); }
+      if (rr.ok) { const j = await rr.json(); if (j.rates) setExtraRates(j.rates); }
+    } catch {}
+  }
+
+  async function saveExtraRates(next) {
+    setExtraRates(next);
+    try {
+      await fetch("/api/extra-duty/rates", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next),
+      });
+    } catch {}
+  }
+
   useEffect(() => {
     (async () => {
       await reloadExams();
+      await reloadExtra();
       const bl = await loadKey("nrv_baseline", null);
       // Per-user only: load this user's saved baseline, otherwise start EMPTY.
       // No shared seed — a new user's timeline reflects only their own entries.
@@ -413,8 +480,8 @@ export default function NeuroRVU() {
       </header>
 
       <main className="max-w-6xl mx-auto px-5 py-6 pb-28 sm:pb-6">
-        {tab === "tracker" && <Tracker log={log} reloadExams={reloadExams} settings={settings} />}
-        {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} updateSettings={updateSettings} log={log} settings={settings} />}
+        {tab === "tracker" && <Tracker log={log} reloadExams={reloadExams} settings={settings} extraRates={extraRates} extraPeriods={extraPeriods} reloadExtra={reloadExtra} />}
+        {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} updateSettings={updateSettings} log={log} settings={settings} extraPeriods={extraPeriods} reloadExtra={reloadExtra} />}
         {tab === "exams" && <ExamsView log={log} settings={settings} />}
         {tab === "uploads" && <UploadsView reloadExams={reloadExams} />}
         {tab === "reference" && <Reference settings={settings} />}
@@ -436,7 +503,7 @@ export default function NeuroRVU() {
         </div>
       </nav>
 
-      {showSettings && <SettingsDrawer settings={settings} onSave={updateSettings} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsDrawer settings={settings} onSave={updateSettings} extraRates={extraRates} onSaveExtraRates={saveExtraRates} onClose={() => setShowSettings(false)} />}
 
       <footer className="max-w-6xl mx-auto px-5 py-6 text-[11px] text-slate-400 leading-relaxed">
         Two data layers, one tool: <span className="text-slate-500 font-medium">Reported</span> (FY26 monthly baseline, authoritative) and <span className="text-slate-500 font-medium">Tracked</span> (your daily screenshot logs, granular).
@@ -534,10 +601,16 @@ function buildTimeline(baseline, log, settings) {
   return { months, ytd, umShare, jhsShare };
 }
 
-function Timeline({ baseline, updateBaseline, updateSettings, log, settings }) {
+function Timeline({ baseline, updateBaseline, updateSettings, log, settings, extraPeriods = [], reloadExtra }) {
   const [view, setView] = useState("coverage"); // coverage | institution | reconcile
   const [editing, setEditing] = useState(false);
   const t = useMemo(() => buildTimeline(baseline, log, settings), [baseline, log, settings]);
+  // Extra-duty pay is disjoint from the OCR'd baseline `pay` (monthly report) —
+  // the consolidated "extra pay" number is their sum, never a double-count.
+  const extraDutyYtd = useMemo(() => {
+    const yr = localDay().slice(0, 4);
+    return Math.round(extraPeriods.filter(p => String(p.bundleDate).slice(0, 4) === yr).reduce((s, p) => s + (Number(p.amount) || 0), 0));
+  }, [extraPeriods]);
   // --- Monthly-report import (PDF/photo -> consolidate into the baseline) ---
   const importRef = useRef();
   const [impBusy, setImpBusy] = useState(false);
@@ -604,6 +677,10 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings }) {
   useEffect(() => { if (dataDays.length && !rStart && !rEnd) { setRStart(dataMin); setREnd(dataMax); } }, [dataDays.length]);
   const start = rStart || dataMin, end = rEnd || dataMax;
   const range = useMemo(() => buildRange(log, settings, start, end, gran), [log, settings, start, end, gran]);
+  const exRange = useMemo(() => buildExtraDuty(extraPeriods, start, end, gran), [extraPeriods, start, end, gran]);
+  async function delPeriod(id) {
+    try { await fetch(`/api/extra-duty?id=${encodeURIComponent(id)}`, { method: "DELETE" }); await reloadExtra?.(); } catch {}
+  }
   const preset = (s, e) => { setRStart(s); setREnd(e); };
   const donut = [{ name: "UHealth / UM", value: settings.umYTD, color: C.um }, { name: "Jackson / JHS", value: settings.jhsYTD, color: C.jhs }];
   const instTotal = settings.umYTD + settings.jhsYTD;
@@ -693,11 +770,51 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings }) {
         </p>
       </div>
 
+      {/* ===== Extra-duty earnings (per-diem + PPC) for the selected range ===== */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+          <div>
+            <h2 className="font-semibold flex items-center gap-2"><Zap className="w-4 h-4 text-amber-600" />Extra-duty earnings</h2>
+            <p className="text-xs text-slate-500">Per-diem &amp; pay-per-click shifts within the range above ({start} → {end}). Tag uploads as extra duty in the Tracker.</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 mb-4">
+          <StatTile label="Total extra-duty $" value={`$${fmt(exRange.total, 0)}`} sub={`${exRange.periods.length} shift${exRange.periods.length === 1 ? "" : "s"}`} />
+          <StatTile label="Per-diem $" value={`$${fmt(exRange.perDiem, 0)}`} />
+          <StatTile label="Pay-per-click $" value={`$${fmt(exRange.ppc, 0)}`} />
+          <StatTile label="Exams (extra)" value={fmt(exRange.exams, 0)} sub={gran === "week" ? "weekly buckets" : "monthly buckets"} />
+        </div>
+        {exRange.periods.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <th className="py-2 font-medium">Date</th><th className="py-2 font-medium">Model</th>
+                <th className="py-2 font-medium text-right">Exams</th><th className="py-2 font-medium">Breakdown</th>
+                <th className="py-2 font-medium text-right">$ earned</th><th></th>
+              </tr></thead>
+              <tbody className="font-mono">
+                {exRange.periods.map(p => (
+                  <tr key={p.id} className="border-b border-slate-50">
+                    <td className="py-1.5 font-sans">{String(p.bundleDate).slice(0, 10)}</td>
+                    <td className="py-1.5 font-sans">{p.payModel === "ppc" ? "Pay-per-click" : "Per diem"}{p.label ? <span className="text-slate-400"> · {p.label}</span> : ""}</td>
+                    <td className="py-1.5 text-right">{fmt(p.examCount, 0)}</td>
+                    <td className="py-1.5 text-[11px] text-slate-500">{p.payModel === "ppc" ? `MRI ${p.countMri} · CT ${p.countCt} · XR ${p.countXr}${p.countOther ? ` · Other ${p.countOther}` : ""}` : "—"}</td>
+                    <td className="py-1.5 text-right font-semibold text-amber-700">${fmt(p.amount, 0)}</td>
+                    <td className="py-1.5 text-right"><button onClick={() => delPeriod(p.id)} className="text-slate-300 hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <Empty msg="No extra-duty shifts in this date range." />}
+        <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />Extra duty is paid separately and never counts toward your wRVU target. Its YTD total is folded into the "Extra pay YTD (all sources)" KPI below.</p>
+      </div>
+
       {/* Official YTD KPIs (from reported baseline) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi icon={TrendingUp} label="YTD reported vs benchmark" value={fmt(t.ytd.base)} sub={`vs ${fmt(t.ytd.bench)} · +${fmt(t.ytd.variancePct, 0)}%`} good />
         <Kpi icon={Calendar} label="Total incl. extra coverage" value={fmt(t.ytd.total)} sub={`${fmt(t.ytd.base)} base + ${fmt(t.ytd.extra)} extra`} />
-        <Kpi icon={DollarSign} label="Extra-coverage pay YTD" value={`$${fmt(t.ytd.pay)}`} sub="reported in source" accent />
+        <Kpi icon={DollarSign} label="Extra pay YTD (all sources)" value={`$${fmt(t.ytd.pay + extraDutyYtd)}`} sub={`reported $${fmt(t.ytd.pay)} + extra-duty $${fmt(extraDutyYtd)}`} accent />
         <Kpi icon={Building2} label="Institution split (YTD)" value={`${fmt(t.umShare * 100, 0)} / ${fmt(t.jhsShare * 100, 0)}`} sub={`UM ${fmt(settings.umYTD)} · JHS ${fmt(settings.jhsYTD)}`} />
       </div>
 
@@ -895,13 +1012,71 @@ function NumCell({ v, onChange }) {
 }
 
 /* ============================================================================ TRACKER ============================================================================ */
-function Tracker({ log, reloadExams, settings }) {
+function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, ppcMri: 0, ppcCt: 0, ppcXr: 0 }, extraPeriods = [], reloadExtra }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [draft, setDraft] = useState(null);
   const [manualDate, setManualDate] = useState(localDay());
   const [curInst, setCurInst] = useState("UM");
   const fileRef = useRef();
+
+  // Extra-duty tagging: 'regular' = today's flow (counts toward wRVU target);
+  // 'extra' = log a paid shift (per-diem or PPC) into extra_duty_periods instead.
+  const [mode, setMode] = useState("regular");
+  const [payModel, setPayModel] = useState("per_diem");   // per_diem | ppc
+  const [exCounts, setExCounts] = useState({ mri: 0, ct: 0, xr: 0, other: 0 });
+  const [exExams, setExExams] = useState(0);              // per-diem exam count
+  const [exAmount, setExAmount] = useState("");           // per-diem $ override ('' => rate)
+  const [exLabel, setExLabel] = useState("");
+  // Seed the editable extra-duty counts from the OCR draft (or empty for manual).
+  useEffect(() => {
+    if (mode !== "extra") return;
+    const c = draft ? bucketCounts(draft.items) : { mri: 0, ct: 0, xr: 0, other: 0 };
+    setExCounts(c);
+    setExExams(draft ? draft.items.length : (c.mri + c.ct + c.xr + c.other));
+  }, [draft, mode]);
+
+  const exTotalCounts = exCounts.mri + exCounts.ct + exCounts.xr + exCounts.other;
+  const ppcAmount = exCounts.mri * (Number(extraRates.ppcMri) || 0)
+    + exCounts.ct * (Number(extraRates.ppcCt) || 0)
+    + exCounts.xr * (Number(extraRates.ppcXr) || 0);
+  const perDiemAmount = exAmount === "" ? (Number(extraRates.perDiemRate) || 0) : (Number(exAmount) || 0);
+  const exAmountFinal = payModel === "ppc" ? ppcAmount : perDiemAmount;
+
+  // This-month + YTD extra-duty pay for the KPI tile.
+  const exStats = useMemo(() => {
+    const mo = localMonth(), yr = localDay().slice(0, 4);
+    let month = 0, ytd = 0;
+    for (const p of extraPeriods) {
+      const day = String(p.bundleDate).slice(0, 10), amt = Number(p.amount) || 0;
+      if (day.slice(0, 7) === mo) month += amt;
+      if (day.slice(0, 4) === yr) ytd += amt;
+    }
+    return { month: Math.round(month), ytd: Math.round(ytd) };
+  }, [extraPeriods]);
+
+  async function commitExtra() {
+    setBusy(true);
+    try {
+      const body = {
+        payModel,
+        bundleDate: `${manualDate}T00:00:00`,
+        examCount: payModel === "ppc" ? exTotalCounts : exExams,
+        countMri: exCounts.mri, countCt: exCounts.ct, countXr: exCounts.xr, countOther: exCounts.other,
+        amount: exAmountFinal,
+        rateSnapshot: { perDiem: Number(extraRates.perDiemRate) || 0, mri: Number(extraRates.ppcMri) || 0, ct: Number(extraRates.ppcCt) || 0, xr: Number(extraRates.ppcXr) || 0 },
+        label: exLabel || null,
+        batchId: draft?.batchId || null,
+        source: draft ? "screenshot" : "manual",
+      };
+      const r = await fetch("/api/extra-duty", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) { setStatus("Save failed — please try again."); return; }
+      setDraft(null); setExCounts({ mri: 0, ct: 0, xr: 0, other: 0 }); setExExams(0); setExAmount(""); setExLabel("");
+      await reloadExtra?.();
+      setStatus(`Logged extra-duty ${payModel === "ppc" ? "pay-per-click" : "per-diem"} shift — $${fmt(exAmountFinal)} on ${manualDate}.`);
+    } catch { setStatus("Save failed — please try again."); }
+    finally { setBusy(false); }
+  }
 
   async function handleFiles(e) {
     const files = Array.from(e.target.files || []);
@@ -988,11 +1163,12 @@ function Tracker({ log, reloadExams, settings }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Kpi icon={Calendar} label="Tracked this month" value={fmt(a.thisMonth.actual, 0)} sub={`vs ${fmt(a.thisMonth.bench, 0)} target`} delta={a.thisMonth.variancePct} />
         <Kpi icon={TrendingUp} label="Tracked YTD" value={fmt(a.ytd.actual, 0)} sub={`${fmt(a.ytd.studies, 0)} studies logged`} />
         <Kpi icon={Target} label="Annual projection" value={fmt(a.annual.projected, 0)} sub={`vs ${fmt(a.annual.bench, 0)} target`} delta={a.annual.variancePct} />
         <Kpi icon={DollarSign} label="Tracked comp value" value={`$${fmt(a.ytd.actual * settings.ratePerWrvu, 0)}`} sub={`@ $${settings.ratePerWrvu}/wRVU`} accent />
+        <Kpi icon={Zap} label="Extra-duty pay" value={`$${fmt(exStats.month, 0)}`} sub={`$${fmt(exStats.ytd, 0)} YTD · this month`} />
       </div>
 
       <div>
@@ -1009,6 +1185,20 @@ function Tracker({ log, reloadExams, settings }) {
             </div>
             <label className="text-xs text-slate-500 flex items-center gap-2">Date<input type="date" value={manualDate} onChange={e => setManualDate(e.target.value)} className="border border-slate-200 rounded-md px-2 py-1 text-xs font-mono" /></label>
           </div>
+        </div>
+        {/* Regular vs extra-duty tagging. Extra duty is paid separately and does NOT count toward the wRVU target. */}
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5 text-xs font-medium">
+            <button onClick={() => setMode("regular")} className={`px-3 py-1.5 rounded-md ${mode === "regular" ? "bg-white shadow-sm text-slate-900" : "text-slate-500"}`}>Regular</button>
+            <button onClick={() => setMode("extra")} className={`px-3 py-1.5 rounded-md ${mode === "extra" ? "bg-white shadow-sm text-amber-600" : "text-slate-500"}`}>Extra duty</button>
+          </div>
+          {mode === "extra" && (
+            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5 text-xs font-medium">
+              <button onClick={() => setPayModel("per_diem")} className={`px-3 py-1.5 rounded-md ${payModel === "per_diem" ? "bg-white shadow-sm text-slate-900" : "text-slate-500"}`}>Per diem</button>
+              <button onClick={() => setPayModel("ppc")} className={`px-3 py-1.5 rounded-md ${payModel === "ppc" ? "bg-white shadow-sm text-slate-900" : "text-slate-500"}`}>Pay-per-click</button>
+            </div>
+          )}
+          {mode === "extra" && <span className="text-[11px] text-amber-600 flex items-center gap-1"><Info className="w-3.5 h-3.5 shrink-0" />Logged as a paid shift — not counted toward your wRVU target.</span>}
         </div>
         <div className="grid md:grid-cols-2 gap-4">
           <div>
@@ -1027,7 +1217,7 @@ function Tracker({ log, reloadExams, settings }) {
         </div>
         {status && !busy && <div className="mt-3 text-xs text-slate-500 flex items-center gap-1.5"><Zap className="w-3.5 h-3.5 text-teal-500" />{status}</div>}
 
-        {draft && (
+        {mode === "regular" && draft && (
           <div className="mt-4 rounded-xl border border-teal-200 bg-teal-50/50 p-4">
             <div className="flex items-center justify-between mb-2">
               <div className="text-sm font-medium text-teal-900 flex items-center gap-2"><FileImage className="w-4 h-4" />Review — {draft.items.length} exams · {draft.source}</div>
@@ -1051,6 +1241,61 @@ function Tracker({ log, reloadExams, settings }) {
               <button onClick={() => setDraft(null)} className="px-3 py-1.5 rounded-lg text-slate-500 text-sm hover:bg-slate-100">Discard</button>
               <span className="text-[11px] text-slate-400">Each row is one exam with its own date. Tap the site badge to reassign. Amber rows need a code.</span>
             </div>
+          </div>
+        )}
+
+        {mode === "extra" && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-medium text-amber-900 flex items-center gap-2"><Zap className="w-4 h-4" />Extra-duty shift · {payModel === "ppc" ? "pay-per-click" : "per diem"} · {manualDate}</div>
+              {draft && <div className="text-xs font-mono text-amber-700">{draft.items.length} detected</div>}
+            </div>
+
+            {payModel === "per_diem" ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <label className="flex flex-col gap-1 text-[11px] font-medium text-slate-500">Exams in shift
+                  <input type="number" min="0" value={exExams} onChange={e => setExExams(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                    className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-mono text-slate-900" /></label>
+                <label className="flex flex-col gap-1 text-[11px] font-medium text-slate-500">Pay for shift ($)
+                  <input type="number" min="0" step="0.01" value={exAmount === "" ? "" : exAmount} placeholder={String(Number(extraRates.perDiemRate) || 0)}
+                    onChange={e => setExAmount(e.target.value)}
+                    className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-mono text-slate-900" /></label>
+                <div className="flex flex-col gap-1 text-[11px] font-medium text-slate-500">Earnings
+                  <div className="rounded-lg bg-white border border-amber-200 px-2.5 py-1.5 text-sm font-mono font-bold text-amber-700">${fmt(exAmountFinal, 0)}</div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { k: "mri", label: "MRI", rate: extraRates.ppcMri },
+                    { k: "ct", label: "CT", rate: extraRates.ppcCt },
+                    { k: "xr", label: "XR", rate: extraRates.ppcXr },
+                    { k: "other", label: "Other", rate: 0 },
+                  ].map(({ k, label, rate }) => (
+                    <label key={k} className="flex flex-col gap-1 text-[11px] font-medium text-slate-500">{label} <span className="text-slate-400">· ${fmt(Number(rate) || 0, 0)}/ea</span>
+                      <input type="number" min="0" value={exCounts[k]} onChange={e => setExCounts(c => ({ ...c, [k]: Math.max(0, Math.round(Number(e.target.value) || 0)) }))}
+                        className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-mono text-slate-900" /></label>
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center justify-between text-sm">
+                  <span className="text-[11px] text-slate-500">{exTotalCounts} exams{exCounts.other ? ` · ${exCounts.other} "Other" not paid` : ""}</span>
+                  <span className="font-mono font-bold text-amber-700">${fmt(exAmountFinal, 0)}</span>
+                </div>
+              </>
+            )}
+
+            <div className="flex flex-wrap gap-2 mt-3 items-center">
+              <input value={exLabel} onChange={e => setExLabel(e.target.value)} placeholder="Note (optional)"
+                className="flex-1 min-w-[140px] border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm bg-white" />
+              <button onClick={commitExtra} disabled={busy || exAmountFinal <= 0} className="px-4 py-1.5 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700 disabled:opacity-50 flex items-center gap-1.5"><Check className="w-4 h-4" />Save shift</button>
+              {draft && <button onClick={() => setDraft(null)} className="px-3 py-1.5 rounded-lg text-slate-500 text-sm hover:bg-slate-100">Clear photo</button>}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />
+              {payModel === "per_diem"
+                ? "Pay defaults to your per-diem rate (Settings) — edit it for this shift if it differs. Uses the Date above."
+                : "Counts are auto-filled from the photo and editable; earnings = Σ(count × modality rate). Set rates in Settings."}
+            </p>
           </div>
         )}
       </div>
@@ -1329,11 +1574,16 @@ function Reference({ settings }) {
 }
 
 /* ============================================================================ SETTINGS ============================================================================ */
-function SettingsDrawer({ settings, onSave, onClose }) {
+function SettingsDrawer({ settings, onSave, extraRates = { perDiemRate: 0, ppcMri: 0, ppcCt: 0, ppcXr: 0 }, onSaveExtraRates, onClose }) {
   const [s, setS] = useState(settings);
+  const [er, setER] = useState(extraRates);
   const field = (k, label, sub, step = 1) => (
     <div><label className="text-sm font-medium text-slate-700">{label}</label>{sub && <p className="text-[11px] text-slate-400 mb-1">{sub}</p>}
       <input type="number" step={step} value={s[k]} onChange={e => setS({ ...s, [k]: Number(e.target.value) })} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono mt-1" /></div>
+  );
+  const erField = (k, label, sub, step = 0.01) => (
+    <div><label className="text-sm font-medium text-slate-700">{label}</label>{sub && <p className="text-[11px] text-slate-400 mb-1">{sub}</p>}
+      <input type="number" min="0" step={step} value={er[k]} onChange={e => setER({ ...er, [k]: Math.max(0, Number(e.target.value) || 0) })} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono mt-1" /></div>
   );
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
@@ -1348,9 +1598,16 @@ function SettingsDrawer({ settings, onSave, onClose }) {
           <div className="pt-2 border-t border-slate-100" />
           {field("umYTD", "UHealth / UM — YTD wRVU", "Reported institution total")}
           {field("jhsYTD", "Jackson / JHS — YTD wRVU", "Reported institution total")}
+          <div className="pt-2 border-t border-slate-100" />
+          <div className="text-sm font-semibold text-slate-700 flex items-center gap-1.5"><Zap className="w-3.5 h-3.5 text-amber-600" />Extra-duty pay</div>
+          <p className="text-[11px] text-slate-400 -mt-2">Rates used to price extra-duty shifts. Per-diem is a default you can override per shift; PPC pays per exam by modality.</p>
+          {erField("perDiemRate", "Per-diem rate ($ / shift)")}
+          {erField("ppcMri", "Pay-per-click — MRI ($ / exam)")}
+          {erField("ppcCt", "Pay-per-click — CT ($ / exam)")}
+          {erField("ppcXr", "Pay-per-click — XR ($ / exam)")}
         </div>
         <div className="mt-6 rounded-xl bg-slate-50 p-3 text-[11px] text-slate-500 leading-relaxed"><strong className="text-slate-700">Your data only:</strong> set your reported institution YTD wRVUs above, then add your monthly reported baseline in the Timeline tab. Everything here is private to your account.</div>
-        <button onClick={() => { onSave(s); onClose(); }} className="mt-6 w-full py-2.5 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800">Save settings</button>
+        <button onClick={() => { onSave(s); onSaveExtraRates?.(er); onClose(); }} className="mt-6 w-full py-2.5 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800">Save settings</button>
       </div>
     </div>
   );
