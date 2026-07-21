@@ -402,6 +402,9 @@ export default function NeuroRVU() {
   // + the user's pay rates. Both live in dedicated DB tables, per Clerk user.
   const [extraPeriods, setExtraPeriods] = useState([]);
   const [extraRates, setExtraRates] = useState({ perDiemRate: 0, ppcMri: 0, ppcCt: 0, ppcXr: 0 });
+  // Tracked-explorer range (Timeline tab) lives here — the Timeline component
+  // unmounts on tab switch, so its selection must be lifted + persisted per user.
+  const [explorer, setExplorer] = useState({ gran: "week", start: "", end: "" });
 
   // Exams are the source of truth (dedicated DB table), loaded per Clerk user.
   async function reloadExams() {
@@ -437,6 +440,8 @@ export default function NeuroRVU() {
       // No shared seed — a new user's timeline reflects only their own entries.
       setBaseline(Array.isArray(bl) ? bl : []);
       setSettings({ ...DEFAULTS, ...(await loadKey("nrv_settings", DEFAULTS)) });
+      const ex = await loadKey("nrv_explorer", null);
+      if (ex && typeof ex === "object") setExplorer({ gran: ex.gran === "month" ? "month" : "week", start: ex.start || "", end: ex.end || "" });
       setReady(true);
     })();
   }, []);
@@ -456,6 +461,7 @@ export default function NeuroRVU() {
 
   const updateBaseline = (n) => { setBaseline(n); saveKey("nrv_baseline", n); };
   const updateSettings = (n) => { setSettings(n); saveKey("nrv_settings", n); };
+  const updateExplorer = (n) => { setExplorer(n); saveKey("nrv_explorer", n); };
 
   if (!ready) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-6 h-6 animate-spin text-teal-600" /></div>;
 
@@ -481,7 +487,7 @@ export default function NeuroRVU() {
 
       <main className="max-w-6xl mx-auto px-5 py-6 pb-28 sm:pb-6">
         {tab === "tracker" && <Tracker log={log} reloadExams={reloadExams} settings={settings} extraRates={extraRates} extraPeriods={extraPeriods} reloadExtra={reloadExtra} />}
-        {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} updateSettings={updateSettings} log={log} settings={settings} extraPeriods={extraPeriods} reloadExtra={reloadExtra} />}
+        {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} updateSettings={updateSettings} log={log} settings={settings} extraPeriods={extraPeriods} reloadExtra={reloadExtra} explorer={explorer} updateExplorer={updateExplorer} />}
         {tab === "exams" && <ExamsView log={log} settings={settings} />}
         {tab === "uploads" && <UploadsView reloadExams={reloadExams} />}
         {tab === "reference" && <Reference settings={settings} />}
@@ -601,7 +607,7 @@ function buildTimeline(baseline, log, settings) {
   return { months, ytd, umShare, jhsShare };
 }
 
-function Timeline({ baseline, updateBaseline, updateSettings, log, settings, extraPeriods = [], reloadExtra }) {
+function Timeline({ baseline, updateBaseline, updateSettings, log, settings, extraPeriods = [], reloadExtra, explorer, updateExplorer }) {
   const [view, setView] = useState("coverage"); // coverage | institution | reconcile
   const [editing, setEditing] = useState(false);
   const t = useMemo(() => buildTimeline(baseline, log, settings), [baseline, log, settings]);
@@ -668,20 +674,23 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
   const C = { um: "#f97316", jhs: "#0ea5e9", base: "#0d9488", extra: "#5eead4", bench: "#6366f1", cum: "#0f172a", trk: "#0d9488" };
 
   // ---- Tracked explorer: custom date range × weekly/monthly ----
+  // Selection state lives in the root (persisted per user via /api/store under
+  // "nrv_explorer") so the last-picked period survives tab switches + reopens.
   const dataDays = useMemo(() => log.map(s => String(s.date).slice(0, 10)).filter(Boolean).sort(), [log]);
   const dataMin = dataDays[0] || localDay(), dataMax = dataDays[dataDays.length - 1] || localDay();
-  const [gran, setGran] = useState("week");   // week | month
-  const [rStart, setRStart] = useState("");
-  const [rEnd, setREnd] = useState("");
-  // Seed the range to the full tracked span once data lands (leave user edits alone).
-  useEffect(() => { if (dataDays.length && !rStart && !rEnd) { setRStart(dataMin); setREnd(dataMax); } }, [dataDays.length]);
+  const { gran, start: rStart, end: rEnd } = explorer;
+  const setGran = (g) => updateExplorer({ ...explorer, gran: g });
+  const setRStart = (s) => updateExplorer({ ...explorer, start: s });
+  const setREnd = (e) => updateExplorer({ ...explorer, end: e });
+  // Unset bounds fall back to the full tracked span (nothing saved until the
+  // user actually picks — a fresh account keeps following its growing data).
   const start = rStart || dataMin, end = rEnd || dataMax;
   const range = useMemo(() => buildRange(log, settings, start, end, gran), [log, settings, start, end, gran]);
   const exRange = useMemo(() => buildExtraDuty(extraPeriods, start, end, gran), [extraPeriods, start, end, gran]);
   async function delPeriod(id) {
     try { await fetch(`/api/extra-duty?id=${encodeURIComponent(id)}`, { method: "DELETE" }); await reloadExtra?.(); } catch {}
   }
-  const preset = (s, e) => { setRStart(s); setREnd(e); };
+  const preset = (s, e) => updateExplorer({ ...explorer, start: s, end: e });
   const donut = [{ name: "UHealth / UM", value: settings.umYTD, color: C.um }, { name: "Jackson / JHS", value: settings.jhsYTD, color: C.jhs }];
   const instTotal = settings.umYTD + settings.jhsYTD;
   const instMismatch = Math.abs(instTotal - t.ytd.total) > 5;
