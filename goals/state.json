@@ -55,7 +55,7 @@
       "roster_conclusion": "No unexplained accounts. The one flagged account (gaurav.saigal@rocketmail.com, created 2026-08-14 while SETUP_TOKEN was live) was confirmed by the owner as Gaurav Saigal's personal email. Session revocation is NOT required as incident response."
     },
     "N00c-pwa-lock-llm-proxy": {
-      "status": "ready",
+      "status": "blocked_external",
       "priority": 3,
       "built": "builder/N00c-llm-proxy (d57302b). NOT merged.",
       "verified_by_builder": [
@@ -64,7 +64,25 @@
       ],
       "blocked_on": "INTEGRATION, not credentials. N00c changes callClaude from (messages,{system,tools,maxTokens}) to (template,{params,attachments}). N00f's assertNoUnredactedImages() walks message.content[] and identifies redacted blocks by WeakSet IDENTITY; under the new signature the client passes data-URL strings, so the guard loses its identity handle and degrades to the isRedactedPayload string check. Restoring that guarantee is a DESIGN change to a PHI control, not a merge conflict.",
       "partial_resolution": "route.js was reconciled (N00c structure + N00d code vocabulary) and preserved at goals/evidence/A0-integration/route.js.resolved. package.json and tsconfig.json resolutions preserved alongside.",
-      "recontracted": "2026-08-18 \u2014 the redaction guard redesign is now the PRIMARY contract, not a merge afterthought. Start from builder/N00c-llm-proxy (d57302b) per D38."
+      "recontracted": "2026-08-18 \u2014 the redaction guard redesign is now the PRIMARY contract, not a merge afterthought. Start from builder/N00c-llm-proxy (d57302b) per D38.",
+      "merged": "PR #3 -> main 3b3a5f5, deployed to production 2026-08-18",
+      "verified": [
+        "test:redaction 30/30 (unchanged by the signature change)",
+        "forged-attachment 16/16 \u2014 every forged attachment refused BEFORE the request; the server received only the 3 honest sends",
+        "test:llm-proxy-contract 29/29 static",
+        "rate limit PASSES --direct against the real dev Neon branch",
+        "spend cap PASSES --direct against real llm_usage rows",
+        "next build passes",
+        "production after deploy: health green, error envelope intact, all surfaces up"
+      ],
+      "guard_resolution": "RESOLVED. The client passes the producer's own objects through instead of flattening to data-URL strings, so WeakSet identity survives the signature change. assertApprovedAttachments() fails closed: unmarked, unknown-type, hand-built or non-object all throw. A byte-level second witness exists only so a framework-cloned block is not FALSELY blocked; it can admit nothing that was not itself redaction output.",
+      "production_migration": "llm_usage + llm_rate_buckets applied to main BEFORE the code merge, so no window existed where the deployed route referenced missing tables. Snapshot pre-N00c-llm-usage (br-fragrant-violet-atwws46l), full data+schema, auto-delete never. Audited in goals/evidence/prod-audit-log.jsonl.",
+      "documented_exception": "DELIBERATE INV-ADDITIVE-CONTRACTS break: /api/claude 400s on system/tools/maxTokens rather than serving both shapes for a release, because the deprecation window IS the exposure this node closes. Verified safe: exactly one caller (NeuroRVU.jsx:119, ships in the same deploy); ZERO references in neurorvu-ios, which calls /api/v1/resolve. Residual: a browser tab open across the deploy gets 400 until reload. This is an EXCEPTION with recorded reasoning, not precedent.",
+      "operator_must_close": [
+        "live HTTP contract / rate-limit / spend-cap probes need a real Clerk session (.env.local holds the dev Neon branch but no Clerk keys)",
+        "prompt-cache hit (cache_read_input_tokens > 0) needs two real billed Anthropic calls; the cache breakpoint itself is verified structurally"
+      ],
+      "feature_removed": "Codes tab 'Live value' per-code lookup \u2014 the only web_search call site (D8). N14 replaces it with real CMS payment estimates per locality, offline."
     },
     "N00c-edge-usage-cap": {
       "status": "blocked",
