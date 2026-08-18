@@ -82,6 +82,27 @@ HARD RULES:
     splitRecommended and say precisely where the seam is.
   - Any node touching production needs a rollback stanza (INV-PROD-AUDITED).
   - PHI-adjacent nodes verify against SYNTHETIC fixtures only (D25a).
+  - A command that exits 0 when the thing it checks is ABSENT is a vacuous pass and is
+    itself a defect (INV-CHECKS-ACTUALLY-RUN). 'pnpm --filter X' with no match, a poison
+    branch cut from a base where the workflow does not exist, '! grep' against a missing
+    file, a test runner that collects zero tests — all exit 0 and prove nothing. Every
+    negated or filtered check must first assert that its target EXISTS.
+  - verify.runtime entries are INDEPENDENT commands. They do not share a shell, a working
+    directory, or variables. A step that consumes $VAR set by an earlier step cannot run.
+    Use literal <placeholder> tokens, or make the sequence one step.
+  - Nothing creates parent directories for you. If a step redirects into
+    goals/evidence/<node>/, an earlier step must 'mkdir -p' it.
+  - Every file named in 'evidence:' must be WRITTEN by some command in the block.
+  - Prose is not a command. "on a throwaway branch, add X and open a PR" belongs in
+    verify.manual as a named procedure, or must be spelled out as the actual git/gh
+    sequence. It cannot sit in verify.runtime.
+
+PRIOR AUDIT FEEDBACK — READ IT FIRST.
+If goals/evidence/A1-contract-audit/2026-08-18-rejections.md exists, read the section for
+YOUR node before writing anything. A previous pass was rejected 0-of-8 with 142 specific
+problems. Some are stale (they were written against a main that lacked goals/ and had a
+9-line drizzle.config.js — both fixed). Most are real. Do not reproduce them, and do not
+assume a finding is stale without checking the file on disk yourself.
 `
 
 phase('Select')
@@ -119,6 +140,11 @@ CONTRACT node ${entry.id} — "${entry.title}".
 Goals: ${entry.goals.join(', ')}. Phase: ${entry.phase}.
 Depends on: ${(entry.dependsOn ?? []).join(', ') || 'nothing'}.
 Backlog notes: ${entry.notes ?? '(none)'}
+
+A previous attempt at THIS node was REJECTED by the auditor. Read
+goals/evidence/A1-contract-audit/2026-08-18-rejections.md, find the "## ${entry.id}"
+section, and address every problem in it. If goals/nodes/${entry.id}.yaml already exists,
+REVISE it rather than starting over — the pre-validated parts are worth keeping.
 
 1. Run a codegraph query to understand the current shape of what this node changes. Record
    the query you used — it becomes the node's context_query, and it is the ONLY context
