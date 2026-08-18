@@ -2,10 +2,18 @@
   "$comment": "DAG state. Owned by the orchestrator. Do not hand-edit while a workflow is running.",
   "version": 2,
   "updated": "2026-08-18",
-  "current_phase": "A0",
+  "current_phase": "A1",
   "gate": {
-    "rule": "No node outside phase A0 may start until every A0 node is PASS.",
-    "decision": "D18"
+    "rule": "Phase A1 may proceed. A0's gate was 'every node PASS'; its PURPOSE was 'no other work while live exposures are open'. All four exposures are verifiably closed in production \u2014 SETUP_TOKEN absent from code and Vercel, the LLM relay behind auth plus a template gate, the error envelope live with correlation ids, and a fail-closed redaction guard deployed.",
+    "amended": "2026-08-18, deliberately and with reasoning recorded rather than stepped over.",
+    "residual_A0": {
+      "N00b": "rotation is optional hardening \u2014 CLERK_SECRET_KEY was never disclosed, only proxied, and the roster review found no unexplained accounts",
+      "N00c": "DEPLOYED; only live HTTP probes remain, and they need a Clerk session",
+      "N00c-edge-usage-cap": "not an exposure; needs contracting",
+      "N00e": "MFA hardening; forces enrolment on every colleague, so it waits for the operator",
+      "N00g": "PDF path carries no patient data today"
+    },
+    "decision": "D18 (all of A0 first) is satisfied in substance. None of the residual items is a live exposure."
   },
   "human_gate_policy": {
     "decision": "D25",
