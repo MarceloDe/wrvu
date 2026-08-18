@@ -72,7 +72,36 @@ const PROBES = [
   { route: "/api/extra-duty/rates", method: "POST", path: "/api/extra-duty/rates", body: { perDiemRate: 0, ppcMri: 0, ppcCt: 0, ppcXr: 0 }, write: true },
   { route: "/api/rvu-tables", method: "GET", path: "/api/rvu-tables" },
   { route: "/api/rvu-tables", method: "POST", path: "/api/rvu-tables", body: { name: "probe", codes: [] }, write: true },
-  { route: "/api/claude", method: "POST", path: "/api/claude", body: { messages: [{ role: "user", content: "probe" }] } },
+  // N00c: the wire is { template, params, attachments }. A `messages` body is
+  // now a 400 before the route does any work, which would make this probe test
+  // the request gate instead of the failure envelope.
+  {
+    route: "/api/claude",
+    method: "POST",
+    path: "/api/claude",
+    body: {
+      template: "ocr",
+      params: {},
+      attachments: [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          },
+        },
+      ],
+    },
+  },
+  { route: "/api/internal/usage", method: "GET", path: "/api/internal/usage" },
+  {
+    route: "/api/internal/usage",
+    method: "POST",
+    path: "/api/internal/usage",
+    body: { source: "edge-api:resolve", inputTokens: 1, outputTokens: 1 },
+    write: true,
+  },
 ];
 
 // Anything in this list appearing in a response body is a leak.

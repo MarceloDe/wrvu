@@ -29,6 +29,15 @@ export const ERROR_CODES = [
   "upstream_payload_too_large",
   "upstream_invalid_image",
   "upstream_rejected",
+  // N00c — the LLM proxy's own refusals. Each names a rule of OURS, never a
+  // table, driver or vendor.
+  "server_owned_field",
+  "unknown_template",
+  "unsupported_media_type",
+  "attachment_too_large",
+  "too_many_attachments",
+  "rate_limited",
+  "daily_cap_reached",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

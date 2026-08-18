@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * N00f — "no image reaches /api/claude without passing through redactImage".
+ * N00f + N00c — "no attachment reaches /api/claude without passing through
+ * lib/redact".
  *
  * A source-level proof rather than a convention. Parses every app/component/lib
  * source file with the TypeScript compiler AST and asserts:
@@ -10,11 +11,16 @@
  *   2. redactImageBlock is called only from lib/redact/.
  *   3. There is exactly one fetch("/api/claude") in the codebase, and it lives
  *      inside callClaude().
- *   4. callClaude() calls assertNoUnredactedImages(messages) BEFORE that fetch,
- *      and imports it from lib/redact/imageRedactor.
- *   5. Every callClaude() call site's content blocks have provable provenance:
- *      text blocks, or values produced by buildRedactedImageBlock/prepareDoc.
- *   6. prepareDoc only bypasses redaction for application/pdf document blocks.
+ *   4. callClaude() calls assertApprovedAttachments(attachments) BEFORE that
+ *      fetch, and imports it from lib/redact/imageRedactor.
+ *   4b. assertApprovedAttachments itself still delegates to
+ *      assertNoUnredactedImages — the N00f guard is not bypassed, it is wrapped.
+ *   5. Every callClaude() call site names a STRING template id and every element
+ *      of its `attachments` array has provable provenance: a value produced by
+ *      buildRedactedImageBlock / buildDocumentAttachment / prepareDoc.
+ *   6. prepareDoc bypasses redaction only through buildDocumentAttachment (which
+ *      admits application/pdf and nothing else), and routes every other file
+ *      through buildRedactedImageBlock.
  *
  * Exit 0 = no bypass exists. Exit 1 = a path was found; the message names it.
  */
@@ -27,7 +33,11 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..",
 const SCAN_DIRS = ["app", "components", "lib"];
 const REDACT_DIR = path.join("lib", "redact");
 const SOURCE_EXT = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs"]);
-const ALLOWED_IMAGE_PRODUCERS = new Set(["buildRedactedImageBlock", "prepareDoc"]);
+const ALLOWED_IMAGE_PRODUCERS = new Set([
+  "buildRedactedImageBlock",
+  "buildDocumentAttachment",
+  "prepareDoc",
+]);
 
 const failures = [];
 const notes = [];
@@ -130,16 +140,16 @@ for (const hit of claudeFetches) {
   }
   let guardPos = -1;
   walk(fn, (node) => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "assertNoUnredactedImages") {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "assertApprovedAttachments") {
       guardPos = node.getStart(hit.sf);
     }
   });
   if (guardPos === -1) {
-    fail(hit.rel, lineOf(hit.sf, hit.node), "callClaude does not call assertNoUnredactedImages");
+    fail(hit.rel, lineOf(hit.sf, hit.node), "callClaude does not call assertApprovedAttachments");
   } else if (guardPos > hit.node.getStart(hit.sf)) {
-    fail(hit.rel, lineOf(hit.sf, hit.node), "assertNoUnredactedImages runs AFTER the fetch");
+    fail(hit.rel, lineOf(hit.sf, hit.node), "assertApprovedAttachments runs AFTER the fetch");
   } else {
-    notes.push(`${hit.rel}:${lineOf(hit.sf, hit.node)} guarded by assertNoUnredactedImages before the request`);
+    notes.push(`${hit.rel}:${lineOf(hit.sf, hit.node)} guarded by assertApprovedAttachments before the request`);
   }
 
   let imported = false;
@@ -149,10 +159,34 @@ for (const hit of claudeFetches) {
     if (!from.includes("redact/imageRedactor")) return;
     const bindings = node.importClause && node.importClause.namedBindings;
     if (bindings && ts.isNamedImports(bindings)) {
-      for (const el of bindings.elements) if (el.name.text === "assertNoUnredactedImages") imported = true;
+      for (const el of bindings.elements) if (el.name.text === "assertApprovedAttachments") imported = true;
     }
   });
-  if (!imported) fail(hit.rel, 1, "assertNoUnredactedImages is not imported from lib/redact/imageRedactor");
+  if (!imported) fail(hit.rel, 1, "assertApprovedAttachments is not imported from lib/redact/imageRedactor");
+}
+
+/* ---- 4b: the new gate wraps the N00f gate, it does not replace it ---- */
+{
+  const rel = path.join("lib", "redact", "imageRedactor.ts");
+  const sf = parsed.get(rel);
+  if (!sf) {
+    failures.push(`${rel} was not scanned — the guard module is missing`);
+  } else {
+    let found = null;
+    let delegates = false;
+    walk(sf, (node) => {
+      if (!ts.isFunctionDeclaration(node) || !node.name || node.name.text !== "assertApprovedAttachments") return;
+      found = node;
+      walk(node, (inner) => {
+        if (ts.isCallExpression(inner) && ts.isIdentifier(inner.expression) && inner.expression.text === "assertNoUnredactedImages") {
+          delegates = true;
+        }
+      });
+    });
+    if (!found) failures.push(`${rel} does not define assertApprovedAttachments`);
+    else if (!delegates) fail(rel, lineOf(sf, found), "assertApprovedAttachments no longer delegates to assertNoUnredactedImages");
+    else notes.push(`${rel}:${lineOf(sf, found)} assertApprovedAttachments delegates to assertNoUnredactedImages`);
+  }
 }
 
 /* ---- 5: provenance of every callClaude() content block ---- */
@@ -212,61 +246,78 @@ for (const [rel, sf] of parsed) {
     if (!ts.isCallExpression(node)) return;
     if (!(ts.isIdentifier(node.expression) && node.expression.text === "callClaude")) return;
     callSites += 1;
-    const messages = node.arguments[0];
     const line = lineOf(sf, node);
-    if (!messages || !ts.isArrayLiteralExpression(messages)) {
-      fail(rel, line, "callClaude called with a non-literal messages array — provenance cannot be proven");
+
+    // N00c: arg 0 is a template id chosen from the SERVER registry, never a
+    // prompt and never a messages array.
+    const templateArg = node.arguments[0];
+    const templateId = stringOf(templateArg);
+    if (!templateId) {
+      fail(rel, line, "callClaude's first argument is not a literal template id — the prompt would not be server-owned");
+      return;
+    }
+    notes.push(`${rel}:${line} template "${templateId}"`);
+
+    const options = node.arguments[1];
+    if (!options) {
+      notes.push(`${rel}:${line} no attachments`);
+      return;
+    }
+    if (!ts.isObjectLiteralExpression(options)) {
+      fail(rel, line, "callClaude's options argument is not an object literal — provenance cannot be proven");
+      return;
+    }
+    for (const prop of options.properties) {
+      const key = ts.isPropertyAssignment(prop) && (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name))
+        ? prop.name.text
+        : null;
+      if (key !== "params" && key !== "attachments") {
+        fail(rel, line, `callClaude option "${key || "?"}" is not part of the (template, {params, attachments}) contract`);
+      }
+    }
+    const attachments = propValue(options, "attachments");
+    if (!attachments) {
+      notes.push(`${rel}:${line} no attachments`);
       return;
     }
     const scope = enclosingFunction(node) || sf;
-    for (const message of messages.elements) {
-      if (!ts.isObjectLiteralExpression(message)) {
-        fail(rel, line, "message is not an object literal — provenance cannot be proven");
-        continue;
-      }
-      const content = propValue(message, "content");
-      if (!content) continue;
-      if (ts.isStringLiteral(content) || ts.isTemplateExpression(content) || ts.isNoSubstitutionTemplateLiteral(content)) {
-        notes.push(`${rel}:${line} text-only prompt (no image)`);
-        continue;
-      }
-      if (!ts.isArrayLiteralExpression(content)) {
-        fail(rel, line, "message content is neither text nor a literal block array");
-        continue;
-      }
-      for (const element of content.elements) {
+    if (ts.isArrayLiteralExpression(attachments)) {
+      for (const element of attachments.elements) {
         const verdict = provenance(element, scope, sf);
-        if (!verdict.ok) fail(rel, line, `content block with unprovable provenance: ${verdict.why}`);
-        else notes.push(`${rel}:${line} content block ok (${verdict.why})`);
+        if (!verdict.ok) fail(rel, line, `attachment with unprovable provenance: ${verdict.why}`);
+        else notes.push(`${rel}:${line} attachment ok (${verdict.why})`);
       }
+    } else {
+      const verdict = provenance(attachments, scope, sf);
+      if (!verdict.ok) fail(rel, line, `attachment list with unprovable provenance: ${verdict.why}`);
+      else notes.push(`${rel}:${line} attachment list ok (${verdict.why})`);
     }
   });
 }
 if (!callSites) failures.push("found no callClaude() call sites — the scanner is not seeing the upload path");
 
-/* ---- 6: prepareDoc bypasses redaction only for real PDFs ---- */
+/* ---- 6: prepareDoc bypasses redaction only through the PDF producer ---- */
+let sawPrepareDoc = false;
 for (const [rel, sf] of parsed) {
   walk(sf, (node) => {
     if (!ts.isFunctionDeclaration(node) || !node.name || node.name.text !== "prepareDoc") return;
-    let sawPdfGuard = false;
+    sawPrepareDoc = true;
+    let sawPdfProducer = false;
     let sawRedactedFallthrough = false;
     walk(node, (inner) => {
-      if (ts.isObjectLiteralExpression(inner)) {
-        const source = propValue(inner, "source");
-        const mediaType = source && ts.isObjectLiteralExpression(source) ? stringOf(propValue(source, "media_type")) : null;
-        if (mediaType === "application/pdf") sawPdfGuard = true;
-        else if (stringOf(propValue(inner, "type")) === "document") {
-          fail(rel, lineOf(sf, inner), "prepareDoc builds a non-PDF document block");
-        }
+      if (ts.isObjectLiteralExpression(inner) && propValue(inner, "source")) {
+        fail(rel, lineOf(sf, inner), "prepareDoc builds a content block itself — every attachment must come from lib/redact/");
       }
-      if (ts.isCallExpression(inner) && ts.isIdentifier(inner.expression) && inner.expression.text === "buildRedactedImageBlock") {
-        sawRedactedFallthrough = true;
+      if (ts.isCallExpression(inner) && ts.isIdentifier(inner.expression)) {
+        if (inner.expression.text === "buildDocumentAttachment") sawPdfProducer = true;
+        if (inner.expression.text === "buildRedactedImageBlock") sawRedactedFallthrough = true;
       }
     });
-    if (!sawPdfGuard) fail(rel, lineOf(sf, node), "prepareDoc no longer restricts its document block to application/pdf");
+    if (!sawPdfProducer) fail(rel, lineOf(sf, node), "prepareDoc no longer routes PDFs through buildDocumentAttachment");
     if (!sawRedactedFallthrough) fail(rel, lineOf(sf, node), "prepareDoc does not route non-PDF files through buildRedactedImageBlock");
   });
 }
+if (!sawPrepareDoc) failures.push("found no prepareDoc() — the report-upload path is not being checked");
 
 const report = {
   check: "no-unredacted-path",

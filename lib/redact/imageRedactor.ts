@@ -26,6 +26,23 @@ export type RedactionRegionId = "name" | "mrn";
 /** The region ids a profile must carry before any upload is allowed. */
 export const REQUIRED_REGION_IDS: RedactionRegionId[] = ["name", "mrn"];
 
+/**
+ * Every region id must be present before an image block may be minted.
+ * Without this, `redactImageBlock(bitmap, [])` would be a legal call that
+ * registered an UNREDACTED image as approved — the exact hand-construction
+ * bypass N00c contract 2 asks us to close.
+ */
+export function assertRegionsCoverRequired(regions: RedactionRegion[]): void {
+  for (const id of REQUIRED_REGION_IDS) {
+    if (!regions.some((r) => r && r.id === id)) {
+      throw new RedactionError(
+        "profile-incomplete",
+        `Mark the ${id === "mrn" ? "MRN" : "patient name"} column before uploading.`,
+      );
+    }
+  }
+}
+
 /** Every key a region is allowed to have. Anything else is rejected. */
 const ALLOWED_REGION_KEYS = ["id", "x", "y", "w", "h"];
 
@@ -148,22 +165,59 @@ export function redactImage(
 
 /**
  * The ONLY producer of an Anthropic image content block in this codebase.
- * Registers the block (and its encoded bytes) so `assertNoUnredactedImages` can
- * prove, at the network boundary, that what is about to be sent is redaction
- * output.
+ * Registers the block (and its encoded bytes) so `assertNoUnredactedImages` and
+ * `assertApprovedAttachments` can prove, at the network boundary, that what is
+ * about to be sent is redaction output.
+ *
+ * The region set must cover every REQUIRED_REGION_ID: minting an approved block
+ * from an empty or partial mask would be a bypass of the very guarantee the
+ * registry exists to prove.
  */
 export function redactImageBlock(
   bitmap: RedactableBitmap,
   regions: RedactionRegion[],
   options: RedactOptions = {},
 ): AnthropicImageBlock {
+  assertGeometryOnly(regions);
+  assertRegionsCoverRequired(regions);
   const encoded = encodeRedacted(bitmap, regions, options);
   const block: AnthropicImageBlock = {
     type: "image",
     source: { type: "base64", media_type: encoded.mediaType, data: encoded.base64 },
   };
-  markRedactedBlock(block);
+  markApprovedAttachment(block);
   markRedactedPayload(encoded.base64);
+  return block;
+}
+
+/** A non-image attachment. Today that is one thing only: a PDF report. */
+export interface AnthropicDocumentBlock {
+  type: "document";
+  source: { type: "base64"; media_type: "application/pdf"; data: string };
+}
+
+/**
+ * The ONLY producer of a non-image attachment. A PDF carries no pixels this
+ * module can mask, so it is not "redacted" — it is *enumerated*: the user picks
+ * a PDF report deliberately, and it is the single non-image media type the
+ * attachment channel admits. Anything else, including a document block whose
+ * media type is an image, is refused here rather than at the boundary.
+ */
+export function buildDocumentBlock(mediaType: string, base64: string): AnthropicDocumentBlock {
+  if (mediaType !== "application/pdf") {
+    throw new RedactionError(
+      "unapproved-attachment",
+      "Only a PDF may be attached as a document. An image must go through redaction.",
+    );
+  }
+  if (typeof base64 !== "string" || !base64) {
+    throw new RedactionError("encode-failed", "That document could not be encoded.");
+  }
+  const block: AnthropicDocumentBlock = {
+    type: "document",
+    source: { type: "base64", media_type: "application/pdf", data: base64 },
+  };
+  markApprovedAttachment(block);
   return block;
 }
 
@@ -289,11 +343,18 @@ function base64ToBytes(base64: string) {
  * only BLOCK an upload, never allow one.
  */
 const REDACTED_PAYLOAD_LIMIT = 64;
-let redactedBlocks = new WeakSet<object>();
+let approvedAttachments = new WeakSet<object>();
 const redactedPayloads = new Set<string>();
 
-function markRedactedBlock(block: object): void {
-  redactedBlocks.add(block);
+/**
+ * Module-private ON PURPOSE. There is no exported way to put an object into the
+ * registry: the only two doors are `redactImageBlock` (which destroys the
+ * profiled pixels first) and `buildDocumentBlock` (which admits application/pdf
+ * and nothing else). A caller who hand-builds an attachment cannot mark it,
+ * cannot import a marker, and therefore cannot get it past the boundary.
+ */
+function markApprovedAttachment(block: object): void {
+  approvedAttachments.add(block);
 }
 
 function markRedactedPayload(base64: string): void {
@@ -311,7 +372,7 @@ export function isRedactedPayload(base64: unknown): boolean {
 /** Test seam: forget every registered block and payload. */
 export function resetRedactedPayloads(): void {
   redactedPayloads.clear();
-  redactedBlocks = new WeakSet<object>();
+  approvedAttachments = new WeakSet<object>();
 }
 
 interface ContentBlockLike {
@@ -339,7 +400,7 @@ export function assertNoUnredactedImages(messages: unknown): void {
         block.type === "image" ||
         (block.type === "document" && String(block.source?.media_type || "").startsWith("image/"));
       if (!isImage) continue;
-      if (!redactedBlocks.has(block) && !isRedactedPayload(block.source?.data)) {
+      if (!approvedAttachments.has(block) && !isRedactedPayload(block.source?.data)) {
         throw new RedactionError(
           "unredacted-image",
           "Blocked: an image that did not come from redactImage() cannot be uploaded.",
@@ -347,4 +408,60 @@ export function assertNoUnredactedImages(messages: unknown): void {
       }
     }
   }
+}
+
+/**
+ * The attachment-channel gate — the N00c replacement for "assertNoUnredactedImages
+ * over a client-built messages array".
+ *
+ * callClaude() no longer sends messages; it sends `attachments`. This walks that
+ * array and FAILS CLOSED: an attachment is admitted only if it is, by object
+ * IDENTITY, something this module produced. Identity survives the signature
+ * change because the client passes the producer's own objects through — it never
+ * flattens them to strings, which is precisely the design the first N00c build
+ * got wrong.
+ *
+ * Order of witnesses, strongest first:
+ *   1. WeakSet identity — the object came out of redactImageBlock() or
+ *      buildDocumentBlock() in this page session. Unforgeable: the marker is
+ *      module-private.
+ *   2. Byte-level witness (images only) — the exact base64 a redactImageBlock()
+ *      call produced. This exists so a block that was structurally cloned by the
+ *      framework is not falsely BLOCKED. It can only ever admit bytes that were
+ *      themselves redaction output, so it cannot admit an unredacted image.
+ *
+ * Anything else — unmarked, unknown type, hand-built, or not an object at all —
+ * throws. "I don't recognise this" resolves to refusal, never to pass.
+ */
+export function assertApprovedAttachments(attachments: unknown): void {
+  if (!Array.isArray(attachments)) {
+    throw new RedactionError(
+      "unapproved-attachment",
+      "Blocked: the attachment list is not an array, so its provenance cannot be proven.",
+    );
+  }
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment !== "object") {
+      throw new RedactionError(
+        "unapproved-attachment",
+        "Blocked: an attachment that this device did not produce cannot be uploaded.",
+      );
+    }
+    if (approvedAttachments.has(attachment as object)) continue;
+    const block = attachment as ContentBlockLike;
+    if (block.type === "image" && isRedactedPayload(block.source?.data)) continue;
+    const looksLikeImage =
+      block.type === "image" ||
+      String(block.source?.media_type || "").startsWith("image/");
+    throw new RedactionError(
+      looksLikeImage ? "unredacted-image" : "unapproved-attachment",
+      looksLikeImage
+        ? "Blocked: an image that did not come from redactImage() cannot be uploaded."
+        : "Blocked: an attachment that did not come from this device's redaction path cannot be uploaded.",
+    );
+  }
+  // Second witness over the same objects, in the message shape the upload takes.
+  // Redundant by construction — and kept, because a guard with two independent
+  // reasons to refuse is what "fails closed" means.
+  assertNoUnredactedImages([{ content: attachments as ContentBlockLike[] }]);
 }
