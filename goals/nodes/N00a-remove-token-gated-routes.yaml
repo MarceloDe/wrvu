@@ -1,0 +1,78 @@
+id: N00a-remove-token-gated-routes
+title: Delete the three SETUP_TOKEN-gated routes from the deployed application
+goal_refs: [G10]
+decisions: [D18]
+depends_on: []
+phase: A0
+estimate_hours: 2
+priority: 1
+severity: live-exposure
+
+rationale: >
+  middleware.js:17-19 places /api/setup, /api/setup-clerk and /api/ocr-test on the PUBLIC
+  route list — no Clerk session required. The only gate is a static, never-rotated,
+  non-constant-time string comparison in each route (setup-clerk/route.js:32-36).
+  Behind that single secret sits CLERK_SECRET_KEY, the Clerk Backend API root key.
+  ONE request to POST /api/setup-clerk?action=fix-user resets ANY user's password with
+  skip_password_checks:true, clears the lockout, and force-verifies the email — complete
+  takeover of any account including admins. GET ?inspect=1 dumps the entire allowlist and
+  every pending invitation. POST ?action=create-user mints a permanent backdoor account.
+  The same secret also authorises /api/setup, which executes DDL against production.
+  There is no audit log, so it is not possible to determine whether this has been used.
+
+context_query: >
+  codegraph explore "middleware isPublicRoute setup-clerk gate SETUP_TOKEN ocr-test setup route"
+
+contracts:
+  - app/api/setup-clerk/route.js is deleted
+  - app/api/setup/route.js is deleted
+  - app/api/ocr-test/route.js is deleted
+  - middleware.js isPublicRoute contains only "/", "/sign-in(.*)", "/sign-up(.*)", "/api/health"
+  - scripts/ops/clerk-admin.mjs provides the same operator capabilities, run locally
+    against the Clerk Backend API, reading CLERK_SECRET_KEY from the local environment
+    and never from a deployed context
+  - scripts/ops/clerk-admin.mjs writes every action to goals/evidence/ops-audit.jsonl
+
+invariants: [INV-PROD-AUDITED, INV-NO-DEAD-CODE]
+
+verify:
+  runtime:
+    - "curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/setup-clerk        # expect 401"
+    - "curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/setup              # expect 401"
+    - "curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/ocr-test           # expect 401"
+    - "curl -sS -X POST -o /dev/null -w '%{http_code}' 'https://fella.cc/api/setup-clerk?action=fix-user' -H 'content-type: application/json' -d '{\"email\":\"x@example.com\",\"password\":\"aaaaaaaa\"}'   # the takeover request; expect 401"
+    - "curl -sS -H 'x-setup-token: <old-value>' -o /dev/null -w '%{http_code}' https://fella.cc/api/setup-clerk?inspect=1   # expect 401"
+    - "node scripts/ops/clerk-admin.mjs --list-allowlist    # succeeds locally"
+  static:
+    - "test ! -e app/api/setup-clerk/route.js"
+    - "test ! -e app/api/setup/route.js"
+    - "test ! -e app/api/ocr-test/route.js"
+    - "! grep -rn 'SETUP_TOKEN' app/ components/ lib/ middleware.js"
+  evidence: [route-404-probe.txt, ops-cli-smoke.txt]
+
+corrected_2026_08_18: >
+  The original done_when predicted 404. Production returns 401. This is CORRECT and was a
+  defect in the contract text, not the work: once the routes leave isPublicRoute,
+  clerkMiddleware intercepts every /api/* path and returns 401 for an unauthenticated
+  caller before Next.js can produce a 404. The handlers do not exist at all. Recorded
+  rather than silently reinterpreted, per the rule that a done_when is changed
+  deliberately with a reason or not at all.
+
+done_when:
+  - All three routes reject unauthenticated callers on production (401), with and without
+    the old token header, and the handlers no longer exist in the deployed bundle
+  - No occurrence of SETUP_TOKEN remains in any deployed source path
+  - The operator CLI reproduces every capability the deleted routes provided, locally
+  - Every CLI invocation appends to the ops audit log
+
+rollback: >
+  git revert the deletion commit and redeploy. Note that reverting restores the
+  exposure — prefer fixing forward. Because the routes are additive-only removals, no
+  data migration is involved and no snapshot is required.
+
+notes: >
+  Do NOT re-gate these behind an admin session and keep them deployed. DDL over HTTP and
+  Clerk root operations do not belong in a request handler at all. Move them to a local
+  CLI, which is what the operator actually needs.
+  This node does not rotate credentials — that is N00b, and it must follow this one so
+  the new secret is never present in a deployed route.

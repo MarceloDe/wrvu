@@ -1,0 +1,88 @@
+id: N00d-error-envelope
+title: Generic error responses with correlation ids, real logging, and no swallowed failures
+goal_refs: [G10]
+decisions: [D18]
+depends_on: []
+phase: A0
+estimate_hours: 3
+priority: 4
+severity: live-exposure
+
+rationale: >
+  Roughly ten routes return `Response.json({error: String(e)})`, leaking Postgres column
+  names, constraint names and type details to any signed-in caller — including
+  app/api/claude/route.js:55, which additionally forwards Anthropic's raw error text.
+  Simultaneously, the client swallows everything: saveKey, reloadExams, reloadExtra,
+  saveExtraRates, delPeriod and UploadsView.load all use bare `catch {}`, and both
+  /api/store and /api/extra-duty/rates return HTTP 200 on database failure. The result is
+  the worst combination available — internals leak outward while genuine failures are
+  invisible to the user. A failed save is indistinguishable from a successful one, which
+  for an application whose entire value is numerical accuracy is a correctness bug, not
+  an ergonomics one.
+
+context_query: >
+  codegraph explore "saveKey reloadExams reloadExtra saveExtraRates delPeriod store route extra-duty rates error handling catch"
+
+contracts:
+  - "lib/http/errors.ts exports fail(code: ErrorCode, correlationId: string, status: number): Response
+     returning { error: { code, correlationId } } and nothing else"
+  - No route returns driver, database or upstream-vendor error text in a response body
+  - Every non-2xx response carries a correlation id that also appears in the server log line
+  - /api/store and /api/extra-duty/rates return a non-2xx status when the write fails
+  - No bare `catch {}` remains in any client module; every catch surfaces state the UI renders
+  - ESLint enforces no-empty with allowEmptyCatch disabled
+  - Server-side structured logging is configured and errors reach a monitoring destination
+
+verification_environment_2026_08_18: >
+  DO NOT run fault injection, rate-limit probes or spend-cap probes against a Vercel
+  PREVIEW deployment. Preview shares the PRODUCTION DATABASE_URL: the Neon integration owns
+  that variable on target `production,preview` and Vercel refuses a project-level override
+  ("A variable with the name DATABASE_URL already exists for the target production,preview").
+  Isolating Preview requires disconnecting and reconnecting the store, which has no restore
+  path because `vercel env pull` returns the literal [SENSITIVE] for every integration
+  secret. So a preview probe would inject faults into the live production database.
+
+  INSTEAD: run a local server against the dev Neon branch.
+      node --env-file=.env.local ./node_modules/.bin/next dev -p 3111
+      PREVIEW=http://localhost:3111
+  .env.local points at the `dev` branch (br-late-paper-at5h75si, schema-only, zero rows,
+  writable, Postgres 17.10). This is still REAL infrastructure under D20 — a real Neon
+  database over real HTTP, with no mock anywhere. It is not a Vercel preview, and that
+  substitution is recorded here deliberately rather than silently.
+
+  A real Clerk session is still unavailable. Any probe that needs one is `blocked_external`
+  with the exact command an operator must run.
+
+invariants: [INV-NO-RAW-ERRORS, INV-NO-SWALLOW]
+
+verify:
+  runtime:
+    - "pnpm test:error-envelope"
+    - "pnpm test:route-contracts"
+    - "node scripts/verify/fault-injection.mjs --all-routes
+       # forces a DB failure per route; asserts non-2xx, generic body, correlation id present"
+    - "node scripts/verify/log-correlation.mjs
+       # asserts every injected failure's correlation id appears in the captured log stream"
+    - "pnpm lint"
+  static:
+    - "! grep -rn 'String(e)' app/ lib/"
+    - "! grep -rEn 'catch\\s*\\{\\s*\\}' app/ lib/ components/"
+  evidence: [fault-injection.json, log-correlation.txt, lint-report.txt]
+
+done_when:
+  - Fault injection against every route yields a non-2xx status and a body containing only a code and a correlation id
+  - Each injected failure's correlation id is findable in the server log stream
+  - /api/store and /api/extra-duty/rates no longer return 200 on a failed write
+  - Zero bare catch blocks remain, enforced by a lint rule that fails CI
+  - Errors are visible in the monitoring destination, not only in stdout
+
+rollback: >
+  Purely additive at the response layer. Revert the commit; no data or schema impact.
+
+notes: >
+  This node is the reason `npm run lint` must start working — there is currently no ESLint
+  config and eslint is not a dependency. Adding the dependency and a minimal config is in
+  scope here rather than waiting for N03, because INV-NO-SWALLOW has no machine check
+  without it.
+  Preserve ocrErrorMessage() — the HEIC/oversize/429/529/timeout mapping is one of the
+  genuinely good parts of the existing code and must survive.

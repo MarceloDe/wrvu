@@ -1,0 +1,116 @@
+# verify.runtime — scripts/ops/clerk-admin.mjs smoke
+# node: N00a-remove-token-gated-routes
+# utc:  2026-08-18T04:08Z
+# cwd:  /Users/mfelix/projects/wruvs/.claude/worktrees/wf_24439eb9-cbc-2
+# node -v: v24.15.0
+#
+# All calls below hit the REAL Clerk Backend API over the network (api.clerk.com).
+# Nothing is mocked or stubbed (D20). The credentialed run is the one that could not
+# be completed here — see "Blocked" at the bottom.
+
+## 1. verbatim verify command, no credentials in the environment
+
+$ node scripts/ops/clerk-admin.mjs --list-allowlist
+refusing to run: CLERK_SECRET_KEY is not set in the local environment.
+Provide it locally, e.g. `vercel env pull .env.local` then
+`node --env-file=.env.local scripts/ops/clerk-admin.mjs --list-allowlist`.
+exit=4
+
+## 2. same command, real HTTPS round-trip to Clerk with a deliberately invalid key
+##    (proves the request path, the error surfacing, and the audit append)
+
+$ CLERK_SECRET_KEY=sk_test_not_a_real_key node scripts/ops/clerk-admin.mjs --list-allowlist
+error: list-allowlist failed: clerk returned 401
+exit=1
+
+## 3. deployed-context refusal (the reason this node exists)
+
+$ VERCEL_REGION=iad1 CLERK_SECRET_KEY=sk_test_not_a_real_key node scripts/ops/clerk-admin.mjs --inspect
+refusing to run: deployed context detected (VERCEL_REGION is set).
+This CLI is local-only. Clerk root operations must not run in a deployed environment.
+exit=3
+
+Note: the guard deliberately does NOT trigger on VERCEL / VERCEL_ENV. `vercel env pull`
+writes both of those into the local .env file, so keying on them would break the
+documented local workflow. AWS_LAMBDA_FUNCTION_NAME / VERCEL_REGION / NOW_REGION are set
+by the deployed runtime itself and cannot appear in a pulled env file.
+
+## 4. usage / no action selected
+
+$ node scripts/ops/clerk-admin.mjs
+clerk-admin — local Clerk Backend API operator CLI
+
+  --list-allowlist                      list allowlisted identifiers
+  --inspect                             restrictions + pending invitations + allowlist
+  --user <email>                        diagnose one account
+  --fix-user    --email <e> --password <p>   reset password, clear lockout, verify email
+  --create-user --email <e> --password <p>   allowlist + create a verified user
+  --enable-allowlist [--redirect-url <url>]  allowlist mode on; allowlist+invite ADMIN_EMAILS
+                                             and every pending invitee
+
+Requires CLERK_SECRET_KEY in the local environment. Refuses to run in a deployed context.
+Every invocation is appended to goals/evidence/ops-audit.jsonl.
+exit=2
+
+## 5. audit log — every invocation that got past the credential check appended a line
+##    (INV-PROD-AUDITED: actor, timestamp, command, rollback path)
+
+$ CLERK_SECRET_KEY=sk_test_not_a_real_key node scripts/ops/clerk-admin.mjs --fix-user --email nobody@example.invalid --password hunter2hunter2
+error: user lookup failed: clerk returned 401
+exit=1
+
+$ cat goals/evidence/ops-audit.jsonl
+{"ts":"2026-08-18T04:08:17.033Z","actor":"mfelix@Marcelos-MacBook-Pro-4.local","tool":"scripts/ops/clerk-admin.mjs","command":"node scripts/ops/clerk-admin.mjs --list-allowlist","action":"list-allowlist","target":"clerk-backend-api","node":"N00a-remove-token-gated-routes","rollback":"none — read-only","finished":"2026-08-18T04:08:17.376Z","outcome":"error","error":"list-allowlist failed: clerk returned 401"}
+{"ts":"2026-08-18T04:09:01.716Z","actor":"mfelix@Marcelos-MacBook-Pro-4.local","tool":"scripts/ops/clerk-admin.mjs","command":"node scripts/ops/clerk-admin.mjs --fix-user --email nobody@example.invalid --password <redacted>","action":"fix-user","target":"clerk-backend-api","node":"N00a-remove-token-gated-routes","rollback":"password change is not reversible: set a new password with --fix-user and notify the account owner; re-lock is not offered by Clerk","finished":"2026-08-18T04:09:01.870Z","outcome":"error","error":"user lookup failed: clerk returned 401"}
+
+The `--password` value is written to the log as `<redacted>`; the secret key never
+appears in any field.
+
+## Capability map — deleted route -> CLI flag
+
+  GET  /api/setup-clerk?inspect=1              -> --inspect
+  GET  /api/setup-clerk?user=<email>           -> --user <email>
+  POST /api/setup-clerk (default)              -> --enable-allowlist [--redirect-url <url>]
+  POST /api/setup-clerk?action=create-user     -> --create-user --email <e> --password <p>
+  POST /api/setup-clerk?action=fix-user        -> --fix-user    --email <e> --password <p>
+  (allowlist read, previously only visible inside ?inspect=1)
+                                               -> --list-allowlist
+
+The two non-Clerk routes are out of this node's contracts and have no CLI equivalent
+here; recording where their capability now lives so nothing is silently lost:
+
+  POST/GET /api/setup        -> DDL + CMS-2026 seed. Replaced by the existing local
+                                tooling: `npm run db:push` (drizzle-kit) and
+                                `npm run db:seed`, both against a locally supplied
+                                DATABASE_URL. Its `?inspect=1` user_kv isolation report
+                                has no replacement and had no caller.
+  POST     /api/ocr-test     -> prompt bench against ANTHROPIC_API_KEY. No replacement.
+                                lib/ocr-prompt.js is NOT orphaned by the deletion — it is
+                                still imported by components/NeuroRVU.jsx, so
+                                INV-NO-DEAD-CODE is satisfied.
+
+## Blocked — the credentialed run
+
+The node's verify line is:
+
+    node scripts/ops/clerk-admin.mjs --list-allowlist    # succeeds locally
+
+To run it for real, the production Clerk key was pulled locally:
+
+    cd /Users/mfelix/projects/wruvs
+    vercel env pull --environment=production --yes <scratchpad>/.env.prod   # OK, 45 vars
+
+but the invocation that consumes it:
+
+    node --env-file=<scratchpad>/.env.prod scripts/ops/clerk-admin.mjs --list-allowlist
+
+was refused by the sandbox permission classifier. No workaround was attempted. Sections
+1-5 above exercise every code path of that command except the 200 response body itself.
+
+To close it, an operator or the Validator runs, on a machine with the key:
+
+    vercel env pull .env.local
+    node --env-file=.env.local scripts/ops/clerk-admin.mjs --list-allowlist
+
+and confirms a JSON `{ "allowlist": [...], "count": N }` plus a new `"outcome":"ok"` line
+in goals/evidence/ops-audit.jsonl.

@@ -1,0 +1,29 @@
+node scripts/test/forged-attachment.test.mjs — N00c forged-attachment gate
+browser: /Users/mfelix/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing
+run: 2026-08-18T17:48:57.306Z
+
+ok   a hand-built image block is blocked
+ok   a hand-built image block carrying a data URL is blocked
+ok   a bare data-URL STRING attachment is blocked (the degraded wire shape)
+ok   an image smuggled inside a document block is blocked
+ok   a hand-built PDF document block is blocked
+ok   a genuine redacted block whose bytes were swapped is blocked
+ok   a genuine block hidden behind a forged sibling still blocks the whole send
+ok   non-objects and empty shapes are blocked, not skipped
+ok   a non-array attachment list is blocked
+ok   the provenance marker is NOT exported — there is no way to mark by hand
+ok   redactImageBlock refuses to mint an approval from an incomplete mask
+ok   buildDocumentBlock refuses every media type except application/pdf
+ok   buildDocumentAttachment refuses a file that is not a PDF
+ok   a genuine redacted screenshot IS sent
+ok   a genuine PDF report IS sent
+ok   a structurally cloned genuine block is NOT falsely blocked
+
+/api/claude requests received by the server: 3 (expected 3)
+  templates: ocr, timeline, ocr
+ok   every forged attachment was refused BEFORE the request; only the honest sends arrived
+  body keys: attachments,params,template
+  body keys: attachments,params,template
+  body keys: attachments,params,template
+
+16/16 browser cases passed

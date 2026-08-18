@@ -1,0 +1,37 @@
+N00c-lock-llm-proxy — spend-cap-probe.txt
+STATUS: NOT PRODUCED. This is a blocked record, not a passing result.
+
+Command from verify.runtime:
+  node scripts/verify/spend-cap-probe.mjs   # expect 429 once the daily cap is reached
+
+Verbatim output:
+------------------------------------------------------------------------
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.15.0
+------------------------------------------------------------------------
+(MODULE_NOT_FOUND for
+ /Users/mfelix/projects/wruvs/.claude/worktrees/wf_24439eb9-cbc-3/scripts/verify/spend-cap-probe.mjs;
+ scripts/verify/ does not exist — scripts/ contains only seed.mjs)
+
+Why this cannot be satisfied by writing the missing script:
+
+  Driving a per-user DAILY SPEND CAP to its limit means issuing enough real
+  Anthropic inference to accumulate the capped dollar amount against the shared
+  organisational ANTHROPIC_API_KEY. That requires:
+
+    1. the locked route deployed to a preview environment ($PREVIEW unset)
+    2. a Clerk session token                              ($AUTH unset)
+    3. a live ANTHROPIC_API_KEY                           (unset)
+    4. persisted per-user spend accounting                (llm_usage table does
+                                                           not exist; $DATABASE_URL
+                                                           unset)
+
+  It is also a deliberate spend against a shared production key, which is a
+  side-effectful action requiring explicit confirmation and an audit-log entry
+  (INV-PROD-AUDITED) before it may be run.
+
+  Per D20 a mocked cost accumulator cannot serve as the evidence for
+  done_when #3, so there is no offline substitute.

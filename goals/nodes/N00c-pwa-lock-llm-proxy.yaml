@@ -1,0 +1,98 @@
+id: N00c-pwa-lock-llm-proxy
+title: Lock the LLM proxy to server-owned templates, preserving the redaction guarantee
+goal_refs: [G10, G3]
+decisions: [D18, D8, D33b]
+depends_on: []
+phase: A0
+estimate_hours: 4
+priority: 3
+severity: live-exposure
+
+rationale: >
+  app/api/claude/route.js takes `system`, `tools` and `maxTokens` from the client and
+  forwards all three verbatim. Any signed-in user can issue an arbitrary system prompt with
+  arbitrary tools at the model's maximum token count, with no rate limit, no spend cap and
+  no per-user attribution, against the shared organisational key.
+
+recontracted_2026_08_18: >
+  The first build produced a COMPLETE and VERIFIED implementation on branch
+  builder/N00c-llm-proxy (d57302b): template registry, persisted token bucket, daily spend
+  cap, usage rows, and a shared meter that the edge API reports into. Its rate limit and
+  spend cap both PASS --direct against the real dev Neon branch.
+
+  It was not merged, for one reason, and that reason is now this node's PRIMARY contract:
+
+    N00c changes callClaude from (messages, {system, tools, maxTokens})
+                            to (template, {params, attachments}).
+
+    N00f's assertNoUnredactedImages() walks message.content[] and identifies redacted
+    images by WeakSet IDENTITY on the block objects returned by buildRedactedImageBlock().
+    Under the new signature the client passes data-URL STRINGS, so the WeakSet has nothing
+    to hold and the guard silently degrades to the isRedactedPayload() string check.
+
+  A string marker is forgeable and, more importantly, absent by default — an image that
+  never went through redactImage() would carry no marker and the degraded guard would have
+  to decide whether "no marker" means "block" or "pass". Getting that wrong ships a hole in
+  the control that stops patient images leaving the device. This is a DESIGN change to a
+  PHI control and must be contracted, not merged by hand.
+
+context_query: >
+  codegraph explore "callClaude assertNoUnredactedImages buildRedactedImageBlock prepareImage prepareDoc redactedBlocks isRedactedPayload api/claude route"
+
+contracts:
+  - "The redaction guarantee survives the signature change: an attachment that did not come
+     from buildRedactedImageBlock() is BLOCKED before any network call, and the guard FAILS
+     CLOSED — an unrecognised or unmarked attachment is refused, never allowed through"
+  - "The guard's identity mechanism is explicit and documented. If WeakSet identity cannot
+     survive the new call shape, the replacement must be at least as strong: state in the
+     node evidence why the chosen mechanism cannot be bypassed by a caller who simply
+     constructs an attachment by hand"
+  - "app/api/claude/route.js accepts only { template, params, attachments } — a request
+     carrying system, tools or maxTokens is 400 and never reaches the vendor"
+  - "lib/prompts/registry.js resolves system prompt, tool set (always empty) and token
+     ceiling from the server, and from nowhere else"
+  - "Per-user persisted token bucket and per-user daily spend cap, with a usage row per call"
+  - "Error codes use the vocabulary components/NeuroRVU.jsx already branches on:
+     upstream_payload_too_large, upstream_rate_limited, upstream_overloaded,
+     upstream_timeout, upstream_invalid_image, unauthorized, config_missing.
+     A reconciled route.js is preserved at goals/evidence/A0-integration/route.js.resolved"
+  - No template declares a web_search tool
+  - Anthropic prompt caching stays enabled on the OCR template's static code-reference block
+
+reuse_first: >
+  D38 — improve, never rebuild. Start from builder/N00c-llm-proxy (d57302b), which is
+  already written and partly verified. Do NOT re-implement it. The new work is the guard,
+  the vocabulary alignment, and the merge with origin/main (which now carries N00f + N00d).
+
+invariants: [INV-SERVER-PROMPTS, INV-NO-PHI-IN-CLOUD, INV-NO-RAW-ERRORS, INV-NO-SWALLOW, INV-ALWAYS-SHIPPABLE, INV-CHECKS-ACTUALLY-RUN]
+
+verification_environment: >
+  Local server against the dev Neon branch, never a Vercel preview — Preview shares the
+  PRODUCTION DATABASE_URL and Vercel refuses a project-level override.
+      node --env-file=.env.local ./node_modules/.bin/next dev -p 3111
+  .env.local holds no Clerk keys, so any probe needing a real session is blocked_external
+  with the exact closing command.
+
+verify:
+  runtime:
+    - "npm run test:redaction                 # 30/30 must STILL pass after the signature change"
+    - "npm run test:llm-proxy-contract"
+    - "node scripts/verify/rate-limit-probe.mjs --direct"
+    - "node scripts/verify/spend-cap-probe.mjs --direct"
+    - "node scripts/test/forged-attachment.test.mjs   # NEW: a hand-constructed attachment must be BLOCKED"
+    - "node --env-file=.env.local ./node_modules/.bin/next build"
+  static:
+    - "! grep -rn 'body.system\\|body.tools' app/api/claude/"
+    - "! grep -rn 'web_search' app/ lib/ components/"
+  evidence: [redaction-still-30-30.txt, forged-attachment-blocked.txt, rate-limit-probe.txt, spend-cap-probe.txt]
+
+done_when:
+  - The 30/30 redaction suite still passes with callClaude's new signature
+  - A hand-constructed attachment that never went through buildRedactedImageBlock() is blocked, and the test proves it
+  - system / tools / maxTokens in a request are rejected 400 without reaching Anthropic
+  - The rate limit and the spend cap both fire against the real dev branch
+  - next build passes against the dev branch
+
+rollback: >
+  Revert the merge commit. That restores the uncapped relay, so prefer fixing forward. The
+  additive llm_usage table is safe to leave in place.

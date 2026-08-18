@@ -1,0 +1,379 @@
+# RadRVU — Goal Registry
+#
+# The machine-readable contract the build loop cannot drift from.
+# Derived from goals/DECISIONS.md. Change DECISIONS.md first, then propagate here.
+#
+# Every goal MUST have: an id, a plain statement, a done_when list whose entries are
+# each independently verifiable by a command or an inspection, and the decisions that
+# shaped it. A done_when entry that cannot be checked by a machine or by a named
+# manual procedure is not a done_when entry — it is a wish, and it is rejected.
+
+version: 2
+supersedes: docs/RadRVU-Professionalization-Proposal.md
+derived_from: goals/DECISIONS.md
+updated: 2026-08-17
+
+product:
+  name: RadRVU
+  domain: fella.cc
+  repo: wruvs
+  vercel_project: project-m6jfw
+  audience: closed group of radiologist colleagues (UM / JHS)
+  distribution: TestFlight external (<=10000) + web PWA
+
+goals:
+
+  - id: G1
+    title: All radiology specialties and modalities
+    decisions: [D15, D36]
+    starting_point: >
+      Largely SOLVED in data already. rvu26a.jsonl covers inclusion_reason
+      primary_cpt_70000_79999 across XR 642, NM 355, CT 260, US 226, MRI 216, RADONC 169,
+      PET 78, IR 74. The gap is the PWA, still on 61 hardcoded neuro codes, and the UI
+      surfaces. Specialty RANKS and DEFAULTS, it never restricts (D36, INV-SITE-NEVER-FAILS).
+    statement: >
+      The code catalog is database-driven and specialty-tagged. No component contains a
+      hardcoded CPT table. A Body/abdominal radiologist completes capture -> price ->
+      analyze with zero neuro-specific strings anywhere in the path.
+    done_when:
+      - id: G1.1
+        check: "grep -rn 'const CODES' components/ app/ web/ returns nothing"
+        kind: static
+      - id: G1.2
+        check: "lib/data/cms2026-neuro.js no longer exists; no file duplicates a CPT table"
+        kind: static
+      - id: G1.3
+        check: "A seeded Body-imaging user completes the full capture->price->analyze e2e suite green"
+        kind: runtime
+      - id: G1.4
+        check: "code_taxonomy covers the neuro set and the Body set (74xxx, 72xxx abdominal/pelvic CT-MR families)"
+        kind: data
+    non_goals:
+      - Specialties beyond neuro and Body in the first release. Others are taxonomy rows, not code changes.
+
+  - id: G2
+    title: Definitive reference platform — one source of truth, allowed-amount capable
+    decisions: [D12, D13, D14, D16, D28, D40]
+    statement: >
+      A single versioned `reference` schema in Neon, loaded from
+      ~/projects/wrvus/radiology_wrvu_2026_postgres.sql, served by neurorvu-edge-api with
+      ETag caching, read by BOTH clients. resolveValue(code, modifier, localityCode,
+      asOfDate, scheduleId) returns the compensation figure (wRVU x contracted $/wRVU) AND
+      the CMS allowed amount, on the -26 professional component. Every dollar in either
+      client comes from this one function.
+    starting_point: >
+      NOT greenfield. rvu26a.jsonl already ships in the iOS bundle: 828 distinct HCPCS at
+      (hcpcs, modifier) grain = 2164 rows, work/PE-fac/PE-nonfac/MP, status_code,
+      pctc_indicator, global_days, CF 33.4009, full provenance, and computed GPCI +
+      payment estimates for THREE FLORIDA LOCALITIES ONLY. The work is consolidation and
+      locality extension, not construction.
+    done_when:
+      - id: G2.1
+        check: "Exactly ONE copy of reference data exists. All five current copies are gone: the inline table in NeuroRVU.jsx, lib/data/cms2026-neuro.js, iOS cms2026-neuro.json, edge api/data/reference.json, and iOS rvu26a.jsonl as a primary source (it may remain ONLY as a declared offline fallback seed)"
+        kind: static
+      - id: G2.2
+        check: "build_radiology_wrvu_2026.py emits all ~113 CMS localities, not 3; every locality has wGPCI, peGPCI, mpGPCI and a computed payment estimate"
+        kind: data
+        evidence: locality-coverage.json
+      - id: G2.3
+        check: "50/50 sampled (code, modifier, locality, date) tuples match the CMS PFS Look-up Tool to the cent"
+        kind: runtime
+        evidence: cms-crosscheck.json
+      - id: G2.4
+        check: "Swift and TypeScript resolveValue agree on all golden vectors in contracts/fixtures/pricing/"
+        kind: runtime
+        evidence: parity-report.json
+      - id: G2.5
+        check: "No arithmetic on a wRVU, GPCI, conversion factor or contracted rate exists outside packages/core/pricing or the iOS pricing module"
+        kind: static
+      - id: G2.6
+        check: "Compensation and allowed amount are never summed and are visually distinct wherever both appear"
+        kind: manual
+      - id: G2.7
+        check: "Descriptor text is reached only through descriptor_source; disabling descriptors degrades the UI to in-house labels rather than breaking it"
+        kind: static
+      - id: G2.8
+        check: "iOS works fully offline on the bundled seed with the network disabled, and reconciles to the server copy when it returns"
+        kind: runtime
+        evidence: offline-reference-xcuitest.png
+    non_goals:
+      - Historical versions before CY2026 (D13).
+      - Commercial payer rates beyond the payer_schedules shape.
+
+  - id: G3
+    title: Encrypted on-device PHI vault
+    decisions: [D6, D25a]
+    statement: >
+      Patient identifiers exist only inside a SQLCipher vault on the user's iPhone,
+      keyed from the Keychain, gated by biometrics, protected by iOS Data Protection.
+      Zero PHI columns exist in any cloud table.
+    done_when:
+      - id: G3.1
+        check: "A filesystem dump of the app container on an unlocked device contains no plaintext patient name, MRN or accession"
+        kind: runtime
+        evidence: container-grep.txt
+      - id: G3.2
+        check: "Live cloud schema introspection finds zero columns matching the PHI name/pattern list"
+        kind: runtime
+        evidence: schema-phi-scan.json
+      - id: G3.3
+        check: "The vault refuses to open on a device with no passcode, and states why"
+        kind: runtime
+      - id: G3.4
+        check: "The vault key is generated by SecRandomCopyBytes, stored kSecAttrAccessibleWhenUnlockedThisDeviceOnly, and never appears in a backup, a log or a network payload"
+        kind: runtime
+      - id: G3.5
+        check: "De-identification is property-tested against all 18 HIPAA Safe Harbor identifiers using synthetic PHI fixtures"
+        kind: runtime
+    non_goals:
+      - Cloud PHI sync. Deferred behind legal review; not in this plan.
+
+  - id: G4
+    title: First-run onboarding
+    decisions: [D15]
+    decisions_extra: [D34, D35, D36]
+    statement: >
+      A new user reaches a working daily-use home screen. Onboarding collects specialty
+      (neuro and body first), institutions, sites, locality and pay model — and is
+      SKIPPABLE at every step (D35). Every field has a working default; nothing is a wall.
+      Institutions and sites are user-created rows, not an enum (D34).
+    done_when:
+      - id: G4.1
+        check: "Fresh-install e2e: sign in -> specialty (neuro/body) -> institutions -> sites -> locality -> pay model -> home screen, every step completable"
+        kind: runtime
+        evidence: onboarding-xcuitest.png
+      - id: G4.2
+        check: "Fresh install SKIPPING every step reaches a usable Tracker: exams capture and price, all 828 codes reachable, and dollar figures are HIDDEN rather than shown as zero when no rate is set"
+        kind: runtime
+        evidence: onboarding-skip-xcuitest.png
+      - id: G4.3
+        check: "A user can add an institution and its sites at any time after onboarding, and previously-captured exams with matching raw site strings reclassify without data loss"
+        kind: runtime
+      - id: G4.4
+        check: "Locality is derived from state and shown for confirmation, never silently assumed; it drives the allowed-amount figure (D12)"
+        kind: runtime
+      - id: G4.5
+        check: "Institutional media-policy acknowledgement is presented and its response recorded with a timestamp; declining still leaves the app usable for manual entry"
+        kind: runtime
+
+  - id: G5
+    title: On-device extraction of all worklist variables
+    decisions: [D5, D8]
+    statement: >
+      Apple Vision OCR plus a per-(user, institution) worklist layout profile extracts
+      patient, MRN, accession, procedure, exam date, report time, signed time, site and
+      device. The second scan of the same institution requires no re-tagging. Extraction
+      works in airplane mode.
+    done_when:
+      - id: G5.1
+        check: "Airplane-mode e2e: photograph a worklist, tag columns once, rows appear with all nine fields"
+        kind: runtime
+        evidence: airplane-ocr-xcuitest.png
+      - id: G5.2
+        check: "A second scan of the same institution auto-maps with zero user interaction"
+        kind: runtime
+      - id: G5.3
+        check: "Layout profiles contain geometry, header tokens and regex hints only - no PHI"
+        kind: static
+      - id: G5.4
+        check: "The cloud fallback path receives redacted, de-identified text only - never a raw image"
+        kind: runtime
+      - id: G5.5
+        check: "Fields below the confidence threshold re-prompt for that field only, never the whole scan"
+        kind: runtime
+
+  - id: G6
+    title: Follow-up scheduling with local reminders
+    decisions: [D23]
+    statement: >
+      A user schedules "+2 weeks: verify progression" against an exam or patient. A local
+      notification fires at the due time carrying no patient detail. Tapping it resolves
+      the patient and note locally after biometric unlock.
+    done_when:
+      - id: G6.1
+        check: "Scheduled local notification fires at the due time with a content-free body"
+        kind: runtime
+        evidence: followup-xcuitest.png
+      - id: G6.2
+        check: "Tapping the notification requires biometric unlock before any patient detail renders"
+        kind: runtime
+      - id: G6.3
+        check: "No follow_ups or push_subscriptions table exists in any cloud schema"
+        kind: static
+    non_goals:
+      - APNs, server-side dispatch, or any follow-up data leaving the device (D23).
+
+  - id: G7
+    title: Merged Data tab and AI canvas
+    decisions: [D22]
+    statement: >
+      iOS navigation becomes Tracker / Timeline / Data / AI / Settings (D37). Uploads folds
+      into Tracker as the capture action. Data merges Exams + Codes. AI is a canvas that
+      accepts text, photos and files, renders validated chart specs, answers questions about
+      the user's own numbers and the public productivity portfolio, and refuses clinical
+      interpretation. The redesign keeps Theme.swift's palette, the consolidated information
+      cards and the date-selection filter (D32).
+    done_when:
+      - id: G7.1
+        check: "iOS tabs are exactly Tracker, Timeline, Data, AI, Settings; Uploads is reachable as the Tracker capture action and no Uploads tab remains"
+        kind: manual
+      - id: G7.1b
+        check: "Theme.swift hues and semantic roles are unchanged; the consolidated StatTile card grid and the date-selection filter survive the redesign with equivalent function"
+        kind: manual
+      - id: G7.2
+        check: "The model calls only the fixed tool set; it never emits SQL and never emits rendering code"
+        kind: runtime
+      - id: G7.3
+        check: "Chart specs validate against contracts/chart-spec.schema.json on both Swift and TypeScript sides"
+        kind: runtime
+      - id: G7.4
+        check: "The adversarial clinical-refusal eval suite passes 100% - zero interpretations of imaging findings"
+        kind: runtime
+        evidence: clinical-refusal-evals.json
+      - id: G7.5
+        check: "Patient context reaches the model only as opaque patient_ref placeholders; the client rehydrates names locally"
+        kind: runtime
+
+  - id: G8
+    title: HIPAA posture, TestFlight readiness, licensure gate
+    decisions: [D6, D10]
+    statement: >
+      App lock, no PHI in logs, crash reports or notifications, de-identification tested
+      to Safe Harbor, licensure recorded, non-clinical disclaimer persistent, privacy
+      manifest complete and Beta App Review passed.
+    done_when:
+      - id: G8.1
+        check: "A captured log stream from a full session contains no patient identifier"
+        kind: runtime
+        evidence: log-phi-scan.txt
+      - id: G8.2
+        check: "Crash reporting is configured to exclude the vault and all PHI-bearing state"
+        kind: static
+      - id: G8.3
+        check: "App Store Connect privacy manifest and data-safety disclosures are complete and accurate"
+        kind: manual
+      - id: G8.4
+        check: "Beta App Review passed for external TestFlight distribution"
+        kind: manual
+      - id: G8.5
+        check: "Licensure is recorded with verification_level; the UI never claims primary-source verification while the provider is NPPES + self-attestation"
+        kind: runtime
+      - id: G8.6
+        check: "The non-clinical disclaimer is persistent, not dismissible-forever"
+        kind: manual
+
+  - id: G9
+    title: Auth parity across iOS and web, with MFA
+    decisions: [D1, D5]
+    statement: >
+      Clerk carries identity, session and MFA. Auth state is consistent between the
+      native iOS app and the PWA. Clerk never touches patient data.
+    done_when:
+      - id: G9.1
+        check: "TOTP MFA plus backup codes are enabled and enforced for all users"
+        kind: runtime
+      - id: G9.2
+        check: "skipPasswordChecks appears nowhere in the codebase"
+        kind: static
+      - id: G9.3
+        check: "A session established on iOS and one on web resolve to the same subject with the same entitlements"
+        kind: runtime
+      - id: G9.4
+        check: "Static analysis of every Clerk call site finds no PHI in any metadata or payload"
+        kind: static
+    non_goals:
+      - Billing, plans, freemium tiers, entitlement purchase (D1). Dropped from the plan.
+
+  - id: G10
+    title: Engineering baseline and ship-blockers closed
+    decisions: [D18, D19, D20]
+    statement: >
+      The live exposures are closed and credentials rotated. TypeScript monorepo, real
+      migrations, working lint, CI with tests, RLS, security headers, surfaced errors,
+      and account deletion that actually deletes.
+    priority: highest
+    done_when:
+      - id: G10.1
+        check: "No route is reachable behind a static shared secret; /api/setup-clerk, /api/setup and /api/ocr-test are absent from the deployed bundle"
+        kind: runtime
+      - id: G10.2
+        check: "CLERK_SECRET_KEY and SETUP_TOKEN have been rotated and the old values are invalid"
+        kind: manual
+      - id: G10.3
+        check: "The LLM proxy accepts a named template id only - no client-supplied system, tools or uncapped maxTokens - with a per-user rate limit and spend cap"
+        kind: runtime
+      - id: G10.4
+        check: "No response body in any route contains driver or database error text; every error carries a correlation id"
+        kind: runtime
+      - id: G10.5
+        check: "FORCE ROW LEVEL SECURITY is on every app-schema tenant table; a cross-tenant probe test exists per route and passes"
+        kind: runtime
+      - id: G10.6
+        check: "Drizzle migrations are the single schema source; the DDL-over-HTTP endpoint is gone; a _migrations table exists with a rollback path"
+        kind: runtime
+      - id: G10.7
+        check: "npm run lint works, ESLint enforces INV-NO-SWALLOW, typecheck passes, CI runs tests and preview deploys on every PR"
+        kind: runtime
+      - id: G10.8
+        check: "Account deletion removes every row for that subject across every table; create -> delete -> assert-zero-rows passes"
+        kind: runtime
+      - id: G10.9
+        check: "components/NeuroRVU.jsx no longer exists as a single file; no source file exceeds 400 lines"
+        kind: static
+      - id: G10.10
+        check: "Extra-duty amount is recomputed server-side from counts and the server-held rate row; a client-supplied amount is ignored"
+        kind: runtime
+      - id: G10.11
+        check: "Security headers and CSP are present on every response"
+        kind: runtime
+
+  - id: G11
+    title: Self-benchmarking and the public productivity portfolio
+    decisions: [D21, D21a, D21b]
+    statement: >
+      Users compare against their own history and targets, and against a portfolio of
+      publicly declared productivity figures gathered from permissible sources behind a
+      ProductivityBenchmarkSource port. No user's data is ever served to another user.
+    done_when:
+      - id: G11.1
+        check: "Self-comparison (period vs period, actual vs target) works with a single user and no cohort"
+        kind: runtime
+      - id: G11.2
+        check: "Every benchmark source adapter declares a terms_basis field; ingest refuses to run an adapter without one"
+        kind: runtime
+      - id: G11.3
+        check: "No LinkedIn adapter exists anywhere in the codebase"
+        kind: static
+      - id: G11.4
+        check: "Every portfolio figure renders with its source, collection date and terms basis visible to the user"
+        kind: manual
+      - id: G11.5
+        check: "No API route can return data derived from another user's rows; asserted by a cross-user probe per route"
+        kind: runtime
+      - id: G11.6
+        check: "Scheduled jobs run with observability: cms-ingest, productivity-portfolio-ingest, curated-feed, usage-rollup"
+        kind: runtime
+    non_goals:
+      - Peer cohort benchmarking and k-anonymity machinery. Deleted (D21) - unreachable at this scale.
+
+  - id: G12
+    title: Migration of existing production data
+    decisions: [D17]
+    statement: >
+      Every existing exams, user_kv and extra_duty row survives with correct attribution.
+      Historical exams are re-priced to the authoritative CMS value for the version in
+      effect on their exam date, and the user is shown exactly what changed.
+    done_when:
+      - id: G12.1
+        check: "Row counts before and after migration match exactly for every table"
+        kind: runtime
+        evidence: migration-reconciliation.json
+      - id: G12.2
+        check: "A reconciliation report lists every exam whose wRVU changed, with old value, new value, CMS version and delta"
+        kind: runtime
+      - id: G12.3
+        check: "Extra-duty rate_snapshot values are untouched by migration - history is never re-priced"
+        kind: runtime
+      - id: G12.4
+        check: "Migration is rehearsed on a Neon branch clone of production and rolled back cleanly before being run for real"
+        kind: runtime

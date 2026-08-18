@@ -1,0 +1,392 @@
+# RadRVU — Node backlog (BROWNFIELD)
+#
+# This plan IMPROVES a working MVP. It does not build from scratch (D38).
+#
+# THREE DEPLOYABLES, all in production, all must stay working through every node:
+#   project-m6jfw      Next.js PWA + /api/*  -> fella.cc          (Neon, Clerk)
+#   neurorvu-edge-api  /api/v1/reference, /api/v1/resolve         (no user data, D29)
+#   neurorvu-ios       SwiftUI + SwiftData, TestFlight            (ASC 6799587290)
+#
+# EVERY node below obeys INV-ALWAYS-SHIPPABLE (D33): it leaves all three working.
+# `couples:` means those items CANNOT ship separately and MUST land in ONE pull request.
+# `flag:` means the node may land incomplete behind that flag, OFF in production (D33a).
+# Contract changes are additive-only and ship server+clients together (D33b).
+#
+# A0 nodes are fully contracted in goals/nodes/. Everything else is expanded by the
+# Contractor (`/goals contract <phase>`) BEFORE any code is written for it.
+
+version: 3
+derived_from: goals/DECISIONS.md
+updated: 2026-08-17
+framing: brownfield
+
+phases:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  A0:
+    title: Live exposures
+    goals: [G10]
+    note: >
+      Contracted in goals/nodes/. SETUP_TOKEN is still live on production (32 days old,
+      verified via `vercel env ls`). Unchanged by the brownfield audit except N00f, which
+      now also covers the iOS escalation path.
+    nodes:
+      - id: N00a-remove-token-gated-routes
+      - id: N00b-rotate-credentials
+      - id: N00c-lock-llm-proxy
+        amended: >
+          Also covers neurorvu-edge-api. That project holds its own ANTHROPIC_API_KEY and
+          /api/v1/resolve is the second LLM path. Both proxies get named templates, caps and
+          per-user attribution. resolve.js ALREADY does the right things (Clerk JWT, hard
+          fragment caps, PHI-shaped rejection, never logs bodies) — extend it, do not rewrite it.
+      - id: N00d-error-envelope
+      - id: N00e-mfa-and-password-policy
+      - id: N00f-redact-before-upload
+        amended: >
+          iOS already has a tested Redaction module and never uploads images. Scope here is
+          the PWA path only, which still POSTs raw screenshots to Anthropic.
+
+  # ─────────────────────────────────────────────────────────────────────────
+  A1:
+    title: Engineering baseline (without breaking three shipping apps)
+    goals: [G10]
+    gate: A0 PASS
+    nodes:
+      - id: N01-repo-and-typescript
+        title: Monorepo/workspace decision and incremental TypeScript
+        decisions: [D19, D38]
+        depends_on: [N21-ios-rebaseline]
+        notes: >
+          D19 assumed a monorepo containing ios/. Reality is three repos. N21b decides
+          absorption vs federation FIRST. Whatever the answer, TypeScript migration is
+          file-by-file and never lands the PWA broken.
+        splits_into:
+          - N01a-workspace-decision      # output of N21b, executed here
+          - N01b-ts-config-strict
+          - N01c-migrate-lib
+          - N01d-migrate-routes
+          - N01e-migrate-components
+      - id: N02-real-migrations
+        title: Drizzle migrations as the single schema source
+        notes: >
+          Baseline the CURRENT production schema as migration 0000, then forward only.
+          drizzle.config.js points at ./drizzle which does not exist. The DDL-over-HTTP
+          endpoint dies in N00a.
+        couples: [N02a-baseline-migration, N02b-migration-ci-check]
+        splits_into: [N02a-baseline-migration, N02b-migration-ci-check, N02c-rollback-harness]
+      - id: N03-ci
+        title: CI across all three deployables
+        splits_into:
+          - N03a-github-actions-base
+          - N03b-eslint-invariant-rules
+          - N03c-neon-branch-runner
+          - N03d-macos-runner            # iOS build + XCUITest
+          - N03e-verify-shippable        # the INV-ALWAYS-SHIPPABLE harness itself
+        notes: N03e blocks every later node — it is how the working-app gate is enforced.
+      - id: N04-rls
+        depends_on: [N02-real-migrations]
+        splits_into: [N04a-rls-policies, N04b-restricted-prod-role, N04c-cross-tenant-probe]
+      - id: N05-security-headers
+      - id: N06-decompose-dashboard
+        title: Break up the 1623-line NeuroRVU component
+        notes: >
+          Preserve exactly: reported-vs-tracked two-layer model, consolidateBaseline()
+          epsilons and review panel, ocrErrorMessage() mapping, the LLM-never-prices-money
+          inversion. Each extraction is its own PR and the PWA works after each.
+        splits_into:
+          - N06a-extract-tracker
+          - N06b-extract-baseline-consolidation
+          - N06c-extract-uploads-ocr
+          - N06d-extract-extra-duty
+          - N06e-extract-explorer
+          - N06g-delete-dead-users-table
+      - id: N07-cascading-deletion
+        depends_on: [N02-real-migrations, N04-rls]
+      - id: N08-server-side-extra-duty-amount
+        notes: Preserve the rate_snapshot pattern exactly — best decision in the codebase.
+      - id: N09-gel-scaffolding
+        depends_on: [N03-ci]
+        splits_into: [N09a-validator-harness, N09b-evidence-store, N09c-prod-audit-log, N09d-drift-auditor, N09e-state-machine]
+
+  # ─────────────────────────────────────────────────────────────────────────
+  B:
+    title: Definitive reference platform — consolidate five copies into one
+    goals: [G1, G2, G12]
+    gate: A1 PASS (N03e mandatory)
+    framing: >
+      Consolidation and extension, NOT construction. rvu26a.jsonl already has 828 codes at
+      (hcpcs, modifier) grain with PE/MP/status/PC-TC and Florida GPCI. ~/projects/wrvus
+      holds the build pipeline and radiology_wrvu_2026_postgres.sql.
+    nodes:
+      - id: N10-locality-extension
+        title: Extend build_radiology_wrvu_2026.py from 3 Florida localities to all ~113
+        goals: [G2]
+        decisions: [D12, D40]
+        notes: >
+          Modification to working code. CMS GPCI addendum is one small file; the formula is
+          already implemented for Florida. Output feeds N11.
+      - id: N11-reference-schema
+        title: Versioned `reference` schema in Neon
+        depends_on: [N02-real-migrations, N10-locality-extension]
+        splits_into:
+          - N11a-fee-schedule-versions
+          - N11b-procedure-codes
+          - N11c-procedure-descriptors   # separable per D14/INV-DESCRIPTOR-SEPARABLE
+          - N11d-code-rvus               # (hcpcs, modifier) grain, all PPRRVU columns
+          - N11e-localities
+          - N11f-gpci
+          - N11g-code-taxonomy           # specialty tags: RANK ONLY, never restrict (D36)
+          - N11h-payer-schedules
+          - N11i-provider-rate-schedules
+          - N11j-institutions-and-sites  # D34 — see N18
+      - id: N12-reference-api
+        title: neurorvu-edge-api serves the Neon reference schema with ETag
+        goals: [G2]
+        decisions: [D28, D29]
+        depends_on: [N11-reference-schema]
+        couples: [N12a-edge-reads-neon, N12b-etag-contract, N12c-ios-sync-client-update]
+        notes: >
+          COUPLED PR: the edge API cannot start reading Neon unless the iOS ReferenceSyncClient
+          still validates against the response shape. Additive-only (D33b) — the current
+          reference.json shape must keep working for older TestFlight builds.
+      - id: N13-taxonomy-seed
+        title: Specialty tags for neuro and Body across the 828 codes
+        depends_on: [N11g-code-taxonomy]
+      - id: N14-pricing-engine
+        title: resolveValue() — compensation AND allowed amount
+        depends_on: [N12-reference-api]
+        splits_into:
+          - N14a-golden-fixtures
+          - N14b-compensation-path
+          - N14c-allowed-amount-path     # UN-deferred by D12-v3
+          - N14d-unpriced-semantics      # INV-NO-ESTIMATES; 282 status-C rows are real
+          - N14e-cms-crosscheck
+      - id: N17-pwa-reads-reference-api
+        title: Delete the PWA's hardcoded table; read the reference API
+        goals: [G1, G2]
+        depends_on: [N14-pricing-engine, N06-decompose-dashboard]
+        couples: [N17a-remove-inline-codes, N17b-remove-lib-data-file, N17c-pwa-reference-client]
+        notes: >
+          COUPLED PR — removing either copy alone leaves the PWA pricing from a stale source.
+          This is the node that finally kills the byte-for-byte duplication.
+      - id: N18-n-institution-model
+        title: Generalize UM/JHS to N user-created institutions and sites
+        goals: [G1, G4]
+        decisions: [D34]
+        depends_on: [N11j-institutions-and-sites]
+        couples:
+          - N18a-institutions-sites-tables
+          - N18b-baseline-rows-per-institution   # replaces settings.umYTD / jhsYTD
+          - N18c-pwa-analytics-generalize        # repUM/repJHS/trkUM/trkJHS, 4 literal arrays
+          - N18d-ios-institution-generalize      # Institution enum -> data-driven
+          - N18e-migrate-um-jhs-to-rows
+        notes: >
+          COUPLED PR, the largest in the plan. UM/JHS are in the analytics SHAPE, not just
+          config: 28 `UM` references in NeuroRVU.jsx, umYTD/jhsYTD scalars inside the baseline
+          math, and a 3-case Swift enum. Splitting this ships a broken baseline.
+          Generalize the pattern iOS already has (nrv_sites + Institution.overrides).
+          INV-SITE-NEVER-FAILS: an unmapped site never loses an exam.
+      - id: N19-unify-modality-vocabulary
+        depends_on: [N13-taxonomy-seed]
+        notes: >
+          Display ["CT","CTA","MRI","MRA","Add-on"] vs PPC pay set {mri,ct,xr,other}. The
+          neuro schedule has NO XR codes and OCR defaults unknowns to "CT" — and XR is the
+          LARGEST family in rvu26a (642 rows). This mis-prices real money today.
+      - id: N20-migrate-production-data
+        goals: [G12]
+        decisions: [D17, D31]
+        depends_on: [N14-pricing-engine, N18-n-institution-model, N19-unify-modality-vocabulary]
+        splits_into:
+          - N20a-branch-rehearsal
+          - N20b-reprice-historical
+          - N20c-reconciliation-report
+          - N20d-extra-duty-untouched
+          - N20e-sync-sor-cutover        # D31: cloud becomes authoritative; fingerprint is the migration key then retires
+
+  # ─────────────────────────────────────────────────────────────────────────
+  C:
+    title: iOS — re-baseline, then vault, then redesign
+    goals: [G3, G5, G7, G9]
+    gate: A1 PASS
+    framing: >
+      A shipping app, not a greenfield build. 4848 lines, 13 unit + 3 UI test suites,
+      TestFlight since 2026-08-09. Already done: Vision OCR + parser + fixtures, Redaction,
+      FoundationModels, Clerk auth, CloudSync, CloudKit backup, privacy manifest,
+      NSFileProtectionComplete, ASC upload pipeline.
+    nodes:
+      - id: N20x-ocr-contrast-regression
+        title: Fix the uncommitted OCR pipeline regression before anything branches off it
+        goals: [G2, G5]
+        decisions: [D38]
+        phase: C
+        priority: blocking
+        blocks: [N21-ios-rebaseline]
+        discovered: 2026-08-17, by running the suite against the dirty working tree
+        evidence: |
+          xcodebuild test -scheme NeuroRVU -destination 'iPhone 17 Pro,OS=27.0' -only-testing:NeuroRVUTests
+          52 tests, 13 suites, 3 failures, ALL in FixturePipelineTests:
+            umWorklistFixtureMatchesGolden()  actual.cpt "70551" == expected.cpt "70553"
+            umWorklistFixtureMatchesGolden()  abs(actualWrvu - wrvu) -> 0.78  <  0.001
+            rotatedFixtureStillParses()       Caught error: .noTable
+        analysis: >
+          70551 is MRI brain W/O; 70553 is W/WO. The uncommitted ExamDateParser.extract()
+          change made the date pattern unanchored so merged date+procedure cells can be
+          split — but ParserService now removes the matched date substring from the cell and
+          the contrast suffix is being lost with it, so the contrast-suffix CPT rule resolves
+          to the wrong code. That is a 0.78 wRVU mis-price PER STUDY on the app's core
+          value proposition. Separately, the WorklistValidator change now rejects the rotated
+          fixture outright with .noTable.
+        contracts:
+          - FixturePipelineTests passes 52/52 with the merged-cell handling retained
+          - "A regression test asserts specifically: a merged date+procedure cell containing
+             a W/WO study resolves to the W/WO CPT, not the W/O CPT"
+          - rotatedFixtureStillParses() passes; the validator does not reject rotated captures
+        verify:
+          runtime:
+            - "xcodebuild test -scheme NeuroRVU -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=27.0' -only-testing:NeuroRVUTests"
+          evidence: [fixture-pipeline-52-52.txt]
+        done_when:
+          - 52/52 green on a clean checkout of the branch
+          - The golden fixture resolves 70553, not 70551
+          - The rotated fixture parses
+        notes: >
+          D38 — improve, never rebuild. The uncommitted work is CORRECT in intent: it handles
+          the merged date+procedure cells that photos of monitors produce, which is the exact
+          artifact class documented in
+          semantic/neurorvu-ios/vision-ocr-photographed-monitor-failure-modes. Do not revert
+          it. Fix the contrast-suffix loss and the validator rejection, keep the merged-cell
+          handling, and land the whole thing as ONE commit with its tests.
+
+      - id: N21-ios-rebaseline
+        title: Audit the existing app and re-baseline every Phase C node
+        blocks: [N01, N22, N23, N24, N25, N26, N27, N28, N29, N30]
+        must_answer:
+          - Which Phase C contracts does the existing code already satisfy?
+          - Gap between the current Redaction module (MRN/DOB/SSN + digit runs) and the full Safe Harbor 18.
+          - Does CloudSyncService ever transmit an identifier? Assert INV-NO-PHI-IN-CLOUD against the real app.
+          - What does AuthGate do about MFA (G9.1) and an app lock (G8)?
+          - Does the FoundationModels path need INV-NO-CLINICAL applied?
+          - Do iOS and PWA wRVU numbers agree today? INV-PARITY before a shared engine exists.
+          - Status of the 6 uncommitted files in the OCR pipeline.
+        deliverable: A rewritten Phase C node list and estimate. The 12-20 week figure is WITHDRAWN.
+      - id: N21b-repo-strategy
+        title: Monorepo absorption vs federated repos
+        depends_on: [N21-ios-rebaseline]
+        blocks: [N01-repo-and-typescript]
+      - id: N22-contracts-and-codegen
+        title: contracts/openapi.yaml covering BOTH backends, generated clients
+        depends_on: [N21b-repo-strategy]
+        splits_into: [N22a-openapi-spec, N22b-swift-codegen, N22c-ts-codegen, N22d-staleness-ci, N22e-additive-compat-check]
+        notes: N22e implements INV-ADDITIVE-CONTRACTS. It gates every later contract change.
+      - id: N23-vault
+        title: SQLCipher/GRDB vault over the existing SwiftData store
+        goals: [G3]
+        depends_on: [N21-ios-rebaseline]
+        flag: vault_enabled
+        splits_into: [N23a-keychain-key, N23b-data-protection-class, N23c-biometric-gate, N23d-no-passcode-refusal, N23e-container-dump-test]
+        notes: >
+          Genuinely new: the app today is redact-and-discard, not vault-and-retain. Must
+          coexist with the existing SwiftData store and BackupService without data loss.
+      - id: N24-ocr-hardening
+        title: Extend the working Vision pipeline, do not replace it
+        goals: [G5]
+        notes: >
+          START from semantic/neurorvu-ios/vision-ocr-photographed-monitor-failure-modes:
+          glued year+time ("7/3/20264:07"), ellipsis tokens, merged "CTT Spine", site merged
+          into procedure, char corruption ("8:89:17"), unrecoverable dates -> date-optional rows.
+          PhotosPicker iCloud content is invisible to XCUITest — unit-level fixture tests are
+          the gate, not UI automation.
+      - id: N25-deidentification
+        title: Extend Redaction to the full Safe Harbor 18
+        depends_on: [N21-ios-rebaseline]
+      - id: N26-pricing-parity
+        title: iOS reads the shared reference API and matches TypeScript on golden vectors
+        depends_on: [N14-pricing-engine, N22-contracts-and-codegen]
+        couples: [N26a-ios-resolve-value, N26b-parity-fixtures, N26c-offline-seed-fallback]
+        notes: COUPLED — offline must keep working (G2.8) the moment the bundled seed stops being primary.
+      - id: N27-layout-profiles
+        depends_on: [N24-ocr-hardening]
+      - id: N28-offline-outbox
+        title: Durable outbox now that cloud is the system of record
+        decisions: [D31]
+        depends_on: [N20e-sync-sor-cutover, N23-vault]
+      - id: N29-phi-ci-enforcement
+        depends_on: [N25-deidentification]
+      - id: N30-gui-redesign
+        title: Full redesign on the fixed palette
+        goals: [G7]
+        decisions: [D32, D37]
+        depends_on: [N21-ios-rebaseline]
+        flag: new_navigation
+        couples: [N30a-tab-restructure, N30b-data-tab-merge, N30c-uploads-into-tracker]
+        splits_into:
+          - N30a-tab-restructure         # Tracker / Timeline / Data / AI / Settings
+          - N30b-data-tab-merge          # Exams + Codes
+          - N30c-uploads-into-tracker
+          - N30d-component-system        # spacing, type ramp, cards, dark mode, a11y
+          - N30e-chart-restyle
+          - N30f-settings-tab            # onboarding, specialties, institutions, sites, rates
+        preserve:
+          - Theme.swift hues and semantic roles (teal tracked, amber extra duty, indigo benchmarks)
+          - the consolidated StatTile information cards
+          - the date-selection filter
+        notes: >
+          COUPLED PR for a-b-c: moving Uploads into Tracker while Exams/Codes still exist as
+          tabs leaves a navigation with two homes for the same data. Behind new_navigation
+          so it can land in pieces without shipping a half-moved UI.
+
+  # ─────────────────────────────────────────────────────────────────────────
+  D:
+    title: Onboarding and customization
+    goals: [G4]
+    gate: B and C substantially PASS
+    nodes:
+      - id: N31-licensure-gate           # NPPES + self-attestation
+      - id: N32-institution-registry     # search + user-created, depends on N18
+      - id: N33-onboarding-wizard
+        decisions: [D35]
+        notes: SKIPPABLE at every step. INV-SITE-NEVER-FAILS covers the skip path.
+      - id: N34-specialty-ranking
+        decisions: [D36]
+        notes: Ranks search, quick-add and OCR priors. Never restricts. All 828 stay reachable.
+      - id: N36-accessibility            # PWA currently has ONE aria- attribute in 1623 lines
+      - id: N37-followup-ui
+
+  # ─────────────────────────────────────────────────────────────────────────
+  E:
+    title: Intelligence
+    goals: [G6, G7, G11]
+    gate: B and D PASS
+    nodes:
+      - id: N41-local-notifications      # UserNotifications only (D23)
+      - id: N43-ai-route                 # on neurorvu-edge-api (D29) — it already holds the key
+      - id: N44-chart-spec               # validated JSON spec; Swift Charts + Recharts
+      - id: N45-self-benchmarking
+      - id: N46-productivity-portfolio
+        splits_into: [N46a-source-port, N46b-public-comp-plans, N46c-job-board-adapters, N46d-practice-sites, N46e-provenance-ui]
+        notes: No LinkedIn adapter (D21a). INV-SOURCE-PERMISSIBLE.
+      - id: N47-curated-feed
+      - id: N48-clinical-guardrail
+        notes: Must also cover the on-device FoundationModels path, not just the cloud route.
+    removed:
+      - id: N42-followup-dispatch
+        reason: D23 — local notifications only.
+      - id: N45-benchmark-materialization
+        reason: D21 — no peer cohorts; k-anonymity unreachable at ~10 users.
+
+  # ─────────────────────────────────────────────────────────────────────────
+  F:
+    title: Compliance and distribution
+    goals: [G8, G9]
+    gate: E PASS
+    nodes:
+      - id: N52-privacy-manifest         # EXISTS (PrivacyInfo.xcprivacy) — update, do not create
+      - id: N52b-external-testflight     # internal is LIVE; external needs Beta App Review
+      - id: N53-audit-logging
+      - id: N54-legal-review
+      - id: N56-fsmb-verifier            # only if funded
+    removed:
+      - id: N51-clerk-billing
+        reason: D1 — no billing.
+      - id: N55-cloud-phi-sync
+        reason: Out of scope. Device-only PHI.

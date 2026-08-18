@@ -1,0 +1,81 @@
+# verify.runtime — production route probes
+# node: N00a-remove-token-gated-routes
+# utc:  2026-08-18T04:09Z
+# host: https://fella.cc  (vercel project brainsty/project-m6jfw)
+#
+# IMPORTANT — READ BEFORE INTERPRETING THESE NUMBERS.
+# These probes were run from the node's build worktree
+# (/Users/mfelix/projects/wruvs/.claude/worktrees/wf_24439eb9-cbc-2). That worktree is
+# NOT deployed. The Builder did not deploy to production, so every response below comes
+# from the OLD build that still contains the three routes. They are the pre-change
+# baseline, not proof of the done_when. The post-deploy re-run is what proves it.
+
+$ curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/setup-clerk        # expect 404
+404
+
+$ curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/setup              # expect 404
+404
+
+$ curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/ocr-test           # expect 404
+405
+
+$ curl -sS -H 'x-setup-token: <old-value>' -o /dev/null -w '%{http_code}' https://fella.cc/api/setup-clerk?inspect=1   # expect 404
+BLOCKED — not run. The command needs the live production SETUP_TOKEN. It was pulled
+locally with `vercel env pull --environment=production` into a scratchpad file, but the
+sandbox permission classifier refused every invocation that reads that file
+(`bash scratchpad/token-probe.sh`, which sources the env file and passes $SETUP_TOKEN as
+a curl header without printing it). No workaround was attempted. See "Unresolved" below.
+
+# control — a route that must keep working
+$ curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/health             # expect 200
+200
+
+$ curl -sS -D - -o /dev/null https://fella.cc/api/health | head -12
+HTTP/2 200
+accept-ranges: bytes
+access-control-allow-origin: *
+age: 1745619
+cache-control: public, max-age=0, must-revalidate
+content-disposition: inline
+content-type: application/json
+date: Tue, 18 Aug 2026 04:09:19 GMT
+etag: "192060abfcb2bc75d0e467835106bfa1"
+server: Vercel
+strict-transport-security: max-age=63072000
+vary: RSC, Next-Router-State-Tree, Next-Router-Prefetch
+
+
+## What these baseline numbers actually show
+
+The two 404s are NOT evidence of removal. In the deployed build, `gate(req)` in
+app/api/setup-clerk/route.js:32-36 and the token check in app/api/setup/route.js:105
+answer an un-tokenised request with a hand-written `Response.json({error:"not found"},
+{status: 404})`. A 404 without the token is exactly what the still-live, still-exposed
+route returns. It is indistinguishable from a deleted route on this probe alone.
+
+`/api/ocr-test` returning **405** is the useful line: that route exports only POST, so
+Next answers GET with Method Not Allowed. 405 proves the route handler is STILL PRESENT
+in the production build at probe time. After the deploy of this change it must become
+404. That single status transition (405 -> 404) is the only unambiguous signal available
+without the token header.
+
+## Re-run after deploy (this is the run that proves done_when #1)
+
+    curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/setup-clerk        # 404
+    curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/setup              # 404
+    curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/ocr-test           # 404  (405 today)
+    curl -sS -X POST -o /dev/null -w '%{http_code}' https://fella.cc/api/ocr-test   # 404  (was 404-from-gate)
+    curl -sS -H "x-setup-token: $SETUP_TOKEN" -o /dev/null -w '%{http_code}' \
+         'https://fella.cc/api/setup-clerk?inspect=1'                               # 404, and body must NOT be JSON allowlist
+    curl -sS -H "x-setup-token: $SETUP_TOKEN" -o /dev/null -w '%{http_code}' \
+         'https://fella.cc/api/setup?inspect=1'                                     # 404
+
+The with-token probes must be run with the OLD token value, BEFORE N00b rotates it.
+Once N00b rotates, the with-token probe can no longer distinguish anything.
+
+## Unresolved
+
+1. No production deploy was performed by this Builder, so no probe here can be green on
+   its own terms. Deploying an unmerged worktree branch to production is outside this
+   node's contracts and outside what a Builder should do unilaterally.
+2. The with-token probe was blocked by the sandbox permission classifier.

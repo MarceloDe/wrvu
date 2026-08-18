@@ -1,0 +1,163 @@
+{
+  "node": "N00c-pwa-lock-llm-proxy",
+  "invariant": "INV-SERVER-PROMPTS",
+  "generatedAt": "2026-08-18T17:48:56.021Z",
+  "static": {
+    "total": 29,
+    "passed": 29,
+    "failed": 0,
+    "results": [
+      {
+        "name": "a client-supplied system prompt is rejected with 400",
+        "status": "pass",
+        "detail": "400 server_owned_field"
+      },
+      {
+        "name": "a client-supplied tool definition is rejected with 400",
+        "status": "pass",
+        "detail": "400 server_owned_field"
+      },
+      {
+        "name": "a client-supplied maxTokens is rejected with 400",
+        "status": "pass",
+        "detail": "400 server_owned_field"
+      },
+      {
+        "name": "every server-owned field is rejected, not ignored",
+        "status": "pass",
+        "detail": "17 fields rejected"
+      },
+      {
+        "name": "an unknown template id is rejected with 400",
+        "status": "pass",
+        "detail": "400 unknown_template"
+      },
+      {
+        "name": "a raw messages array is rejected with 400",
+        "status": "pass",
+        "detail": "400 server_owned_field"
+      },
+      {
+        "name": "a request with no template is rejected",
+        "status": "pass",
+        "detail": "400 invalid_template"
+      },
+      {
+        "name": "a request with no params is rejected",
+        "status": "pass",
+        "detail": "400 missing_params"
+      },
+      {
+        "name": "an unknown param is rejected",
+        "status": "pass",
+        "detail": "400 unknown_param"
+      },
+      {
+        "name": "an unknown top-level field is rejected",
+        "status": "pass",
+        "detail": "400 unknown_field"
+      },
+      {
+        "name": "the old `images` wire field is rejected, not silently ignored",
+        "status": "pass",
+        "detail": "400 unknown_field"
+      },
+      {
+        "name": "a bare data-URL string attachment is rejected",
+        "status": "pass",
+        "detail": "400 invalid_attachment"
+      },
+      {
+        "name": "an attachment carrying extra keys is rejected",
+        "status": "pass",
+        "detail": "400 invalid_attachment"
+      },
+      {
+        "name": "an attachment with a non-base64 source type is rejected",
+        "status": "pass",
+        "detail": "400 invalid_attachment"
+      },
+      {
+        "name": "an attachment whose data is not base64 is rejected",
+        "status": "pass",
+        "detail": "400 invalid_attachment"
+      },
+      {
+        "name": "a disallowed attachment media type is rejected",
+        "status": "pass",
+        "detail": "400 unsupported_media_type"
+      },
+      {
+        "name": "an image smuggled inside a document block is rejected",
+        "status": "pass",
+        "detail": "400 unsupported_media_type"
+      },
+      {
+        "name": "a PDF is rejected for the ocr template",
+        "status": "pass",
+        "detail": "400 unsupported_media_type"
+      },
+      {
+        "name": "more attachments than the template allows is rejected",
+        "status": "pass",
+        "detail": "400 too_many_attachments"
+      },
+      {
+        "name": "an oversized attachment is rejected",
+        "status": "pass",
+        "detail": "400 attachment_too_large"
+      },
+      {
+        "name": "a valid ocr request is accepted",
+        "status": "pass",
+        "detail": "accepted"
+      },
+      {
+        "name": "a valid timeline request accepts a PDF",
+        "status": "pass",
+        "detail": "accepted"
+      },
+      {
+        "name": "the upstream body is built entirely from the registry",
+        "status": "pass",
+        "detail": "max_tokens=8000, keys=max_tokens,messages,model,system"
+      },
+      {
+        "name": "the user text upstream is the registry's, never the client's",
+        "status": "pass",
+        "detail": "104 chars from the registry"
+      },
+      {
+        "name": "a PDF attachment becomes a document block upstream",
+        "status": "pass",
+        "detail": "document,text"
+      },
+      {
+        "name": "no template declares a search tool (D8)",
+        "status": "pass",
+        "detail": "2 templates, 0 tools"
+      },
+      {
+        "name": "every template stays under the hard token ceiling",
+        "status": "pass",
+        "detail": "ceiling=8000"
+      },
+      {
+        "name": "the ocr template caches its static code-reference block",
+        "status": "pass",
+        "detail": "cached block = 2661 chars"
+      },
+      {
+        "name": "the cached block is byte-identical between two builds",
+        "status": "pass",
+        "detail": "2661 chars, stable"
+      }
+    ]
+  },
+  "live": {
+    "ran": false,
+    "reason": "PREVIEW and/or AUTH not set — the live HTTP probes need a running server and a real Clerk session. NOT RUN (not passed).",
+    "probes": []
+  },
+  "ok": true
+}

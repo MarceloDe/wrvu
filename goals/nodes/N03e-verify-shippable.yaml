@@ -1,0 +1,737 @@
+id: N03e-verify-shippable
+title: One command that proves all three deployables still work, and the verdict every later node is gated on
+goal_refs: [G10]           # G10.7 — CI runs tests and the working-app gate on every PR
+decisions: [D20, D24, D25, D25a, D33, D33a, D33b, D38]
+depends_on:
+  - N03a-github-actions-base     # owns .github/workflows/ci.yml; this node adds a step to it
+  - N02b-migration-ci-check      # schema drift must already be a CI failure, not a surprise inside gate 1
+  - N03c-neon-branch-runner      # supplies the per-run dev database gate 1 binds to
+  - N03d-macos-runner            # supplies the workflow gate 3 dispatches, and its assertion-poison sha
+phase: A1
+estimate_hours: 14
+priority: 1
+severity: gates-everything-downstream
+
+# ─────────────────────────────────────────────────────────────────────────────
+rationale: >
+  INV-ALWAYS-SHIPPABLE is declared `severity: blocking` and its check is
+  `pnpm verify:shippable`. That command does not exist in any form. Verified 2026-08-18
+  against origin/main (3b3a5f5): `git show origin/main:package.json` lists eleven scripts —
+  dev, build, start, lint, db:push, db:studio, db:seed, test:redaction,
+  test:forged-attachment, test:llm-proxy-contract, verify:redaction, test:error-envelope,
+  test:route-contracts — and none of them is verify:shippable. There is no .github
+  directory at all. So the single rule that every A1-through-F node is supposed to satisfy
+  is, today, an assertion with no executable behind it, and BACKLOG says plainly that N03e
+  blocks every later node.
+
+  Three further things are wrong today, each verified rather than assumed:
+
+  (1) THE SECOND DEPLOYABLE HAS ZERO TESTS. ~/projects/neurorvu-ios/api
+  (neurorvu-edge-api, sha bd19a47) is 130 lines across api/v1/reference.js (31),
+  api/v1/resolve.js (80) and lib/auth.js (19), with one dependency (jose) and a
+  package.json carrying NO scripts block whatsoever. The invariant's phrase "the edge API
+  contract tests" refers to files that do not exist. resolve.js:7-11 already implements
+  MAX_FRAGMENTS=40, MAX_FRAGMENT_LENGTH=120 and a PHI-shaped rejection regex
+  /\b(dob|mrn|ssn)\b|\d{3}-\d{2}-\d{4}/i, and reference.js:23-29 already implements the
+  ETag/304 contract. Nothing anywhere asserts that any of it keeps working. N12 will rewrite
+  reference.js to read Neon; it will do so with no regression net under it.
+
+  (2) THE PRODUCTION HEALTH ENDPOINT CANNOT PROVE THE APP IS UP. Measured 2026-08-18:
+  `GET https://fella.cc/api/health` returns 200 with `x-vercel-cache: HIT` and `age: 3275`,
+  and re-probing with `?cb=<random>` plus `Cache-Control: no-cache` still returns
+  `x-vercel-cache: HIT, age: 3290`. The route is CDN-cached and not bustable from the
+  client. A shippability gate whose liveness witness is /api/health would report green
+  against a dead origin for as long as the cache lives. The witness must be a route that
+  demonstrably executes: `GET https://fella.cc/api/exams` unauthenticated returns 401 with
+  a FRESH x-correlation-id per request and no x-vercel-cache header at all.
+
+  (3) THE PACKAGE MANAGER IN THE INVARIANT IS NOT THE ONE THE REPO USES. INVARIANTS.yaml
+  says `pnpm verify:shippable`; the repo has package-lock.json, no pnpm-lock.yaml, and no
+  `packageManager` field. npm is 12.0.2, node 24.15.0. A check nobody can invoke as written
+  is the vacuous-pass failure mode INV-CHECKS-ACTUALLY-RUN was created for.
+
+  This node builds the harness, writes the missing edge-API tests, and — the part that
+  actually makes it a gate rather than a script — makes the harness state, in a
+  machine-readable verdict, exactly which assertions it did NOT get to make.
+
+# The ONLY context the Builder loads.
+context_query: >
+  codegraph explore "app/api/health app/api/exams middleware.js scripts/verify/fault-injection.mjs"
+  plus, for the second deployable, read directly (they are outside the indexed repo):
+  ~/projects/neurorvu-ios/api/api/v1/reference.js, api/v1/resolve.js, lib/auth.js, package.json
+
+context_hazard: >
+  THE CODEGRAPH INDEX IS STALE RELATIVE TO origin/main. It is built from the working tree,
+  which sits on branch plan/goal-registry at 7ce10f7 — a commit that predates PR #2
+  (8107e5b, N00d+N00f) and PR #3 (3b3a5f5, N00c). Running the context_query today returns
+  app/api/setup-clerk/route.js, which N00a DELETED, and does not return lib/http/errors.ts,
+  scripts/verify/fault-injection.mjs or scripts/verify/harness/server.mjs, which all exist
+  on origin/main. The Builder MUST branch from origin/main and treat the codegraph output as
+  a map of the neighbourhood, not an inventory of it.
+
+# ─────────────────────────────────────────────────────────────────────────────
+baseline_facts_2026_08_18: >
+  Measured, not assumed. Each is a fact the Validator can re-measure.
+
+  PWA, production (https://fella.cc):
+    GET /api/health         -> 200 {"ok":true,"db":true,"anthropic":true,"clerk":true}
+                               headers: strict-transport-security; access-control-allow-origin: *
+                               x-vercel-cache: HIT, age: 3275  <-- CDN-cached, not bustable
+    GET /api/exams (no auth)-> 401 {"error":{"code":"unauthorized","correlationId":"<uuid>"}}
+                               header x-correlation-id present, fresh per request, no cache header
+    ABSENT headers, all of them: content-security-policy, x-content-type-options,
+    referrer-policy, x-frame-options. N05-security-headers has not landed. Gate 1 may
+    therefore NOT assert "security headers present" as written in the backlog note — it
+    must ratchet instead. See contract C7.
+
+  Edge API, production (https://neurorvu-edge-api.vercel.app):
+    GET /api/v1/reference (no auth) -> 401 {"error":"unauthorized"}   x-vercel-cache: MISS
+    NOTE a real divergence: the edge API's error shape is a bare string, NOT the N00d
+    envelope {error:{code,correlationId}}. Do NOT unify it here. Record it; it belongs to
+    N00c-edge-usage-cap / N12. Gate 2 asserts the CURRENT shape (D38).
+
+  Edge API, source (~/projects/neurorvu-ios/api at bd19a47):
+    package.json has NO "scripts" key. Adding one is part of this node.
+    data/reference.json: version "2026-08-07.1", keys {version, conversionFactor, tables,
+    featureFlags}, 2 tables, 61 codes in tables[0], featureFlags == {} (empty).
+    AUTH ORDER MATTERS: both handlers verify the Clerk JWT (reference.js:18, resolve.js:18)
+    BEFORE any other assertion. Every cap, the PHI rejection and the whole ETag contract sit
+    BEHIND that gate and are unreachable to an unauthenticated caller. This is the single
+    fact that shapes gate 2. See contract C5.
+
+  Local credentials:
+    .env.local holds DATABASE_URL, POSTGRES_URL, DATABASE_URL_UNPOOLED,
+    POSTGRES_URL_NON_POOLING and NOTHING ELSE. No Clerk keys, no Anthropic key.
+    Dev Neon branch: dev / br-late-paper-at5h75si, schema-only, zero rows, writable.
+
+  Repos and remotes:
+    PWA   /Users/mfelix/projects/wruvs           -> MarceloDe/wrvu
+    edge  /Users/mfelix/projects/neurorvu-ios/api-> MarceloDe/neurorvu-ios (subdir api/)
+    iOS   /Users/mfelix/projects/neurorvu-ios    -> MarceloDe/neurorvu-ios
+    The iOS repo has NO .github directory today. Gate 3 has nothing to dispatch until N03d
+    lands. gh 2.92.0 is installed.
+
+  Existing conventions to extend, not replace (D38):
+    scripts/verify/fault-injection.mjs already establishes: BASE_URL env, a JSON verdict
+    under goals/evidence/<node-id>/, a blockedExternal[] array carrying {what, why, command},
+    and EXIT CODE 78 for blocked_external. This node adopts all four verbatim.
+
+# ─────────────────────────────────────────────────────────────────────────────
+contracts:
+
+  # ---- C1 · the entry point and its exit-code algebra -----------------------
+  - "package.json gains: \"verify:shippable\": \"node scripts/verify/shippable.mjs\",
+     \"test:edge-contract\": \"node scripts/verify/edge-contract.test.mjs\",
+     \"verify:flags\": \"node scripts/verify/flag-hygiene.mjs\",
+     and a top-level \"packageManager\": \"npm@12.0.2\""
+
+  - "scripts/verify/shippable.mjs is a CLI:
+       node scripts/verify/shippable.mjs
+         [--gate=1|2|3]...        run only the named gates (default: all three)
+         [--require-green]        turn exit 78 into exit 1 (used once credentials land)
+         [--inject=<gate>:<fault>] documented fault injection; see C8
+         [--out=<path>]           default goals/evidence/N03e-verify-shippable/shippable.json"
+
+  - "EXIT CODE ALGEBRA, exhaustive and total — every run lands in exactly one row:
+       0  every check passed AND declaredBlocked is empty
+       78 no check failed, and every blocked check's id appears in the pinned set (C3)
+       1  any check failed
+       1  any check is blocked whose id is NOT in the pinned set   (unpinnedBlocked)
+       1  any pinned id did NOT block on this run                  (stalePin — the ratchet)
+       1  the process reaches its end without having written the verdict file
+     A non-zero exit that leaves no verdict file on disk is a FAILURE OF THIS NODE, not of
+     the gate it was running. shippable.mjs writes the verdict from a `finally`."
+
+  # ---- C2 · the verdict artifact -------------------------------------------
+  - "shippable.mjs writes goals/evidence/N03e-verify-shippable/shippable.json with EXACTLY
+     this shape (schemaVersion 1):
+       { node, invariant: \"INV-ALWAYS-SHIPPABLE\", schemaVersion: 1,
+         startedAt, finishedAt,                     ISO-8601
+         verdict: \"pass\" | \"pass_with_declared_blocked\" | \"fail\",
+         exitCode: 0 | 78 | 1,
+         repos: { pwa:  { path, remote, sha, branch, dirty },
+                  edge: { path, remote, sha, branch, dirty, subdir: \"api\" },
+                  ios:  { path, remote, sha, branch, dirty } },
+         gates: [ { id: \"gate1-pwa\"|\"gate2-edge\"|\"gate3-ios\",
+                    status: \"pass\"|\"fail\"|\"blocked\", durationMs,
+                    checks: [ { id, name, status, detail, evidence? } ] } ],
+         declaredBlocked: [ { id, gate, what, why, command, pinned: true } ],
+         unpinnedBlocked: [ ... same shape, pinned: false ],
+         stalePins: [ id ],
+         counts: { pass, fail, blocked } }"
+
+  - "Every check carries a STABLE string id (e.g. gate1.prod.exams-401-envelope). The
+     Validator diffs verdicts by id, never by array position. Renaming an id is a contract
+     change and requires the pinned set to be updated in the same commit."
+
+  - "repos.<x>.sha is `git rev-parse HEAD` in that repo; repos.<x>.dirty is
+     `git status --porcelain` being non-empty. A dirty repo does not fail the run, but the
+     verdict records it, because a green verdict over an uncommitted tree is not evidence
+     about any sha."
+
+  # ---- C3 · the pinned-blocked set, which is what makes this a ratchet ------
+  - "scripts/verify/shippable-blocked.json is CHECKED IN and is the only place a blocked
+     check may be tolerated:
+       { version: 1,
+         pinned: [ { id, why, command, operatorItem, openedBy } ] }
+     Rules, all enforced by shippable.mjs:
+       - a blocked check whose id is absent from pinned[]  -> exit 1
+       - a pinned id that did not block on this run        -> exit 1 (stalePin)
+       - a pinned id that matches no check id in the harness source -> exit 1 (orphanPin)
+     The blocked set can therefore only shrink, and only by an explicit reviewed commit.
+     This is the mechanism that stops 80 downstream nodes from quietly inheriting a
+     permanently-yellow gate."
+
+  # ---- C4 · GATE 1, the PWA -------------------------------------------------
+  - "gate1-pwa runs, in order, and records each as its own check id:
+       gate1.build            `next build` against .env.local (dev Neon branch)
+       gate1.boot             `next start -p 3211` bound to the same env; the process is
+                              killed in a finally, and the port is asserted free first
+       gate1.local.*          the authenticated smoke suite over auth-required routes and
+                              /api/health  -- PINNED-BLOCKED, see C5
+       gate1.prod.*           the read-only production probe set, below"
+
+  - "gate1.prod.* is READ-ONLY BY CONSTRUCTION: the probe table accepts GET and HEAD only.
+     A probe declared with any other method against a non-localhost base URL is refused by
+     the guard (C6) before a socket is opened. Unauthenticated POST auth-gate probes are
+     valuable but are run against localhost only — the ban is absolute rather than
+     case-by-case, because 'this POST is safe, it 401s at the middleware' is exactly the
+     reasoning that eventually writes to production."
+
+  - "gate1.prod probe set, each with its own id and each asserting an exact value:
+       gate1.prod.landing-200        GET https://fella.cc/            -> 200
+       gate1.prod.health-shape       GET /api/health -> 200, body keys EXACTLY
+                                     {ok,db,anthropic,clerk}, every value a boolean and
+                                     every one true; the check is marked
+                                     `cdnCached: true` in its detail and is explicitly NOT
+                                     the liveness witness
+       gate1.prod.exams-401-envelope GET /api/exams (no cookie) -> 401, header
+                                     x-correlation-id non-empty, body deep-equal
+                                     {error:{code:'unauthorized',correlationId:<that same id>}}
+                                     and NO other key at any depth
+       gate1.prod.origin-executes    two successive GET /api/exams return two DIFFERENT
+                                     correlation ids. This is the liveness witness: it proves
+                                     the origin ran, which /api/health cannot (see rationale 2)
+       gate1.prod.no-raw-errors      no probe body matches /postgres|neon|drizzle|syntax error|
+                                     at .*\\(.*:\\d+:\\d+\\)/i   (INV-NO-RAW-ERRORS, live)
+       gate1.prod.header-ratchet     see C7
+       gate1.prod.edge-reference-401 GET https://neurorvu-edge-api.vercel.app/api/v1/reference
+                                     -> 401 body deep-equal {error:'unauthorized'}.
+                                     This lives in gate 1's production block deliberately:
+                                     it is the only evidence available today that the SECOND
+                                     DEPLOYED artifact is up, as opposed to its source passing
+                                     tests locally."
+
+  # ---- C5 · the one credential that unblocks everything ---------------------
+  - "scripts/verify/lib/clerk-session.mjs exports
+       mintProbeSession(): Promise<{ jwt, cookieHeader, userId, cleanup(): Promise<void> }>
+       class ProbeSessionUnavailable extends Error { code = 'probe_session_unavailable' }
+     It reads CLERK_SECRET_KEY from the environment and mints a short-lived session token
+     for ONE pre-created synthetic probe user via the Clerk Backend API. When
+     CLERK_SECRET_KEY is absent it throws ProbeSessionUnavailable, and every dependent check
+     records status `blocked` with the closing command — it never degrades to a fake token.
+     The probe user's id is stored in scripts/verify/probe-user.json (ID ONLY — no email, no
+     token, no secret, and it is created once by the operator, not per run).
+     RATIONALE for building a path that cannot run yet: gate 1's authenticated smoke and the
+     ENTIRE authenticated surface of gate 2 are blocked by the same single missing
+     credential. Building the mechanism now means the day CLERK_SECRET_KEY lands, the pins
+     are deleted and both gates go green with no new node. The alternative — leaving a hole
+     shaped like a credential — makes the unblocking a second unplanned build."
+  - "The synthetic probe user is subject to D25a: it carries no PHI, no real name and no
+     real email. Its creation and deletion are production Clerk actions and are appended to
+     goals/evidence/prod-audit-log.jsonl per INV-PROD-AUDITED."
+
+  # ---- C6 · the write guard, and the trap it exists for ---------------------
+  - "scripts/verify/lib/target-guard.mjs exports:
+       export const DEV_BRANCH_ID = 'br-late-paper-at5h75si'
+       export class ProductionTargetRefusal extends Error { code = 'production_target_refusal' }
+       export function classifyTarget(databaseUrl: string | undefined):
+              'dev-branch' | 'production' | 'unknown'
+       export function assertWritesAllowed({ databaseUrl, baseUrl, method }): void
+     assertWritesAllowed throws ProductionTargetRefusal unless BOTH hold:
+       (a) classifyTarget(databaseUrl) === 'dev-branch'   — the host contains DEV_BRANCH_ID
+       (b) baseUrl's hostname is exactly 'localhost' or '127.0.0.1'
+     It is FAIL-CLOSED in every ambiguous case: undefined, empty string, unparseable URL, or
+     any host not carrying DEV_BRANCH_ID all classify as 'production' for the purposes of
+     (a). classifyTarget returns 'unknown' for the unparseable case so the verdict can say
+     which kind of refusal happened, but assertWritesAllowed treats 'unknown' as
+     'production'. There is no override flag, no environment escape hatch, and no argument
+     that disables it."
+  - "WHY BOTH CONDITIONS, stated because dropping either one recreates the trap: the
+     Preview environment shares the PRODUCTION DATABASE_URL — the Neon integration owns that
+     variable on target production,preview and Vercel refuses a project-level override, as
+     N00d documented and as the 2026-08-18 correction in DECISIONS.md confirms
+     (`vercel env pull` returns the literal [SENSITIVE], so there is no restore path either).
+     Condition (a) alone is insufficient: a correct dev DATABASE_URL in the local process
+     says nothing about what database https://fella.cc writes to. Condition (b) alone is
+     insufficient: a local server can be started against the production URL. The write path
+     must satisfy both or it does not open."
+
+  # ---- C7 · the header ratchet ---------------------------------------------
+  - "scripts/verify/fixtures/prod-header-baseline.json is checked in:
+       { required: ['strict-transport-security'],
+         pending:  ['content-security-policy','x-content-type-options','referrer-policy',
+                    'x-frame-options'] }
+     gate1.prod.header-ratchet asserts (i) every `required` header is present on every
+     production probe response, and (ii) any `pending` header that IS present has not since
+     disappeared — a pending header observed present is promoted to required by the same
+     PR that made it appear. N05-security-headers moves entries from pending to required;
+     this node must not assert headers that provably do not exist today (see
+     baseline_facts), because a gate that fails on day one for a known-unbuilt reason gets
+     switched off, and then it gates nothing."
+
+  # ---- C8 · GATE 2, the edge API contract tests -----------------------------
+  - "scripts/verify/edge-contract.test.mjs (node:test) runs the edge handlers and writes
+     goals/evidence/N03e-verify-shippable/edge-contract.json. It reads its subject directory
+     from EDGE_API_DIR, defaulting to ~/projects/neurorvu-ios/api, so the fault-injection
+     copies of C10 need no source change to the real directory."
+  - "It runs in three MODES, and the verdict records which assertions came from which,
+     because they carry different authority:
+       mode `production-readonly`  real HTTP against https://neurorvu-edge-api.vercel.app.
+                                   Runnable today. Authority: the deployed artifact is up
+                                   and gated. Assertions: 401 shape, 405 on a wrong method.
+       mode `real-clerk`           the handlers served locally by `vercel dev`, called with
+                                   a session minted by C5. Authority: AUTHORITATIVE — this
+                                   is the only mode that proves the caps, the PHI rejection
+                                   and the ETag contract against the real auth gate.
+                                   PINNED-BLOCKED on CLERK_SECRET_KEY, and separately on
+                                   `vercel whoami` succeeding.
+       mode `auth-substituted-copy` the handlers served by a node:http adapter from a temp
+                                   COPY of EDGE_API_DIR whose lib/auth.js is replaced by one
+                                   accepting a fixed bearer token. Runnable today.
+                                   Authority: SUITE INTEGRITY ONLY — it proves the
+                                   assertions themselves discriminate. It is explicitly NOT
+                                   evidence that the deployed edge API behaves this way, and
+                                   the verdict labels every such check
+                                   authority: 'suite-integrity'."
+  - "The reason mode 3 exists, stated so nobody mistakes it for hedging: reference.js:18 and
+     resolve.js:18 verify the Clerk JWT BEFORE reading the body. MAX_FRAGMENTS,
+     MAX_FRAGMENT_LENGTH, the SUSPICIOUS regex and the whole ETag/304 path are all
+     downstream of that check. Without a session token, an unauthenticated caller can reach
+     exactly two behaviours: 405 and 401. Any suite claiming to test the caps without a
+     session is either lying or has stubbed the auth — so this node stubs it, says so, and
+     labels the resulting authority honestly rather than letting a reader assume the caps
+     are proven against production."
+  - "Assertions, each an id, each documenting CURRENT behaviour (D38) and asserting an exact
+     body — the current bodies are bare strings, not the N00d envelope, and the tests pin
+     that as-is:
+       reference.js
+         edge.ref.405.post              POST -> 405 {error:'method not allowed'}
+         edge.ref.401.no-header         no Authorization -> 401 {error:'unauthorized'}
+         edge.ref.401.malformed         'Bearer not-a-jwt' -> 401
+         edge.ref.401.foreign-key       an RS256 JWT signed by a locally generated key with
+                                        iss=https://clerk.fella.cc -> 401. This exercises the
+                                        REAL remote JWKS at clerk.fella.cc rejecting a
+                                        foreign signature. No mock: the key set is real, the
+                                        rejection is real.
+         edge.ref.401.wrong-issuer      valid-shaped JWT, iss=https://evil.example -> 401
+         edge.ref.200.etag              200; ETag === '\"' + reference.version + '\"';
+                                        Cache-Control === 'private, max-age=3600';
+                                        body keys exactly {version,conversionFactor,tables,
+                                        featureFlags}
+         edge.ref.304.if-none-match     If-None-Match equal to that ETag -> 304, zero-length body
+         edge.ref.304.mismatch          If-None-Match of a different value -> 200
+       resolve.js
+         edge.res.405.get               GET -> 405 {error:'method not allowed'}
+         edge.res.401.no-header         -> 401 {error:'unauthorized'}
+         edge.res.400.no-fragments      {} -> 400 {error:'fragments[] required (1-40)'}
+         edge.res.400.empty-array       {fragments:[]} -> 400, same body
+         edge.res.400.over-cap          41 fragments -> 400, same body
+         edge.res.200.at-cap            exactly 40 fragments -> NOT 400 (the cap is
+                                        inclusive; an off-by-one here silently truncates a
+                                        user's worklist)
+         edge.res.400.text-too-long     one fragment of 121 chars -> 400 {error:'invalid fragment'}
+         edge.res.ok.text-at-limit      120 chars -> not 400 on length grounds
+         edge.res.400.empty-text        '' -> 400 invalid fragment
+         edge.res.400.non-string-text   {text: 42} -> 400 invalid fragment
+         edge.res.400.phi.mrn           'MRI BRAIN MRN 4521' -> 400 invalid fragment
+         edge.res.400.phi.dob           '... DOB 01/01/1970' -> 400
+         edge.res.400.phi.ssn-word      '... SSN ...' -> 400
+         edge.res.400.phi.ssn-pattern   '123-45-6789' -> 400
+         edge.res.400.phi.lowercase     'mrn 4521' -> 400 (the regex is /i; assert it)
+         edge.res.ok.phi-substring      'MRNOPQ' does NOT trip the \\b-anchored rule -> not
+                                        rejected on PHI grounds. A PHI check that also
+                                        rejects innocent text gets weakened by the next
+                                        person who hits a false positive."
+  - "PHI fixtures are SYNTHETIC (D25a). The MRN/DOB/SSN strings above are invented digits in
+     a test file; no real identifier enters this repo, this suite, or an agent context. Reuse
+     scripts/verify/fixtures/synthetic-identifiers.json, which N00f already established."
+  - "ACCEPTED GAPS, recorded rather than faked. Each is written into the verdict as a check
+     with status 'blocked' and a named closing node:
+       edge.res.candidates-cap-8   resolve.js:43 slices candidates to 8, observable only in
+                                   the prompt sent upstream. Not externally observable
+                                   without a real Anthropic call. Closes with C9's key, or
+                                   permanently with N12 exposing a dry-run mode.
+       edge.res.200.decisions      the happy path calls api.anthropic.com for real. Needs
+                                   ANTHROPIC_API_KEY. Real call, real money, ~40 fragments
+                                   at max_tokens 1024 — pennies.
+       edge.res.502.upstream       resolve.js:50 hardcodes https://api.anthropic.com. There
+                                   is NO way to exercise the 502 branches without either a
+                                   source change to api/ (forbidden by done_when 4) or a
+                                   process-level network mock (forbidden by D20). Closed by
+                                   N00c-edge-usage-cap / N12, which should introduce a
+                                   configurable upstream base URL — record that requirement
+                                   on those nodes."
+  - "~/projects/neurorvu-ios/api/package.json gains a scripts block:
+       \"test:contract\": \"node --test --test-reporter=spec tests/contract.test.mjs\"
+     so the edge repo can run its own tests in its own CI. The test FILE lives in the edge
+     repo (api/tests/contract.test.mjs); scripts/verify/edge-contract.test.mjs in the PWA
+     repo is the runner that drives it in all three modes and emits the JSON. Splitting it
+     this way is what lets N12 keep the net when the two repos federate or merge (N21b)."
+
+  # ---- C9 · GATE 3, iOS -----------------------------------------------------
+  - "gate3-ios dispatches N03d's workflow and folds its conclusion in:
+       gh workflow run <N03D_WORKFLOW> --repo MarceloDe/neurorvu-ios --ref <ref>
+          -f sha=<sha> -f run_key=<uuid v4 generated per run>
+       then poll: gh run list --repo MarceloDe/neurorvu-ios --workflow <N03D_WORKFLOW>
+          --json databaseId,displayTitle,status,headSha --limit 20
+       until a run whose displayTitle contains run_key appears
+       then: gh run watch <databaseId> --repo MarceloDe/neurorvu-ios --exit-status"
+  - "CROSS-NODE REQUIREMENT ON N03d: its workflow MUST declare
+     `run-name: ios ${{ inputs.run_key }}` and accept `sha` and `run_key` as
+     workflow_dispatch inputs. Without run_key in the run name there is no way to tell which
+     run this invocation started, and 'take the most recent run' is how a gate ends up
+     reporting someone else's green. If the dispatched workflow does not surface run_key,
+     gate 3 fails with id gate3.run-key-unsupported. It does NOT fall back to the latest run."
+  - "If no matching run appears within 120 seconds, gate 3 FAILS with id
+     gate3.dispatch-not-found. A dispatch that vanishes is a failure, never a skip."
+  - "The verdict records the run's html_url, databaseId, headSha and conclusion, so the
+     Validator can open the run rather than trusting the harness's summary of it."
+
+  # ---- C10 · flag hygiene ---------------------------------------------------
+  - "scripts/verify/flag-hygiene.mjs [--self-test], writing
+     goals/evidence/N03e-verify-shippable/flag-hygiene.json. Registry: goals/flags.yaml
+       { version: 1,
+         flags: [ { id, owner, removal_node, default_production: false,
+                    surfaces: ['pwa'|'edge'|'ios'] } ] }
+     Scan patterns across all three deployables:
+       PWA/edge   isEnabled('<id>') | FLAGS.<id> | featureFlags['<id>'] | process.env.FLAG_<ID>
+       iOS        FeatureFlag.<id>
+     Failure conditions, each with its own exit detail code:
+       unregistered_flag   a referenced id absent from the registry
+       on_in_production    default_production !== false while removal_node is not PASS in
+                           goals/state.json
+       unreferenced_flag   a registry entry no source references — the flag was removed and
+                           its registry row was not, so removal is unenforceable
+       edge_flag_on        any key in ~/projects/neurorvu-ios/api/data/reference.json
+                           .featureFlags whose value is true"
+  - "THE REGISTRY IS EMPTY TODAY: reference.json.featureFlags === {} and a grep of
+     origin/main for featureflag|FEATURE_|flag patterns across app/ lib/ components/
+     middleware.js returns nothing. A scanner over zero flags exits 0 having asserted
+     nothing — precisely the vacuous pass INV-CHECKS-ACTUALLY-RUN forbids. Therefore
+     --self-test is not optional decoration: it runs the same scanner against
+     scripts/verify/fixtures/flag-hygiene/ containing one fixture per failure condition
+     above, and exits 0 ONLY IF EVERY FIXTURE FAILED, with the expected detail code. Any
+     fixture that passes makes --self-test exit 1."
+
+  # ---- C11 · fault injection, so the gate is proven able to fail ------------
+  - "shippable.mjs --inject=<gate>:<fault> is a documented, first-class mode, mirroring
+     fault-injection.mjs's DB_FAULT convention:
+       gate1:build-break     writes a deliberately unparseable app/_shippable-selftest/page.jsx,
+                             runs gate 1, asserts gate1.build FAILED, and REMOVES the file in a
+                             finally. After the run, `git status --porcelain` must be
+                             byte-identical to before it; the harness asserts this and fails
+                             if the tree was left dirty.
+       gate2:phi-regression  copies EDGE_API_DIR to a temp dir TWICE: copy-baseline (lib/auth.js
+                             substituted only) and copy-regressed (auth substituted AND the
+                             SUSPICIOUS constant removed from resolve.js). Runs the suite
+                             against both. Asserts copy-baseline PASSES and copy-regressed
+                             FAILS on exactly the edge.res.400.phi.* ids and no others.
+                             The real ~/projects/neurorvu-ios/api is never written to; the
+                             harness asserts its `git status --porcelain` is unchanged.
+       gate3:poison          dispatches N03d's assertion-poison sha and asserts gate3 = fail.
+     Each injection writes its own verdict to gate<N>-fail.json. An injection that produces a
+     PASSING verdict exits 1 — a gate that cannot fail is not a gate."
+
+  # ---- C12 · package-manager reconciliation ---------------------------------
+  - "In the SAME PR: INVARIANTS.yaml INV-ALWAYS-SHIPPABLE's first check becomes
+     `npm run verify:shippable`, its second stays `node scripts/verify/flag-hygiene.mjs`,
+     and package.json declares \"packageManager\": \"npm@12.0.2\". Scope note: N03b holds the
+     broader lint/tooling decision and N01/D19 may later move the repo to pnpm workspaces —
+     this node reconciles ONLY the two commands it owns, and the `packageManager` field is
+     what makes any future change machine-detectable rather than a silent divergence."
+
+  # ---- C13 · the CI wiring --------------------------------------------------
+  - "N03a's .github/workflows/ci.yml gains a `shippable` job running
+     `npm run verify:shippable` on every pull request, with the verdict uploaded as a build
+     artifact. The job must NOT carry continue-on-error, and must not be conditioned on
+     branch name. Exit 78 is surfaced as a distinct neutral-but-reported outcome, never
+     coerced to success by `|| true`."
+
+# ─────────────────────────────────────────────────────────────────────────────
+invariants: [INV-ALWAYS-SHIPPABLE, INV-CHECKS-ACTUALLY-RUN, INV-PROD-AUDITED, INV-NO-RAW-ERRORS]
+
+verification_environment: >
+  D20 requires real infrastructure. What "real" means per gate, stated so the Validator
+  knows what it is re-deriving:
+    gate 1 build/boot  -> a real Next build and a real HTTP server bound to the real dev
+                          Neon branch (br-late-paper-at5h75si). Not a preview deploy: the
+                          Preview environment shares the PRODUCTION database (C6 rationale),
+                          so a preview probe with any write in it is a production write.
+    gate 1 production  -> real HTTPS against the live fella.cc. Read-only, GET/HEAD only.
+    gate 2             -> real handler code over real HTTP (local http server or `vercel
+                          dev`), plus real HTTPS against the live edge deployment. The only
+                          substitution anywhere is lib/auth.js in a temp COPY, and every
+                          assertion depending on it is labelled authority:'suite-integrity'
+                          in the verdict rather than counted as deployment evidence.
+    gate 3             -> a real macOS runner executing a real xcodebuild on a real
+                          simulator, via N03d.
+  Nothing in this node is verified by a mock standing in for the thing under test.
+
+verify:
+  runtime:
+    - "npm run verify:shippable
+       # green (exit 0) or exit 78 with a pinned blocked set that matches
+       # scripts/verify/shippable-blocked.json exactly; writes shippable.json either way"
+    - "node scripts/verify/shippable-guard.test.mjs
+       # unit-tests target-guard.mjs's total function, then drives the real probe path with a
+       # production-shaped DATABASE_URL and BASE_URL=https://fella.cc and asserts
+       # ProductionTargetRefusal is thrown BEFORE any socket opens. Cases: production URL +
+       # localhost, dev URL + fella.cc, undefined URL, empty URL, unparseable URL, and a URL
+       # whose host merely CONTAINS a dev-branch-like substring. All six must refuse."
+    - "node scripts/verify/edge-contract.test.mjs
+       # gate 2 against an UNMODIFIED ~/projects/neurorvu-ios/api; asserts the real
+       # directory's `git status --porcelain` is unchanged before and after"
+    - "node scripts/verify/edge-contract.test.mjs --mode=production-readonly
+       # real HTTPS against https://neurorvu-edge-api.vercel.app"
+    - "node scripts/verify/flag-hygiene.mjs"
+    - "node scripts/verify/flag-hygiene.mjs --self-test
+       # exits 0 only if every fixture FAILED with its expected detail code"
+    - "node scripts/verify/shippable.mjs --inject=gate1:build-break --out=goals/evidence/N03e-verify-shippable/gate1-fail.json
+       # expect exit 1, verdict.gates[gate1-pwa].status == 'fail', failing check id gate1.build"
+    - "node scripts/verify/shippable.mjs --inject=gate2:phi-regression --out=goals/evidence/N03e-verify-shippable/gate2-fail.json
+       # expect exit 1, gate2-edge == 'fail', failing ids exactly the edge.res.400.phi.* set"
+    - "node scripts/verify/shippable.mjs --inject=gate3:poison --out=goals/evidence/N03e-verify-shippable/gate3-fail.json
+       # expect exit 1, gate3-ios == 'fail' carrying N03d's poison run url"
+    - "node scripts/verify/checks-are-executable.mjs
+       # INV-ALWAYS-SHIPPABLE's two cmds must classify RUNNABLE. See notes: this script does
+       # not exist on origin/main and is NOT in this node's contract."
+    - "npm run build   # the gate must not break the thing it gates"
+  static:
+    - "grep -q '\"verify:shippable\"' package.json"
+    - "grep -q '\"packageManager\"' package.json"
+    - "! grep -n 'pnpm verify:shippable' goals/INVARIANTS.yaml"
+    - "test -f .github/workflows/ci.yml && ! grep -n 'continue-on-error' .github/workflows/ci.yml
+       # written with `test -f` FIRST on purpose: `! grep ... missing-file` exits 0 because
+       # grep exits 2, which is the exact vacuous pass INV-CHECKS-ACTUALLY-RUN was written
+       # about. There is no .github directory on origin/main today; N03a creates it."
+    - "! grep -rn '|| true' scripts/verify/shippable.mjs scripts/verify/flag-hygiene.mjs"
+    - "! grep -rEn 'catch\\s*\\{\\s*\\}' scripts/verify/shippable.mjs scripts/verify/edge-contract.test.mjs scripts/verify/flag-hygiene.mjs"
+    - "node -e \"const p=require('./scripts/verify/shippable-blocked.json');const s=require('fs').readFileSync('scripts/verify/shippable.mjs','utf8');for(const e of p.pinned){if(!s.includes(e.id))throw new Error('orphan pin '+e.id)}\""
+    - "git -C ~/projects/neurorvu-ios diff --quiet -- api && git -C ~/projects/neurorvu-ios diff --cached --quiet -- api
+       # proves the edge tests were written WITHOUT changing api/ source (D38, done_when 4).
+       # api/package.json gaining a scripts block per C8 is the ONE permitted change and is
+       # committed on the edge repo's own branch, so this runs on a clean tree either way."
+  manual: []
+  evidence:
+    - shippable.json                  # the verdict: three gates, three repo shas, timestamps
+    - shippable-guard-refusal.txt     # the six refusal cases, with the thrown error per case
+    - edge-contract.json              # per-assertion, per-mode, with authority labels
+    - flag-hygiene.json
+    - flag-hygiene-selftest.json      # every fixture failed, with its detail code
+    - gate1-fail.json
+    - gate2-fail.json
+    - gate3-fail.json
+    - prod-readonly-probes.json       # raw status + headers + body per production probe
+    - repo-shas.txt                   # the three shas, dirty flags, and `gh run` url for gate 3
+
+# ─────────────────────────────────────────────────────────────────────────────
+done_when:
+  - "goals/evidence/N03e-verify-shippable/shippable.json exists, validates against the
+     schemaVersion-1 shape in C2, and names three repo shas that match
+     `git rev-parse HEAD` in /Users/mfelix/projects/wruvs and
+     /Users/mfelix/projects/neurorvu-ios at the time of the run. The Validator re-runs
+     `npm run verify:shippable` and produces a verdict with the SAME shas, the SAME set of
+     check ids, and the same per-check status for every id whose status is pass or fail."
+
+  - "The run's exit code and the verdict agree, per C1's table. Specifically: if
+     declaredBlocked is non-empty the exit code is 78 and verdict is
+     'pass_with_declared_blocked'; if it is empty the exit code is 0 and verdict is 'pass'.
+     A verdict claiming 'pass' alongside a non-empty declaredBlocked is a FAIL of this node."
+
+  - "declaredBlocked's id set is exactly equal to the id set in
+     scripts/verify/shippable-blocked.json. unpinnedBlocked is empty and stalePins is empty.
+     The Validator checks set equality in both directions, because a pin that no longer
+     blocks is how a gate rots into permanent yellow."
+
+  - "Three recorded failure verdicts exist — gate1-fail.json, gate2-fail.json,
+     gate3-fail.json — each with exit code 1, each naming its failing GATE and the failing
+     CHECK IDS. Re-derivation: the Validator runs the three --inject commands itself and gets
+     three exit-1 runs whose failing id sets match. A harness that fails opaquely cannot gate
+     80 nodes, so 'it exited non-zero' does not satisfy this."
+
+  - "The build-break injection left the working tree clean: `git status --porcelain` in
+     /Users/mfelix/projects/wruvs is byte-identical before and after the run, and
+     app/_shippable-selftest/ does not exist."
+
+  - "shippable-guard-refusal.txt records six refusals, one per case in the verify.runtime
+     entry for shippable-guard.test.mjs, each showing a thrown ProductionTargetRefusal. The
+     Validator re-derives by calling assertWritesAllowed({databaseUrl: <a production-shaped
+     Neon URL>, baseUrl: 'http://localhost:3211', method: 'POST'}) directly and confirming it
+     throws. Critically, it also confirms the DEV url + fella.cc combination throws — a guard
+     that only checks the database URL does not close the trap."
+
+  - "edge-contract.json shows every assertion in C8 with a status and an explicit `mode` and
+     `authority` field, and the suite passed against ~/projects/neurorvu-ios/api at its
+     CURRENT sha (bd19a47 or later) with ZERO change to api/v1/*.js, lib/auth.js or
+     data/reference.json. Re-derivation: `git -C ~/projects/neurorvu-ios diff --stat
+     bd19a47..HEAD -- api/api api/lib api/data` is empty, and the suite still passes. This is
+     what makes the tests a regression net for N12 rather than a rewrite (D38)."
+
+  - "The gate-2 assertions that CANNOT run today are enumerated in the verdict as blocked
+     checks with named closing nodes, not omitted. A fresh agent can list them from the
+     verdict alone: the authenticated surface (blocked on CLERK_SECRET_KEY), the happy path
+     and candidate cap (blocked on ANTHROPIC_API_KEY), and the 502 branches (closed by
+     N00c-edge-usage-cap / N12 introducing a configurable upstream base URL)."
+
+  - "flag-hygiene.mjs --self-test exits 0, and flag-hygiene-selftest.json shows one FAILED
+     fixture per failure condition in C10 — unregistered_flag, on_in_production,
+     unreferenced_flag, edge_flag_on — each with its expected detail code. The Validator
+     additionally adds a seventh fixture of its own devising and confirms the scanner
+     catches it, because a self-test that only passes against fixtures shipped with it
+     proves less than it appears to."
+
+  - "`npm run verify:shippable` is invocable as written in INVARIANTS.yaml — i.e.
+     INVARIANTS.yaml no longer says `pnpm verify:shippable`, package.json declares
+     packageManager, and running the command from a clean clone with `npm ci` works."
+
+  - "checks-are-executable.mjs classifies INV-ALWAYS-SHIPPABLE's two cmds as RUNNABLE where
+     before this node they resolved to nothing. IF that script does not yet exist (it is
+     absent from origin/main — see notes), this entry is recorded as `blocked_dependency` on
+     N03f, NOT waived, and N03f is opened before this node is marked PASS."
+
+# ─────────────────────────────────────────────────────────────────────────────
+blocked_external:
+  - id: clerk-probe-session
+    what: >
+      gate 1's authenticated smoke suite AND the whole `real-clerk` mode of gate 2 — which is
+      every cap, the PHI rejection and the ETag contract asserted against the real auth gate.
+    why: >
+      .env.local holds four Neon variables and nothing else; there are no Clerk keys on this
+      machine, and `vercel env pull` returns the literal [SENSITIVE] for integration-managed
+      secrets at CLI 54.14.2 and 59.1.4 (DECISIONS.md, 2026-08-18 correction). This is the
+      same operator item N00c and N00d are already waiting on. It must NEVER count as green:
+      it appears in shippable-blocked.json as a pinned blocked id, and checks-are-executable
+      must see it as declared-blocked rather than runnable.
+    command: >
+      printf 'CLERK_SECRET_KEY=sk_...\nNEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_...\n' >> /Users/mfelix/projects/wruvs/.env.local
+      && chmod 600 /Users/mfelix/projects/wruvs/.env.local
+      && node scripts/verify/lib/clerk-session.mjs --create-probe-user
+    unblocks: [gate1.local.*, gate2 mode real-clerk, edge.ref.200.etag, edge.ref.304.*, all edge.res.4xx ids]
+
+  - id: ios-dispatch-token
+    what: gate 3 in its entirety.
+    why: >
+      Cross-repo dispatch needs a token with actions:write on MarceloDe/neurorvu-ios. There
+      is also nothing to dispatch yet — that repo has no .github directory at all as of
+      2026-08-18; N03d creates the workflow.
+    command: >
+      gh secret set IOS_DISPATCH_TOKEN --repo MarceloDe/wrvu
+    unblocks: [gate3.*]
+
+  - id: anthropic-key-edge
+    what: edge.res.200.decisions and edge.res.candidates-cap-8.
+    why: >
+      resolve.js:50-65 calls api.anthropic.com for real. The edge project holds its own
+      ANTHROPIC_API_KEY in Vercel, which is [SENSITIVE] and not exportable. One real billed
+      call at max_tokens 1024 costs pennies and is the only mock-free way to observe the
+      prompt-shaping behaviour.
+    command: >
+      printf 'ANTHROPIC_API_KEY=sk-ant-...\n' > /Users/mfelix/projects/neurorvu-ios/api/.env.local
+      && chmod 600 /Users/mfelix/projects/neurorvu-ios/api/.env.local
+    unblocks: [edge.res.200.decisions, edge.res.candidates-cap-8]
+
+  - id: vercel-dev-link
+    what: gate 2's `real-clerk` mode when served by `vercel dev` rather than the node adapter.
+    why: >
+      Proving the node:http adapter is faithful to Vercel's Node runtime request/response
+      shape requires running the same suite against `vercel dev`. Needs a logged-in CLI and a
+      linked project.
+    command: >
+      vercel login && vercel link --cwd /Users/mfelix/projects/neurorvu-ios/api
+
+# ─────────────────────────────────────────────────────────────────────────────
+rollback: >
+  Tooling only. No deploy, no schema, no migration, no data. `git revert` the PR in
+  MarceloDe/wrvu and the companion commit in MarceloDe/neurorvu-ios (api/package.json +
+  api/tests/).
+
+  TWO THINGS THE REVERT DOES NOT UNDO, and both must be done by hand:
+
+  (1) ORDERING HAZARD — every A1-through-F node's done_when is gated on this command.
+  Reverting it silently disables the gate: the next Builder runs `npm run verify:shippable`,
+  gets "Missing script", and unless the orchestrator notices, proceeds ungated believing the
+  gate ran. Any revert MUST therefore also set every node in goals/state.json whose
+  depends_on includes N03e to status `blocked` with reason "verify:shippable reverted", in
+  the same commit as the revert. A revert that does not touch state.json is incomplete.
+
+  (2) If the synthetic Clerk probe user (C5) was created, delete it and append the deletion
+  to goals/evidence/prod-audit-log.jsonl per INV-PROD-AUDITED:
+      node scripts/verify/lib/clerk-session.mjs --delete-probe-user
+  Leaving an orphan account in a four-account production Clerk instance corrupts exactly the
+  roster review that N00b relied on to conclude there was no compromise.
+
+# ─────────────────────────────────────────────────────────────────────────────
+split_recommended: true
+split: >
+  TWO CONTRACTS, ONE CLEAN SEAM (D24). Split is RECOMMENDED, and N03e1 must go first.
+
+  N03e1-edge-contract-tests  (6h) — contracts C8 and the gate2 half of C11.
+    NEW tests for a deployable that has never been tested, living in a DIFFERENT codebase
+    (~/projects/neurorvu-ios/api). Deliverables: api/tests/contract.test.mjs in the edge
+    repo, api/package.json's scripts block, scripts/verify/edge-contract.test.mjs as the
+    three-mode runner, the phi-regression injection, edge-contract.json.
+    Its own done_when: the suite passes against api/ at its current sha with zero source
+    change, and the phi-regression copy fails on exactly the PHI ids.
+    This is a TESTING node for the second deployable. It is not a CI node.
+
+  N03e2-shippable-harness    (8h) — contracts C1-C7, C9, C10, C12, C13 and the gate1/gate3
+    halves of C11. The three-gate harness, the exit-code algebra, the pinned-blocked ratchet,
+    the write guard, the header ratchet, flag-hygiene, the verdict artifact, the CI wiring.
+
+  WHY THIS ORDER, AND WHY NOT BUNDLED: the harness cannot compose a gate whose tests do not
+  exist — N03e2's gate 2 is literally a subprocess call into N03e1's runner. Bundling them
+  hides real test-authoring work for a 130-line untested production service behind a CI
+  title, and lets a Builder who runs out of budget ship the harness with gate 2 as a stub
+  that exits 0. That concealment is exactly what D24 exists to prevent, and it would be
+  concealed inside the one node every other node trusts.
+
+# ─────────────────────────────────────────────────────────────────────────────
+notes: >
+  MISSING PREREQUISITE, flagged rather than absorbed. INV-CHECKS-ACTUALLY-RUN names
+  `node scripts/verify/checks-are-executable.mjs`. That file does not exist — verified:
+  `git ls-tree -r --name-only origin/main scripts/verify` lists fault-injection.mjs,
+  log-correlation.mjs, monitor-roundtrip.mjs, monitor-sink.mjs, no-unredacted-path.mjs,
+  phi-log-scan.mjs, prompt-cache-probe.mjs, rate-limit-probe.mjs, redaction-e2e.mjs,
+  spend-cap-probe.mjs, harness/* and fixtures/*, and no checks-are-executable.mjs. The
+  invariant that polices vacuous checks is itself currently a vacuous check. Writing it is a
+  SECOND contract and is deliberately NOT absorbed here (D24). The Contractor should open
+  N03f-checks-are-executable; until it lands, done_when's last entry is
+  `blocked_dependency`, not satisfied and not waived.
+
+  D38 — EXTEND, DO NOT REBUILD. scripts/verify/fault-injection.mjs already established the
+  conventions this node adopts: BASE_URL, a JSON verdict under goals/evidence/<node-id>/,
+  blockedExternal[] carrying {what, why, command}, and exit code 78. Reuse them literally
+  rather than inventing a parallel vocabulary; two verification dialects in one scripts/verify
+  directory is how the second one stops being read. scripts/verify/harness/server.mjs shows
+  the existing node:http harness pattern for gate 2's adapter.
+
+  FINDINGS TO HAND ONWARD, discovered while contracting and not in scope here:
+    - /api/health is CDN-cached (x-vercel-cache: HIT, age 3275, not bustable by query string
+      or Cache-Control: no-cache) and therefore cannot witness liveness. The fix —
+      `export const dynamic = "force-dynamic"` or `Cache-Control: no-store` — belongs to
+      N05-security-headers or a small node of its own. Gate 1 works around it with
+      gate1.prod.origin-executes instead of waiting.
+    - /api/health returns `access-control-allow-origin: *`. Route it to N05.
+    - The edge API returns `{"error":"unauthorized"}` while the PWA returns the N00d envelope
+      `{"error":{"code","correlationId"}}`. Two deployables, two error contracts, no
+      correlation id on the edge side. Route to N00c-edge-usage-cap / N12; gate 2 pins the
+      current shape so the change is visible when it happens.
+    - resolve.js hardcodes the Anthropic base URL, which makes its two 502 branches
+      untestable without either a source change or a network mock. N12 should introduce a
+      configurable upstream base URL; note it on that node now, while the reason is fresh.
+
+  WHAT MAKES THIS NODE PASS OR FAIL, in one sentence for the Builder: not that the three
+  gates are green — today two of them cannot be fully green — but that the verdict tells a
+  hostile reader exactly which assertions were made, which were not, and why, and that each
+  gate has been proven capable of failing.
