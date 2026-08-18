@@ -10,6 +10,7 @@ import { createRoot } from "react-dom/client";
 import NeuroRVU from "../../../components/NeuroRVU";
 import {
   RedactionError,
+  assertApprovedAttachments,
   assertGeometryOnly,
   assertNoUnredactedImages,
   redactImage,
@@ -23,6 +24,7 @@ import spec from "../fixtures/synthetic-identifiers.json";
 
 window.__redact = {
   RedactionError,
+  assertApprovedAttachments,
   assertGeometryOnly,
   assertNoUnredactedImages,
   redactImage,
