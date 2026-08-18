@@ -1,6 +1,36 @@
 npm run test:redaction — N00f redaction unit suite
 browser: /Users/mfelix/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing
-run: 2026-08-18T20:06:22.227Z
+run: 2026-08-18T22:51:13.643Z
 
+ok   resolveRegions converts 0..1 fractions to clamped pixel rectangles
+ok   resolveRegions drops rectangles that fall entirely off the image
+ok   resolveRegions never rounds a sliver away to nothing
+ok   assertGeometryOnly accepts pure geometry
+ok   assertGeometryOnly rejects a region carrying extracted text
+ok   assertGeometryOnly rejects an unknown region id
+ok   assertGeometryOnly rejects out-of-range or non-finite geometry
+ok   redactionProfileKey is keyed on surface and institution (user comes from /api/store auth)
+ok   buildRedactionProfile stores geometry only
+ok   buildRedactionProfile refuses a profile that is missing a required column
+ok   profileStatus: a missing profile blocks
+ok   profileStatus: an old profile version blocks
+ok   profileStatus: an incomplete profile blocks
+ok   profileStatus: a profile polluted with text blocks
+ok   profileStatus: a differently shaped screenshot is stale
+ok   every block reason produces a message that names the fix
+ok   redactImage returns an encoded Blob, not an overlay
+ok   redactImage destroys the masked pixels and keeps the rest
+ok   redactImage does not mutate the caller's bitmap
+ok   redactImage rejects a profile that is not geometry
+ok   assertNoUnredactedImages passes text-only messages
+ok   assertNoUnredactedImages accepts a block produced by redactImageBlock
+ok   assertNoUnredactedImages refuses a hand-built image block
+ok   a redacted block that was copied is still recognised by its bytes
+ok   a batch larger than the payload registry still clears the gate (no false block)
+ok   assertNoUnredactedImages refuses an image smuggled inside a document block
+ok   buildRedactedImageBlock blocks when no profile exists
+ok   buildRedactedImageBlock blocks when the profile is stale for this screenshot
+ok   buildRedactedImageBlock produces a redacted block that clears the gate
+ok   decodeImageFile refuses a file the browser cannot decode instead of passing it through
 
-0/0 passed
+30/30 passed

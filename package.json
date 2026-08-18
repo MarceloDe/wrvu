@@ -7,7 +7,6 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint app components lib scripts tests middleware.js --ext .js,.jsx,.ts,.tsx,.mjs --max-warnings=0",
-    "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "node --env-file=.env.local scripts/seed.mjs",
     "test:redaction": "node scripts/test/redaction.test.mjs",
@@ -16,7 +15,9 @@
     "verify:redaction": "node scripts/test/redaction.test.mjs && node scripts/verify/redaction-e2e.mjs && node scripts/verify/no-unredacted-path.mjs && node scripts/verify/phi-log-scan.mjs --stream captured-session.log",
     "test:error-envelope": "node --test tests/error-envelope.test.ts",
     "test:route-contracts": "node --test tests/route-contracts.test.mjs",
-    "verify:shippable": "node scripts/verify/shippable.mjs"
+    "verify:shippable": "node scripts/verify/shippable.mjs",
+    "db:migrate": "node --env-file=.env.local lib/db/migrate.mjs --url-env DATABASE_URL_UNPOOLED",
+    "db:migrate:check": "node --env-file=.env.local lib/db/migrate.mjs --url-env DATABASE_URL_UNPOOLED --check"
   },
   "dependencies": {
     "@clerk/nextjs": "^5.7.5",
@@ -24,6 +25,7 @@
     "drizzle-orm": "^0.36.4",
     "lucide-react": "0.383.0",
     "next": "14.2.5",
+    "pg": "^8.23.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "recharts": "2.12.7"
@@ -40,6 +42,7 @@
     "playwright-core": "^1.62.1",
     "postcss": "8.4.40",
     "tailwindcss": "3.4.7",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "ws": "^8.21.3"
   }
 }

@@ -1,0 +1,5 @@
+{
+  "left": "drizzle/0000_baseline.sql,drizzle/0001_llm_usage.sql",
+  "right": "DATABASE_URL",
+  "differences": []
+}

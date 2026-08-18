@@ -218,12 +218,28 @@
       "scope_narrowed_by_D43": "No monorepo. N01 is now TypeScript-in-place for the PWA only \u2014 and N00d/N00f already landed tsconfig.json, .eslintrc.json and several .ts modules, so a good part of it is done."
     },
     "N02-real-migrations": {
-      "status": "ready",
+      "status": "blocked_external",
       "phase": "A1",
       "priority": 1,
-      "collapsed_by": "D41 \u2014 was N02a/b/c; they shared the migration system and ci.yml",
-      "blocked_on": "verification tooling does not exist: schema-diff.mjs, migration-replay.mjs, checksum-guard.mjs. See N0V.",
-      "unblocked": "N0V \u2014 the scripts these contracts reference now exist and are dependency-gated"
+      "built": "lib/db/migrate.mjs, drizzle/0000_baseline.sql, drizzle/meta/_journal.json, drizzle/0001_llm_usage.down.sql, drizzle/0000_backfill_migrations.sql, plus schema-diff / migration-replay / checksum-guard / _pg.mjs",
+      "verified": [
+        "schema-diff baseline+0001 vs live: identical",
+        "schema-diff baseline ALONE: 13 differences \u2014 the check demonstrably fails as well as passes",
+        "migration-replay on an EMPTY Postgres: 2 applied, 0 differences",
+        "migrator second run: 'nothing to apply'",
+        "checksum-guard: REFUSED and named the file; a bad-URL crash correctly reported NOT REFUSED",
+        "db:migrate:check exit 0",
+        "verify:shippable: all 7 steps green",
+        "checks-are-executable: PASS"
+      ],
+      "design_notes": [
+        "Replay runs on an ephemeral local Postgres 17 (Docker), not a Neon branch \u2014 branch creation needs an API key that does not exist here. Replay asks whether these FILES produce this schema, a property of the SQL, so a real local Postgres answers it fully.",
+        "Migrator uses node-postgres, not Neon's WebSocket driver, which only dials wss://<host>/v2 and cannot reach a local container \u2014 that would have made the migrator untestable by the very check that proves it.",
+        "--stamp records migrations as applied WITHOUT executing them. Needed on dev (schema predates the migrator) and on production (0001 applied by hand 2026-08-18). Explicit rather than silently skipping existing objects, which would hide real divergence.",
+        "Connection is taken by env-var NAME, never inline --url: a URL in argv leaks into process listings and error text. That is not hypothetical \u2014 pg_dump echoed this project's dev URL earlier today.",
+        "No ssl:{rejectUnauthorized:false}. The connection string's sslmode governs, so Neon keeps certificate verification."
+      ],
+      "blocked_external": "Production backfill. No production connection string is reachable ([SENSITIVE] on every integration secret) and the pre-mutation snapshot needs a Neon API key. drizzle/0000_backfill_migrations.sql is ready, checksums embedded, and was PROVEN on an ephemeral database. Operator: snapshot main -> run that file in the Neon SQL console -> confirm two rows -> append one line to prod-audit-log.jsonl."
     },
     "N03-ci": {
       "status": "ready",

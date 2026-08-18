@@ -1,0 +1,14 @@
+FAIL  13 difference(s) between drizzle/0000_baseline.sql and DATABASE_URL
+        column only in DATABASE_URL: {"t":"llm_rate_buckets","c":"tokens","d":"numeric","n":"NO","df":null}
+        column only in DATABASE_URL: {"t":"llm_rate_buckets","c":"updated_at","d":"timestamp with time zone","n":"NO","df":"now()"}
+        column only in DATABASE_URL: {"t":"llm_rate_buckets","c":"user_id","d":"text","n":"NO","df":null}
+        column only in DATABASE_URL: {"t":"llm_usage","c":"cost_estimate","d":"numeric","n":"NO","df":"0"}
+        column only in DATABASE_URL: {"t":"llm_usage","c":"created_at","d":"timestamp with time zone","n":"NO","df":"now()"}
+        column only in DATABASE_URL: {"t":"llm_usage","c":"id","d":"uuid","n":"NO","df":"gen_random_uuid()"}
+        column only in DATABASE_URL: {"t":"llm_usage","c":"input_tokens","d":"integer","n":"NO","df":"0"}
+        column only in DATABASE_URL: {"t":"llm_usage","c":"output_tokens","d":"integer","n":"NO","df":"0"}
+        column only in DATABASE_URL: {"t":"llm_usage","c":"template","d":"text","n":"NO","df":null}
+        column only in DATABASE_URL: {"t":"llm_usage","c":"user_id","d":"text","n":"NO","df":null}
+        index only in DATABASE_URL: "CREATE INDEX llm_usage_user_created_idx ON public.llm_usage USING btree (user_id, created_at)"
+        index only in DATABASE_URL: "CREATE UNIQUE INDEX llm_rate_buckets_pkey ON public.llm_rate_buckets USING btree (user_id)"
+        index only in DATABASE_URL: "CREATE UNIQUE INDEX llm_usage_pkey ON public.llm_usage USING btree (id)"

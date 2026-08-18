@@ -1,0 +1,10 @@
+npm notice run neurorvu@1.0.0 verify:shippable
+npm notice run node scripts/verify/shippable.mjs
+  ok    lint  (exit 0)
+  ok    typecheck  (exit 0)
+  ok    redaction  (exit 0)
+  ok    error-envelope  (exit 0)
+  ok    route-contracts  (exit 0)
+  ok    llm-proxy  (exit 0)
+  ok    build  (exit 0)
+PASS  all 7 shippability steps green (PWA; iOS excluded pending N20y)
