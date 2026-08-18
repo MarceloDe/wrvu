@@ -214,6 +214,49 @@ phases:
       FoundationModels, Clerk auth, CloudSync, CloudKit backup, privacy manifest,
       NSFileProtectionComplete, ASC upload pipeline.
     nodes:
+      - id: N20x-ocr-contrast-regression
+        title: Fix the uncommitted OCR pipeline regression before anything branches off it
+        goals: [G2, G5]
+        decisions: [D38]
+        phase: C
+        priority: blocking
+        blocks: [N21-ios-rebaseline]
+        discovered: 2026-08-17, by running the suite against the dirty working tree
+        evidence: |
+          xcodebuild test -scheme NeuroRVU -destination 'iPhone 17 Pro,OS=27.0' -only-testing:NeuroRVUTests
+          52 tests, 13 suites, 3 failures, ALL in FixturePipelineTests:
+            umWorklistFixtureMatchesGolden()  actual.cpt "70551" == expected.cpt "70553"
+            umWorklistFixtureMatchesGolden()  abs(actualWrvu - wrvu) -> 0.78  <  0.001
+            rotatedFixtureStillParses()       Caught error: .noTable
+        analysis: >
+          70551 is MRI brain W/O; 70553 is W/WO. The uncommitted ExamDateParser.extract()
+          change made the date pattern unanchored so merged date+procedure cells can be
+          split — but ParserService now removes the matched date substring from the cell and
+          the contrast suffix is being lost with it, so the contrast-suffix CPT rule resolves
+          to the wrong code. That is a 0.78 wRVU mis-price PER STUDY on the app's core
+          value proposition. Separately, the WorklistValidator change now rejects the rotated
+          fixture outright with .noTable.
+        contracts:
+          - FixturePipelineTests passes 52/52 with the merged-cell handling retained
+          - "A regression test asserts specifically: a merged date+procedure cell containing
+             a W/WO study resolves to the W/WO CPT, not the W/O CPT"
+          - rotatedFixtureStillParses() passes; the validator does not reject rotated captures
+        verify:
+          runtime:
+            - "xcodebuild test -scheme NeuroRVU -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=27.0' -only-testing:NeuroRVUTests"
+          evidence: [fixture-pipeline-52-52.txt]
+        done_when:
+          - 52/52 green on a clean checkout of the branch
+          - The golden fixture resolves 70553, not 70551
+          - The rotated fixture parses
+        notes: >
+          D38 — improve, never rebuild. The uncommitted work is CORRECT in intent: it handles
+          the merged date+procedure cells that photos of monitors produce, which is the exact
+          artifact class documented in
+          semantic/neurorvu-ios/vision-ocr-photographed-monitor-failure-modes. Do not revert
+          it. Fix the contrast-suffix loss and the validator rejection, keep the merged-cell
+          handling, and land the whole thing as ONE commit with its tests.
+
       - id: N21-ios-rebaseline
         title: Audit the existing app and re-baseline every Phase C node
         blocks: [N01, N22, N23, N24, N25, N26, N27, N28, N29, N30]

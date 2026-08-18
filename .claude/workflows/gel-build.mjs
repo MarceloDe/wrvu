@@ -1,9 +1,7 @@
 export const meta = {
   name: 'gel-build',
   description: 'Graph-Engineering Loop: build and independently validate ready nodes from goals/',
-  whenToUse:
-    'Run to advance the RadRVU node DAG. Pass args as {nodes:["N00a-…"]} to target specific ' +
-    'nodes, or omit to let the orchestrator pick every ready node in the current phase.',
+  whenToUse: 'Run to advance the RadRVU node DAG. Pass args as {nodes:["N00a-x"]} to target specific nodes, or omit to let the orchestrator pick every ready node in the current phase.',
   phases: [
     { title: 'Survey',   detail: 'read goals/state.json and select ready nodes' },
     { title: 'Build',    detail: 'one Builder per node, context from context_query only' },

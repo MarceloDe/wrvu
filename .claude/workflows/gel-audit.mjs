@@ -1,9 +1,7 @@
 export const meta = {
   name: 'gel-audit',
   description: 'Drift Auditor: diff the repo against GOALS and INVARIANTS, open remediation nodes',
-  whenToUse:
-    'Run periodically — after each phase, and before any release. Finds invariant violations, ' +
-    'goal drift, and scope that no goal claims. Writes remediation entries to goals/BACKLOG.yaml.',
+  whenToUse: 'Run periodically, after each phase and before any release. Finds invariant violations, goal drift, and scope that no goal claims. Writes remediation entries to goals/BACKLOG.yaml.',
   phases: [
     { title: 'Sweep',     detail: 'multi-modal parallel audit across distinct lenses' },
     { title: 'Verify',    detail: 'adversarially confirm each finding before it becomes a node' },

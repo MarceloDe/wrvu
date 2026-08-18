@@ -1,9 +1,7 @@
 export const meta = {
   name: 'gel-contract',
   description: 'Contractor: expand BACKLOG entries into full node YAML with runnable verify blocks',
-  whenToUse:
-    'Run before building a phase. Pass args as {phase:"A1"} or {nodes:["N04-rls"]}. ' +
-    'Writes goals/nodes/*.yaml. No implementation code is written by this workflow.',
+  whenToUse: 'Run before building a phase. Pass args as {phase:"A1"} or {nodes:["N04-rls"]}. Writes goals/nodes/*.yaml. No implementation code is written by this workflow.',
   phases: [
     { title: 'Select',   detail: 'pick backlog entries to contract' },
     { title: 'Contract', detail: 'one Contractor per entry — contracts and verify before code' },
