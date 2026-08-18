@@ -12,6 +12,12 @@ import {
 } from "recharts";
 import { extractionSystemPrompt, extractionUserText } from "../lib/ocr-prompt";
 import { timelineSystemPrompt, timelineUserText } from "../lib/timeline-prompt";
+import { assertNoUnredactedImages } from "../lib/redact/imageRedactor";
+import {
+  REDACTION_SURFACES, buildRedactedImageBlock, buildRedactionProfile, imageGeometry,
+  profileBlockMessage, profileStatus, redactionProfileKey,
+} from "../lib/redact/captureRedaction";
+import RedactionTagger from "./RedactionTagger";
 
 /* ============================================================================
    NEURORADIOLOGY CPT REFERENCE — CMS 2026 professional-component work RVU
@@ -115,6 +121,9 @@ const DEFAULTS = { ratePerWrvu: 78, cFTE: 1.0, monthlyBenchmark: 578, privateMul
 
 /* ============================== API ============================== */
 async function callClaude(messages, { system, tools, maxTokens = 4000 } = {}) {
+  // N00f/D8 — last gate before the network: every image block must be output of
+  // redactImage(). Anything else throws here instead of being uploaded.
+  assertNoUnredactedImages(messages);
   // Calls our own server route, which holds the Anthropic key (never exposed to the browser).
   const res = await fetch("/api/claude", {
     method: "POST",
@@ -141,51 +150,23 @@ function parseJSON(raw) {
 }
 const toBase64 = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(file); });
 
-// The vision API only accepts JPEG/PNG/GIF/WebP and rejects oversized images.
-// Phone photos are often HEIC/HEIF or 12MP+ files that fail silently, so we
-// downscale to a sane edge and re-encode to JPEG before upload. Falls back to
-// the raw file if the browser can't decode it (e.g. HEIC on desktop Chrome).
-const MAX_EDGE = 1568;       // model resizes above this anyway; shrink the payload here
-const SUPPORTED = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-async function prepareImage(file) {
-  try {
-    const dataUrl = await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result);
-      r.onerror = () => reject(new Error("read-failed"));
-      r.readAsDataURL(file);
-    });
-    const img = await new Promise((resolve, reject) => {
-      const im = new Image();
-      im.onload = () => resolve(im);
-      im.onerror = () => reject(new Error("decode-failed"));
-      im.src = dataUrl;
-    });
-    const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
-    const w = Math.max(1, Math.round(img.width * scale));
-    const h = Math.max(1, Math.round(img.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = w; canvas.height = h;
-    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-    const jpeg = canvas.toDataURL("image/jpeg", 0.85);
-    return { type: "image", source: { type: "base64", media_type: "image/jpeg", data: jpeg.split(",")[1] } };
-  } catch (e) {
-    // Couldn't decode (unsupported format like HEIC on this browser). If the raw
-    // type isn't one the API accepts, signal an unsupported-format error so the
-    // user gets actionable guidance instead of a generic failure.
-    if (!SUPPORTED.includes(file.type)) {
-      const err = new Error("unsupported-format");
-      err.code = "unsupported-format";
-      throw err;
-    }
-    return { type: "image", source: { type: "base64", media_type: file.type || "image/png", data: await toBase64(file) } };
-  }
-}
+// N00f/D8 — images are no longer prepared for upload here. Every picked image
+// goes through lib/redact/captureRedaction.buildRedactedImageBlock, which
+// downscales, destroys the profiled regions and encodes the masked pixels. An
+// image the browser cannot decode is BLOCKED, never sent raw as a fallback.
 
 // Turn any OCR failure into a specific, actionable message for the user.
 function ocrErrorMessage(err) {
   const status = err?.status;
   const detail = String(err?.detail || err?.message || "").toLowerCase();
+  // N00f/D8 — redaction refusals are surfaced verbatim: the upload was blocked
+  // on purpose and the user has to know why (INV-NO-SWALLOW).
+  if (err?.code === "redaction-profile-required" || err?.code === "profile-incomplete" || err?.code === "profile-not-geometry" || err?.code === "profile-invalid")
+    return err.message;
+  if (err?.code === "unredacted-image")
+    return "Upload blocked: that image was not redacted. Nothing was sent. Re-mark the patient-name and MRN columns and try again.";
+  if (err?.code === "image-undecodable" || err?.code === "canvas-unavailable")
+    return "That image couldn't be processed on this device, so it can't be redacted — and an unredacted image is never uploaded. Try a PNG/JPEG screenshot.";
   if (err?.code === "unsupported-format")
     return "That photo format isn't supported. On iPhone, take a screenshot of the worklist instead of a photo, or set Settings → Camera → Formats → “Most Compatible” (JPEG). PNG/JPEG work best.";
   if (status === 401 || status === 403)
@@ -203,14 +184,17 @@ function ocrErrorMessage(err) {
   return "Extraction failed — the image may be blurry or low quality. Retake in good light, hold steady, and fill the frame with the worklist (or add exams manually).";
 }
 
+const isPdf = (file) => file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
+
 // Build the Anthropic content block for a monthly-report upload. PDFs go through
-// as a `document` block (the /api/claude proxy forwards them untouched); images
-// reuse prepareImage (downscale + JPEG). Used by the Timeline import.
-async function prepareDoc(file) {
-  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name || "")) {
+// as a `document` block (the /api/claude proxy forwards them untouched); IMAGES
+// must pass through redactImage first (N00f/D8), so they need this surface's
+// redaction profile. Used by the Timeline import.
+async function prepareDoc(file, profile) {
+  if (isPdf(file)) {
     return { type: "document", source: { type: "base64", media_type: "application/pdf", data: await toBase64(file) } };
   }
-  return prepareImage(file);
+  return buildRedactedImageBlock(file, profile);
 }
 
 // Merge OCR'd monthly rows into the user's existing baseline (the per-user
@@ -623,13 +607,58 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
   const [impStatus, setImpStatus] = useState("");
   const [impPreview, setImpPreview] = useState(null); // { plan, totals, period, syncSettings }
   const [syncSettings, setSyncSettings] = useState(true);
+  // N00f/D8 — a PHOTO of a report is an image reaching /api/claude, so it needs
+  // its own redaction profile for (this user, this institution). PDFs are sent
+  // as document blocks and are out of this node's scope.
+  const [impInst, setImpInst] = useState("UM");
+  const [reportProfile, setReportProfile] = useState(null);
+  const [impTagger, setImpTagger] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const stored = await loadKey(redactionProfileKey(REDACTION_SURFACES.REPORT, impInst), null);
+      if (!cancelled) setReportProfile(stored && typeof stored === "object" ? stored : null);
+    })();
+    return () => { cancelled = true; };
+  }, [impInst]);
 
   async function handleImport(e) {
     const file = (e.target.files || [])[0];
+    if (importRef.current) importRef.current.value = "";
     if (!file) return;
+    await runImport(file, reportProfile);
+  }
+
+  async function saveReportRedactionProfile(regions, meta) {
+    const pending = impTagger;
+    try {
+      const profile = buildRedactionProfile({
+        surface: REDACTION_SURFACES.REPORT, institution: impInst, regions, aspect: meta.aspect,
+      });
+      setReportProfile(profile);
+      setImpTagger(null);
+      await saveKey(redactionProfileKey(REDACTION_SURFACES.REPORT, impInst), profile);
+      if (pending?.file) await runImport(pending.file, profile);
+    } catch (err) {
+      console.error("[redaction] report profile save failed:", { code: err?.code, message: err?.message });
+      setImpStatus(ocrErrorMessage(err));
+    }
+  }
+
+  async function runImport(file, profile) {
     setImpBusy(true); setImpPreview(null); setImpStatus(`Reading ${file.name || "report"}…`);
     try {
-      const doc = await prepareDoc(file);
+      let doc;
+      try {
+        doc = await prepareDoc(file, profile);
+      } catch (err) {
+        if (err?.code === "redaction-profile-required") {
+          setImpStatus(err.message);
+          setImpTagger({ file, reasonMessage: err.message });
+          return;
+        }
+        throw err;
+      }
       const data = await callClaude([{ role: "user", content: [doc, { type: "text", text: timelineUserText }] }], { system: timelineSystemPrompt(), maxTokens: 4000 });
       const raw = textOf(data).replace(/```json/gi, "").replace(/```/g, "").trim();
       const so = raw.indexOf("{"), eo = raw.lastIndexOf("}");
@@ -650,7 +679,6 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
       setImpStatus(ocrErrorMessage(err));
     } finally {
       setImpBusy(false);
-      if (importRef.current) importRef.current.value = "";
     }
   }
 
@@ -711,6 +739,17 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
 
   return (
     <div className="space-y-5">
+      {impTagger && (
+        <RedactionTagger
+          file={impTagger.file}
+          institution={impInst}
+          institutions={["UM", "JHS", "Other"]}
+          onInstitutionChange={setImpInst}
+          reasonMessage={impTagger.reasonMessage}
+          onCancel={() => { setImpTagger(null); setImpStatus("Import cancelled — nothing was sent."); }}
+          onSave={saveReportRedactionProfile}
+        />
+      )}
       {/* ===== Tracked explorer: pick a date range + weekly/monthly ===== */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
@@ -1028,6 +1067,18 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
   const [manualDate, setManualDate] = useState(localDay());
   const [curInst, setCurInst] = useState("UM");
   const fileRef = useRef();
+  // N00f/D8 — redaction profile for (this user, curInst). Loaded per institution;
+  // `tagger` holds the upload that is BLOCKED until the columns are marked.
+  const [redactionProfile, setRedactionProfile] = useState(null);
+  const [tagger, setTagger] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const stored = await loadKey(redactionProfileKey(REDACTION_SURFACES.WORKLIST, curInst), null);
+      if (!cancelled) setRedactionProfile(stored && typeof stored === "object" ? stored : null);
+    })();
+    return () => { cancelled = true; };
+  }, [curInst]);
 
   // Extra-duty tagging: 'regular' = today's flow (counts toward wRVU target);
   // 'extra' = log a paid shift (per-diem or PPC) into extra_duty_periods instead.
@@ -1089,10 +1140,29 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
 
   async function handleFiles(e) {
     const files = Array.from(e.target.files || []);
+    if (fileRef.current) fileRef.current.value = "";
     if (!files.length) return;
+    await extractFromScreenshots(files, redactionProfile);
+  }
+
+  // N00f/D8 — the ONLY screenshot upload path. A missing or stale redaction
+  // profile for this institution blocks the upload and re-prompts the tagger;
+  // it never degrades into sending the original.
+  async function extractFromScreenshots(files, profile) {
     setBusy(true); setStatus(`Reading ${files.length} screenshot${files.length > 1 ? "s" : ""}…`);
     try {
-      const imgs = await Promise.all(files.map(prepareImage));
+      let imgs;
+      try {
+        imgs = [];
+        for (const file of files) imgs.push(await buildRedactedImageBlock(file, profile));
+      } catch (err) {
+        if (err?.code === "redaction-profile-required") {
+          setStatus(err.message);
+          setTagger({ files, file: files[0], reasonMessage: err.message });
+          return;
+        }
+        throw err;
+      }
       const data = await callClaude([{ role: "user", content: [...imgs, { type: "text", text: extractionUserText }] }], { system: extractionSystemPrompt(), maxTokens: 8000 });
       // Response is an object: {valid:true, exams:[...]} OR {valid:false, reason:"..."}
       const rawText = textOf(data).replace(/```json/gi, "").replace(/```/g, "").trim();
@@ -1131,7 +1201,25 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
       console.error("[OCR] extraction failed:", { status: err?.status, code: err?.code, detail: err?.detail, message: err?.message });
       setStatus(ocrErrorMessage(err));
     }
-    finally { setBusy(false); if (fileRef.current) fileRef.current.value = ""; }
+    finally { setBusy(false); }
+  }
+
+  // Persist the tagged geometry for (this user, this institution) and resume the
+  // upload that was blocked. Nothing left the device before this point.
+  async function saveRedactionProfile(regions, meta) {
+    const pending = tagger;
+    try {
+      const profile = buildRedactionProfile({
+        surface: REDACTION_SURFACES.WORKLIST, institution: curInst, regions, aspect: meta.aspect,
+      });
+      setRedactionProfile(profile);
+      setTagger(null);
+      await saveKey(redactionProfileKey(REDACTION_SURFACES.WORKLIST, curInst), profile);
+      if (pending?.files?.length) await extractFromScreenshots(pending.files, profile);
+    } catch (err) {
+      console.error("[redaction] profile save failed:", { code: err?.code, message: err?.message });
+      setStatus(ocrErrorMessage(err));
+    }
   }
 
   function addManual(code) {
@@ -1172,6 +1260,15 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
 
   return (
     <div className="space-y-6">
+      {tagger && (
+        <RedactionTagger
+          file={tagger.file}
+          institution={curInst}
+          reasonMessage={tagger.reasonMessage}
+          onCancel={() => { setTagger(null); setStatus("Upload cancelled — nothing was sent."); }}
+          onSave={saveRedactionProfile}
+        />
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Kpi icon={Calendar} label="Tracked this month" value={fmt(a.thisMonth.actual, 0)} sub={`vs ${fmt(a.thisMonth.bench, 0)} target`} delta={a.thisMonth.variancePct} />
         <Kpi icon={TrendingUp} label="Tracked YTD" value={fmt(a.ytd.actual, 0)} sub={`${fmt(a.ytd.studies, 0)} studies logged`} />
