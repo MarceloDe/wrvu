@@ -43,7 +43,9 @@ const sh = (c) => execSync(c, { cwd: ROOT, encoding: "utf8" }).trim();
 const branch = `poison/N03-${name}`;
 
 // Idempotent: a re-deriving Validator must not abort because the branch or PR exists.
-try { sh(`git rev-parse --verify origin/${branch}`); sh(`git push origin --delete ${branch}`); } catch {}
+// Force-push rather than delete-then-create: the poison content is regenerated
+// deterministically every run, and a delete that fails on a network blip used to
+// leave a stale ref that rejected the next push as non-fast-forward.
 sh(`git fetch -q origin ${base}`);
 const prev = sh("git rev-parse --abbrev-ref HEAD");
 sh(`git checkout -q -B ${branch} origin/${base}`);
@@ -61,7 +63,7 @@ try {
   }
   sh(`git add -- ${p.file}`);
   sh(`git -c user.name=poison -c user.email=poison@local commit -q -m "poison(${name}): must fail at '${expectStep}'"`);
-  sh(`git push -q -u origin ${branch}`);
+  sh(`git push -q --force -u origin ${branch}`);
 } finally { sh(`git checkout -q ${prev}`); }
 
 const sha = sh(`git rev-parse origin/${branch}`);
