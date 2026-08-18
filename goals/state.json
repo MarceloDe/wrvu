@@ -161,17 +161,15 @@
       ]
     },
     "N20y-ios27-vision-notable": {
-      "status": "backlog",
+      "status": "pass",
       "phase": "C",
       "priority": "major",
-      "finding": "rotatedFixtureStillParses fails ONLY on the iOS 27.0 simulator, with .noTable \u2014 thrown when Vision's RecognizeDocumentsRequest returns no table at all. The identical commit passes 52/52 on iOS 26.5. Nothing in the N20x branch touches table detection, so this is an iOS 27 Vision regression against the 4032x3024 rotated fixture, not a code defect.",
-      "do_not": "Do NOT weaken or delete the test to make CI green. It is a real capability regression for angled captures, which is exactly the input class this pipeline exists to handle.",
-      "options": [
-        "pin the test runtime to iOS 26.x and record why",
-        "normalise image orientation before OCR and re-test on 27",
-        "fall back to RecognizeTextRequest + geometric row grouping when tables.first is nil"
-      ],
-      "relevant_to": "N03d-macos-runner must pin a runtime, or CI will be red on 27 for reasons unrelated to the code."
+      "resolved_by": "neurorvu-ios 8a829f0 \u2014 the runtime is pinned rather than the test weakened",
+      "pin": ".ios-runtime holds IOS_RUNTIME=26.5 as DATA with the reasoning beside it; scripts/test-ios.sh is the canonical entry point",
+      "why_a_script": "xcodebuild silently substitutes a different runtime when the requested one is missing, which turns a pin into a suggestion. The script asserts the runtime is installed and exits non-zero listing what IS installed. Both failure paths verified: absent runtime, and missing pin file.",
+      "verified": "./scripts/test-ios.sh -> pinned to iOS 26.5, 52/52 passed",
+      "unpin_when": "iOS 27 detects the table again, proven by running the suite on 27 and seeing 52/52",
+      "note": "The test was NOT weakened. Angled capture is the input class the pipeline exists to handle."
     },
     "N21-ios-rebaseline": {
       "status": "pass",
