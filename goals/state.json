@@ -144,6 +144,38 @@
       "status": "backlog",
       "priority": 9,
       "reason": "Opened from the N00f finding. Close only if a PDF ever carries patient identifiers; today the PDF path carries the physician's own HR report."
+    },
+    "N20x-ocr-contrast-regression": {
+      "status": "pass",
+      "phase": "C",
+      "priority": "blocking",
+      "fixed": "neurorvu-ios main 5bbae8a",
+      "root_cause": "Photographed monitors glue W onto PLUS. ContrastStatus.detect() requires a standalone ' W ' token; with the W glued only ' WO ' survives, so a with-and-without study resolved as WITHOUT \u2014 70553 (2.23) became 70551 (1.45), a 0.78 wRVU under-count per affected study. Confirmed by dumping real pipeline output for um-worklist-2837: only row 10 ('MRI BRAIN WPLUS WO CONTRAST') was affected; every correctly-spaced row already resolved.",
+      "fix": "Isolate PLUS during contrast normalisation so the token boundary is restored whichever side was glued. Modelled against a 12-case battery first: corrects all three glued variants, zero regressions on the nine correct cases.",
+      "verified": [
+        "iOS 26.5 simulator: 52/52 pass",
+        "iOS 27.0 simulator: 51/52"
+      ],
+      "unblocks": [
+        "N21-ios-rebaseline"
+      ]
+    },
+    "N20y-ios27-vision-notable": {
+      "status": "backlog",
+      "phase": "C",
+      "priority": "major",
+      "finding": "rotatedFixtureStillParses fails ONLY on the iOS 27.0 simulator, with .noTable \u2014 thrown when Vision's RecognizeDocumentsRequest returns no table at all. The identical commit passes 52/52 on iOS 26.5. Nothing in the N20x branch touches table detection, so this is an iOS 27 Vision regression against the 4032x3024 rotated fixture, not a code defect.",
+      "do_not": "Do NOT weaken or delete the test to make CI green. It is a real capability regression for angled captures, which is exactly the input class this pipeline exists to handle.",
+      "options": [
+        "pin the test runtime to iOS 26.x and record why",
+        "normalise image orientation before OCR and re-test on 27",
+        "fall back to RecognizeTextRequest + geometric row grouping when tables.first is nil"
+      ],
+      "relevant_to": "N03d-macos-runner must pin a runtime, or CI will be red on 27 for reasons unrelated to the code."
+    },
+    "N21-ios-rebaseline": {
+      "status": "ready",
+      "unblocked": "2026-08-18 \u2014 N20x fixed and pushed; the iOS working tree is clean for the first time this session"
     }
   },
   "statuses": {

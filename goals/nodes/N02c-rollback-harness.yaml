@@ -1,0 +1,428 @@
+id: N02c-rollback-harness
+title: Make every migration reversible — paired down files, a tested rollback runner, and a snapshot rail enforced in code
+goal_refs: [G10]
+decisions: [D20, D25, D33, D38]
+depends_on: [N02a-baseline-migration, N02b-migration-ci-check]
+phase: A1
+estimate_hours: 8
+priority: 12
+
+depends_on_amended_2026_08_18: >
+  The backlog entry named only N02a. N02b is added because two of this node's obligations
+  are impossible without it: the pair checker must run "in the `migrations` CI job from
+  N02b", and done_when #2 requires a NAMED GitHub Actions run id proving CI goes red.
+  `.github/workflows/` does not exist on main today (verified: `ls .github/workflows` ->
+  "No such file or directory"). Contracting a CI assertion against a file no node has yet
+  created would be exactly the vacuous check INV-CHECKS-ACTUALLY-RUN forbids. Recorded as
+  an amendment rather than silently assumed.
+
+estimate_amended_2026_08_18: >
+  6h -> 8h. The +2h is the schema dumper the round-trip needs and cannot borrow: the only
+  pg_dump on this machine is 16.13 and the target server is 17.10, so pg_dump aborts before
+  emitting a byte (verified below). See verification_environment_2026_08_18.
+
+rationale: >
+  D25 lets agents run production migrations with no human approval gate. The only reason
+  that is survivable is the pair of compensating rails named in INV-PROD-AUDITED and
+  repeated verbatim in state.json -> human_gate_policy.required_rails: a Neon branch
+  snapshot before any production migration, and a recorded rollback path per node. Today
+  BOTH rails are prose, and nothing anywhere executes them.
+
+  Grounded in the current tree:
+   - `drizzle.config.js:30` sets `out: "./drizzle"`. That directory does not exist. There
+     are no migrations at all yet, so there is nothing to reverse and no journal to reverse
+     it against. Schema reaches the database through `package.json:10`
+     (`"db:push": "drizzle-kit push"`), which diffs and applies with no recorded history.
+     Confirmed live against the dev branch: `to_regclass('drizzle.__drizzle_migrations')`
+     returns NULL — nine tables exist in `public` with zero rows of migration provenance.
+   - Drizzle has no down-migration concept in any version. `drizzle-kit generate` emits
+     forward SQL only. There is no `drizzle-kit rollback`. So the reverse direction is not
+     a flag to switch on; it is a mechanism this repo must own.
+   - `goals/evidence/prod-audit-log.jsonl` is exactly ONE line long, hand-written by the
+     N00c Builder. It carries a `snapshot` object and a `rollback` string, and it is
+     correct — and it is also proof of the problem, because it was produced by an agent
+     choosing to be careful, not by a program refusing to proceed. Nothing reads that file.
+     No code path consults it. The next agent who forgets is not stopped.
+   - `scripts/verify/` does not exist. `scripts/` contains exactly one file, `seed.mjs`.
+
+  The deadline is not abstract. N20-migrate-production-data re-prices every historical exam
+  row under D17, on a database that is the system of record for user data under D31. If
+  that migration is wrong, "restore the snapshot branch" has to be a command that exists,
+  not a sentence in a YAML file. This node builds the mechanism before anything in phase B
+  can need it.
+
+  D38 applies to the one thing that will already exist: N02a's replay guards. This node
+  REUSES scripts/verify/replay-check.mjs' drop-and-replay helpers and does not
+  re-implement them.
+
+context_query: >
+  codegraph explore "drizzle.config.js migrationUrl out lib/db/index.js connectionString
+  lib/db/schema.js scripts/seed.mjs package.json db:push — how does this repo connect to
+  Neon, which connection string is used for DDL versus app queries, and what applies schema
+  changes today"
+
+# ---------------------------------------------------------------------------
+# Verified environment facts. Every one of these was executed on 2026-08-18
+# against the real dev Neon branch before this contract was written. The Builder
+# should not re-litigate them; the Validator may re-run any of them.
+# ---------------------------------------------------------------------------
+verification_environment_2026_08_18: >
+  TARGET: the real dev Neon branch `dev` / br-late-paper-at5h75si on project
+  neon-almond-leaf, reached via .env.local (mode 600, gitignored). Real infrastructure
+  under D20 — a real Postgres over the network, no mock anywhere. It holds zero production
+  rows, which is what makes it safe for agent use under D25a.
+
+  FACT 1 — the server is Postgres 17.10.
+      select version() -> "PostgreSQL 17.10 (29ad1b7) on aarch64-unknown-linux-gnu"
+
+  FACT 2 — pg_dump CANNOT be used, and this is not a preference.
+  The only Postgres client installed is postgresql@16 (16.13, Homebrew; `brew list
+  --versions | grep postgres` shows postgresql@16 and nothing else). Running it against the
+  branch produces, verbatim:
+      pg_dump: error: aborting because of server version mismatch
+      pg_dump: detail: server version: 17.10 (29ad1b7); pg_dump version: 16.13 (Homebrew)
+  It aborts before emitting one byte. THEREFORE the round-trip's two dumps are produced by
+  `scripts/db/schema-snapshot.mjs`, contracted below, and NOT by pg_dump. The artifact names
+  from the backlog (round-trip-dump-a.sql / -b.sql) are kept; only the producer changes.
+  `--pg-dump` remains available as an optional second witness if an operator ever installs
+  postgresql@17, and must never be required for a PASS.
+
+  FACT 3 — no new database driver is needed, and node-postgres must NOT be added.
+  `@neondatabase/serverless` is already a dependency (package.json) and exports `Pool`, a
+  real WebSocket session — not the one-shot HTTP `neon()` used by lib/db/index.js:16.
+  Verified on the branch: BEGIN -> `create table _tx_probe(x int)` -> ROLLBACK leaves
+  `to_regclass('public._tx_probe')` NULL. Transactional DDL works. Use `Pool` over
+  DATABASE_URL_UNPOOLED for every statement this node executes; pgBouncer breaks
+  session-level DDL, which drizzle.config.js:2-9 already documents.
+
+  FACT 4 — the dev endpoint id is `ep-damp-hill-atuwz5ih`.
+  DATABASE_URL host is ep-damp-hill-atuwz5ih-pooler.c-9.us-east-1.aws.neon.tech;
+  DATABASE_URL_UNPOOLED host is ep-damp-hill-atuwz5ih.c-9.us-east-1.aws.neon.tech.
+  This is the literal the production predicate allow-lists. It is an ENDPOINT id, not a
+  branch id — Neon hostnames do not encode branch ids, so the predicate cannot be written
+  against br-late-paper-at5h75si.
+
+  FACT 5 — two schemas exist: `public` (9 base tables) and `neon_auth` (9 base tables).
+  `neon_auth` is Neon's own and is NOT ours. Every dump, diff, drop and replay in this node
+  is scoped to `public` plus `drizzle`, and must leave `neon_auth` untouched and unread.
+  Note in passing: state.json -> dev_database.type says "15 tables", which matches neither
+  count. Do not use that number for anything.
+
+  FACT 6 — CI exists as a GitHub repo but not yet as a workflow. `gh repo view` resolves
+  MarceloDe/wrvu, default branch main; `.github/workflows/` does not exist. done_when #2
+  therefore depends on N02b having landed the `migrations` job.
+
+# ---------------------------------------------------------------------------
+# Contracts — interfaces, not descriptions.
+# ---------------------------------------------------------------------------
+contracts:
+
+  # --- 1. the down files ---------------------------------------------------
+  - "drizzle/down/ exists and contains one file per entry in drizzle/meta/_journal.json,
+     named exactly `${entry.tag}.down.sql` (e.g. journal tag `0000_baseline` ->
+     drizzle/down/0000_baseline.down.sql). Pairing is by JOURNAL TAG, never by globbing
+     filenames, so a stray .sql in drizzle/ cannot satisfy or break a pair."
+
+  - "drizzle/down/0000_baseline.down.sql is a REFUSAL FILE and is the only legal one. It
+     matches, after trimming, exactly this documented form and nothing else:
+       line 1: `-- IRREVERSIBLE: baseline`
+       a body containing the literal sentence
+         `the baseline cannot be rolled back; restore the snapshot branch`
+       and a statement that guarantees non-zero exit when executed, i.e.
+         `DO $$ BEGIN RAISE EXCEPTION 'the baseline cannot be rolled back; restore the
+          snapshot branch'; END $$;`
+     A file that is empty, whitespace-only, or comment-only is REJECTED by the pair checker.
+     `reversible` may never degrade into `a file exists`."
+
+  # --- 2. the pair checker -------------------------------------------------
+  - "scripts/verify/rollback-pairs.mjs exports `checkPairs(repoRoot: string):
+     { ok: boolean, missing: string[], empty: string[], orphaned: string[], refusals: string[] }`
+     and, run as a CLI, exits 0 when ok and 1 otherwise, printing one line per defect.
+       missing  = journal tag with no drizzle/down/<tag>.down.sql
+       empty    = down file whose content, with SQL comments and whitespace stripped, is ''
+       orphaned = file in drizzle/down/ matching no journal tag
+       refusals = down files recognised as the documented refusal form (reported, not a defect)"
+
+  - "scripts/verify/rollback-pairs.mjs --self-test constructs a temporary repo fixture in
+     os.tmpdir() containing a journal with tag `9999_fixture` and NO down file, runs
+     checkPairs() against it, and exits NON-ZERO unless checkPairs returned ok:false with
+     `9999_fixture` in `missing`. It then repeats with an empty down file and asserts
+     `9999_fixture` lands in `empty`. It writes nothing inside the repo and touches no
+     database. This is the INV-CHECKS-ACTUALLY-RUN witness: the checker proves it can fail."
+
+  # --- 3. the rollback runner ----------------------------------------------
+  - "package.json gains `\"db:rollback\": \"node --env-file=.env.local scripts/db/rollback.mjs\"`
+     and `\"db:snapshot\": \"node --env-file=.env.local scripts/db/snapshot.mjs\"`."
+
+  - "scripts/db/rollback.mjs, invoked as `npm run db:rollback -- --to <tag>`, applies
+     drizzle/down/<tag>.down.sql files in REVERSE journal order for every journal entry
+     strictly after <tag>, stopping when <tag> is reached. `--to 0000_baseline` therefore
+     unwinds everything above the baseline and never executes the baseline's own refusal
+     file. Each down file is applied in its OWN transaction: BEGIN, the file's statements
+     split on drizzle's `--> statement-breakpoint` marker, the matching
+     `DELETE FROM drizzle.__drizzle_migrations WHERE created_at = $1` using that journal
+     entry's `when`, then COMMIT. If the DELETE does not report exactly one row, the
+     transaction is ROLLED BACK and the process exits non-zero."
+
+  - "scripts/db/rollback.mjs REFUSES before executing anything when the target database's
+     applied set does not match the journal. Refusal conditions, each with its own exit
+     code and its own single-line stderr message:
+       exit 2  `journal/database drift: applied <n> migrations, journal has <m>`
+       exit 2  `journal/database drift: <tag> applied but absent from journal`
+       exit 2  `journal/database drift: hash mismatch for <tag>`  (stored __drizzle_migrations
+               hash != sha256 of the current drizzle/<tag>.sql, computed the same way the
+               drizzle migrator computes it)
+       exit 2  `unknown target: <tag>`
+     On any exit-2 path the process must not have opened a transaction and must not have
+     issued a single DDL statement."
+
+  # --- 4. the snapshot rail ------------------------------------------------
+  - "scripts/db/snapshot.mjs exports
+     `buildBranchRequest({ projectId, parentBranchId, label, now }):
+        { method: 'POST', url: string, headers: Record<string,string>, body: object }`
+     — a PURE function, no I/O, no credentials read. The request it describes is
+       POST https://console.neon.tech/api/v2/projects/<projectId>/branches
+       headers: { Authorization: 'Bearer <NEON_API_KEY>', 'Content-Type': 'application/json',
+                  Accept: 'application/json' }
+       body:    { branch: { name: `pre-<label>-<YYYY-MM-DD>`, parent_id: <parentBranchId> },
+                  endpoints: [ { type: 'read_write' } ] }
+     `expires_at` is ABSENT — its absence is what 'auto-delete never' means in this API, and
+     the dry-run expectation must assert its absence, not merely not mention it. A Neon
+     branch is a copy-on-write clone of its parent, so data+schema is the default and is not
+     expressed by any field."
+
+  - "scripts/db/snapshot.mjs --dry-run --label <node-id> prints
+     JSON.stringify(buildBranchRequest(...), null, 2) to stdout with the Authorization value
+     as the literal string `Bearer <NEON_API_KEY>`, issues NO network request, reads NO
+     credential from the environment, and exits 0. Any real (non-dry-run) invocation without
+     NEON_API_KEY exits non-zero with `NEON_API_KEY is not set` and appends nothing."
+
+  - "A successful real snapshot appends EXACTLY ONE line to goals/evidence/prod-audit-log.jsonl,
+     written with fs.appendFileSync(path, line, { flag: 'a' }) — the file is never read,
+     rewritten, truncated or re-serialised. The line is a JSON object with, at minimum:
+       { actor: string, ts: <ISO-8601 with offset>, node: string, action: 'snapshot',
+         command: string, head: <git rev-parse HEAD>, branch_id: string, parent_id: string,
+         result: 'created' | 'failed', rollback: string }
+     `head` is REQUIRED and is the field the migrate rail matches on. A dry run appends
+     nothing at all."
+
+  # --- 5. the rail enforced in code ----------------------------------------
+  - "scripts/db/migrate.mjs (created by N02a; EXTENDED here, not rewritten — D38) exports
+     `isProductionTarget(connectionString: string): boolean`, fail-closed: it returns FALSE
+     only when the URL host, after stripping a trailing `-pooler` from the leading `ep-*`
+     label, is in the allow-list ['ep-damp-hill-atuwz5ih'], or the host is 'localhost' or
+     '127.0.0.1'. Every other host — including an unparseable one — returns TRUE."
+
+  - "scripts/db/migrate.mjs, when isProductionTarget(target) is true, calls
+     `hasSnapshotForHead(logPath, head): boolean` BEFORE constructing any client, resolving
+     any hostname, or reading any migration file. hasSnapshotForHead returns true only for a
+     log line with action === 'snapshot' AND result === 'created' AND head === the current
+     `git rev-parse HEAD`. A DRY-RUN entry can never satisfy it — dry runs append nothing, and
+     even a hand-forged dry-run line fails the result check. When it returns false the process
+     exits 3 with the single stderr line `no snapshot recorded for HEAD <sha>` and performs no
+     write of any kind: no database connection, no file touched, no log line appended."
+
+  # --- 6. the dumper the round-trip needs ----------------------------------
+  - "scripts/db/schema-snapshot.mjs exports `dumpSchema(client, { schemas: string[] }):
+     Promise<string>` — a DETERMINISTIC textual rendering of the catalog for the named
+     schemas only (default ['public','drizzle']), never touching neon_auth. It reads
+     pg_catalog/information_schema and emits, sorted by name at every level: tables with
+     columns (name, type, nullability, default), primary keys, unique and check constraints,
+     foreign keys, indexes (pg_get_indexdef), sequences, enums, and views (pg_get_viewdef).
+     It emits NO row data, NO oids, NO timestamps and NO connection metadata, so two dumps of
+     equal schemas are byte-identical without post-processing. The `--normalize` pass exists
+     only to strip trailing whitespace and collapse blank runs; if a diff can only be closed
+     by normalization, that is a defect in the dumper, not a reason to normalize harder."
+
+  # --- 7. CI ----------------------------------------------------------------
+  - "The `migrations` job in .github/workflows/ci.yml (owned by N02b) gains a step running
+     `node scripts/verify/rollback-pairs.mjs` and a step running
+     `node scripts/verify/rollback-pairs.mjs --self-test`. Both run on every pull request.
+     The pair checker step needs no database and no secret, so it cannot be skipped for
+     want of credentials."
+
+invariants: [INV-PROD-AUDITED, INV-CHECKS-ACTUALLY-RUN, INV-NO-SWALLOW, INV-ALWAYS-SHIPPABLE]
+
+verify:
+  runtime:
+    - "node --env-file=.env.local scripts/verify/round-trip.mjs --expect-branch br-late-paper-at5h75si
+       # Refuses to run unless the connected endpoint is ep-damp-hill-atuwz5ih (FACT 4), so it
+       # can never be pointed at production by accident. Then, reusing N02a's replay-check.mjs
+       # drop-and-replay helpers rather than re-implementing them (D38):
+       #   migrate to head -> dumpSchema() -> goals/evidence/N02c-rollback-harness/round-trip-dump-a.sql
+       #   npm run db:rollback -- --to 0000_baseline
+       #   assert ONLY baseline objects remain: the set of public tables equals the set created by
+       #     drizzle/0000_baseline.sql, and drizzle.__drizzle_migrations holds exactly one row
+       #   migrate to head -> dumpSchema() -> round-trip-dump-b.sql
+       #   assert A and B are BYTE-IDENTICAL; write the unified diff (empty on success) to
+       #     round-trip-diff.txt; exit non-zero if it is non-empty"
+    - "node --env-file=.env.local scripts/verify/rollback-pairs.mjs"
+    - "node scripts/verify/rollback-pairs.mjs --self-test | tee goals/evidence/N02c-rollback-harness/pairs-selftest.txt
+       # no --env-file: the checker must not need a database. A fixture migration with no down
+       # file must make checkPairs() report ok:false, and an empty down file must land in `empty`."
+    - "node scripts/db/migrate.mjs --target 'postgres://user@unreachable.invalid/prod' 2> goals/evidence/N02c-rollback-harness/migrate-refusal.txt; test $? -eq 3
+       # Must exit 3 with `no snapshot recorded for HEAD <sha>` and write nothing. The host is
+       # unreachable BY CONSTRUCTION (.invalid is reserved by RFC 2606 and can never resolve), so
+       # a pass cannot come from a lucky connection. The refusal text must contain no
+       # ENOTFOUND / EAI_AGAIN / getaddrinfo / ECONNREFUSED — their presence proves DNS was
+       # attempted, which means the rail fired too late and the check FAILS."
+    - "node scripts/db/snapshot.mjs --dry-run --label N02c-selftest > goals/evidence/N02c-rollback-harness/snapshot-dryrun-request.json
+       # Asserted byte-for-byte against goals/nodes/fixtures/N02c-snapshot-request.expected.json,
+       # which the Builder checks in as part of this node. Runs with NEON_API_KEY unset — prefix
+       # the command `env -u NEON_API_KEY` when verifying — and must still exit 0."
+    - "node --env-file=.env.local scripts/verify/rollback-drift.mjs
+       # Proves the runner's refusal path against the REAL branch: migrate to head, then
+       # `DELETE FROM drizzle.__drizzle_migrations WHERE created_at = (select max(created_at) ...)`,
+       # then `npm run db:rollback -- --to 0000_baseline` and assert exit 2 with a
+       # `journal/database drift:` message and ZERO schema change (dumpSchema before == after).
+       # Restores the deleted row afterwards. Without this, `it refuses on drift` is untested prose."
+  static:
+    - "test -d drizzle/down"
+    - "grep -q 'rollback-pairs' .github/workflows/ci.yml"
+    - "grep -q 'rollback-pairs.mjs --self-test' .github/workflows/ci.yml"
+    - "grep -q '\"db:rollback\"' package.json && grep -q '\"db:snapshot\"' package.json"
+    - "! grep -rn 'from \"pg\"\\|require(.pg.)' scripts/db/   # FACT 3: no node-postgres"
+  manual: []
+  evidence:
+    - round-trip-dump-a.sql
+    - round-trip-dump-b.sql
+    - round-trip-diff.txt
+    - pairs-selftest.txt
+    - migrate-refusal.txt
+    - snapshot-dryrun-request.json
+    - drift-refusal.txt
+    - audit-log-bytes-before-after.txt
+
+# ---------------------------------------------------------------------------
+# done_when — each entry re-derivable by an agent who trusts nobody.
+# ---------------------------------------------------------------------------
+done_when:
+  - "On br-late-paper-at5h75si, head -> `db:rollback --to 0000_baseline` -> head yields
+     byte-identical dumps. The Validator re-runs round-trip.mjs itself, then independently
+     runs `cmp goals/evidence/N02c-rollback-harness/round-trip-dump-a.sql
+     goals/evidence/N02c-rollback-harness/round-trip-dump-b.sql` and gets exit 0, and
+     confirms round-trip-diff.txt is zero bytes. Diffing the Builder's committed artifacts is
+     not sufficient on its own — the Validator must regenerate them."
+
+  - "At the bottom of the rollback, only baseline objects remain: the set of base tables in
+     `public` equals the set created by drizzle/0000_baseline.sql, and
+     `select count(*) from drizzle.__drizzle_migrations` returns exactly 1. The Validator
+     checks this with its own psql/Pool query against the branch, not from a log line."
+
+  - "Deleting any drizzle/down/*.down.sql makes CI RED, proven by a NAMED GitHub Actions run
+     id on MarceloDe/wrvu. The evidence is `gh run view <id>` showing the `migrations` job
+     failed with rollback-pairs.mjs reporting that tag under `missing`. An assertion that it
+     would fail is not accepted; a run id, or nothing."
+
+  - "`node scripts/db/migrate.mjs --target 'postgres://user@unreachable.invalid/prod'` exits 3.
+     Its stderr contains `no snapshot recorded for HEAD` and contains NONE of
+     ENOTFOUND / EAI_AGAIN / getaddrinfo / ECONNREFUSED. `git status --porcelain` is byte-identical
+     before and after, and `wc -c goals/evidence/prod-audit-log.jsonl` is unchanged."
+
+  - "goals/evidence/prod-audit-log.jsonl gains exactly one line per SUCCESSFUL snapshot and
+     zero lines per dry run, and its byte length only ever grows across the run. Recorded as
+     `wc -c` before and after in audit-log-bytes-before-after.txt, and re-derived by the
+     Validator running `wc -c` itself around its own re-run. The DURABLE append-only invariant
+     check belongs to N09c and must not be created here."
+
+  - "rollback-pairs.mjs is proven capable of failing: `--self-test` exits 0 only because the
+     fixture with a missing down file produced ok:false, and the fixture with an empty down
+     file landed in `empty`. The Validator confirms non-vacuity directly by deleting a real
+     down file in a scratch worktree, running the checker, and observing exit 1 — then
+     restoring it."
+
+  - "The refusal file drizzle/down/0000_baseline.down.sql is accepted by the pair checker
+     (appears in `refusals`, not `missing`), and truncating it to zero bytes makes the checker
+     exit 1 with that tag under `empty`. Both directions demonstrated."
+
+  - "`node scripts/verify/rollback-drift.mjs` exits 0, having shown that a
+     journal/database mismatch makes db:rollback exit 2 with a `journal/database drift:`
+     message while leaving dumpSchema() output unchanged."
+
+  - "snapshot-dryrun-request.json is byte-identical to the checked-in expectation, contains
+     no `expires_at` key, and its Authorization header is the literal `Bearer <NEON_API_KEY>`.
+     Re-derivable with `env -u NEON_API_KEY node scripts/db/snapshot.mjs --dry-run --label
+     N02c-selftest | diff - goals/nodes/fixtures/N02c-snapshot-request.expected.json`."
+
+# ---------------------------------------------------------------------------
+blocked_external:
+  - what: "Real Neon branch creation. db:snapshot's live path cannot be executed."
+    why: >
+      It needs a Neon API key with branch-create scope on project neon-almond-leaf. None
+      exists, and per DECISIONS.md the Neon account attached to this Vercel installation has
+      never been email-verified — SSO lands on "You need to verify your email address to
+      activate your account", so the console is unreachable and no key can be minted. The
+      project id is likewise unknown for the same reason.
+    closing_command: >
+      npx neonctl branches create --project-id <neon-almond-leaf-id> --name pre-<node>-<date> --parent main
+    scope_of_the_block: >
+      ONLY live branch creation and the real (non-dry-run) audit-log append. The dry-run
+      request assertion is NOT counted as verifying branch creation — it verifies that the
+      request we would send is the request we intend to send, and nothing more. Everything
+      else in this node — the down files, db:rollback, rollback-pairs.mjs, the drift refusal,
+      the migrate.mjs rail, and the round-trip against the real dev branch — is fully
+      verifiable today and MUST be verified today. A delivery that leans on this block to
+      excuse any other unrun check is rejected.
+
+# ---------------------------------------------------------------------------
+rollback: >
+  This node is additive tooling — new files under scripts/db/, scripts/verify/, drizzle/down/,
+  two package.json scripts, and two CI steps. It creates no table, alters no column, and
+  writes no production row. Reverting is `git revert <sha>`; there is no data impact and no
+  migration to unwind.
+
+  Stated honestly, because the honest version is the useful one: this node IS the rollback
+  path for every later node. Reverting it does not return the system to a neutral state — it
+  re-opens the D25 gap, leaving agents with unapproved production access and no enforced
+  snapshot rail. So a revert is not complete until state.json marks every phase-B node that
+  migrates production data (N20 and its children, N04a, N07) as `blocked`, with
+  `blocked_on: "N02c-rollback-harness reverted; INV-PROD-AUDITED has no enforcement"`. A
+  revert that skips that step silently re-arms the risk this node was built to disarm.
+
+# ---------------------------------------------------------------------------
+split_note_D24: >
+  splitRecommended: NO. One contract — "a production migration is reversible by a tested
+  mechanism" — realised by two mechanisms.
+
+  If the orchestrator forces a split, the seam is exactly at scripts/db/snapshot.mjs and
+  neither half imports the other:
+    N02c1 = drizzle/down/* + scripts/db/rollback.mjs + scripts/verify/rollback-pairs.mjs +
+            scripts/verify/round-trip.mjs + scripts/verify/rollback-drift.mjs
+            (logical reversal, dev branch, zero blocked_external)
+    N02c2 = scripts/db/snapshot.mjs + the audit-log append + migrate.mjs's isProductionTarget /
+            hasSnapshotForHead refusal
+            (physical reversal, production rail, carries the whole blocked_external)
+  scripts/db/schema-snapshot.mjs goes with N02c1, which is its only consumer.
+
+  Recommendation stands: keep them together. Shipping down files without the prod rail leaves
+  D25 uncompensated, and D25 — not the absence of down files — is the actual risk.
+
+overlap: >
+  N02c WRITES entries to goals/evidence/prod-audit-log.jsonl. N09c-prod-audit-log OWNS the
+  log's append-only guarantee and scripts/verify/prod-audit-log.mjs. This node must NOT create
+  that file or any equivalent standing verifier. done_when #5 is a before/after `wc -c`
+  observation inside this node's own run — a measurement, not an invariant check. If the
+  Builder finds itself writing a general-purpose audit-log validator, it has crossed into
+  N09c's contract and must stop.
+
+notes: >
+  - Reuse, do not re-implement (D38): N02a's scripts/verify/replay-check.mjs already owns the
+    drop-and-replay guards for this branch. round-trip.mjs imports them. If they are not
+    importable as functions, the correct move is to export them from replay-check.mjs, not to
+    copy the logic.
+  - Use `Pool` from @neondatabase/serverless over DATABASE_URL_UNPOOLED for every statement.
+    Not `neon()` (HTTP, one-shot, cannot hold a transaction across statements — that is why
+    lib/db/index.js:16 is unsuitable here), and not node-postgres (FACT 3: do not add a
+    dependency the platform already provides).
+  - Scope every dump, drop and replay to `public` and `drizzle`. `neon_auth` is Neon's, holds
+    9 tables of its own, and must be neither read nor written.
+  - drizzle-kit 0.28.1 separates statements within a migration file with the literal marker
+    `--> statement-breakpoint`. The down-file executor must split on the same marker so a
+    multi-statement down file behaves like its up counterpart.
+  - The `when` field of a drizzle journal entry is epoch milliseconds and is what the migrator
+    stores in __drizzle_migrations.created_at. It is the join key for the DELETE. The `hash` is
+    sha256 of the migration file's contents and is the drift detector. Use both: `when` to
+    identify the row, `hash` to prove it is the row you think it is.
+  - INV-CHECKS-ACTUALLY-RUN is listed deliberately. This node's whole output is verification
+    machinery, so a vacuous check here is not one bad test — it is a rail that reports green
+    while enforcing nothing, which is strictly worse than having built nothing at all.

@@ -1,0 +1,445 @@
+id: N03d-macos-runner
+title: macOS CI for neurorvu-ios — xcodegen, build, and BOTH test targets on a pinned, loudly-verified simulator
+goal_refs: [G10]
+goal_checks: [G10.7]
+decisions: [D11, D20, D24, D25a, D38]
+depends_on: []
+phase: A1
+estimate_hours: 6
+priority: 1
+severity: missing-safety-net
+
+subject_repo: >
+  MarceloDe/neurorvu-ios, working copy at ~/projects/neurorvu-ios. NOT the wruvs repo.
+  The edge API also lives in that repo at api/ (neurorvu-edge-api) and is explicitly NOT
+  this node's subject — see N03e.
+
+rationale: >
+  D11 says agents write the Swift and the user reviews, and it names XCUITest plus golden
+  fixtures as "the only real safety net". That net currently deploys only when a human
+  remembers to run it. Verified 2026-08-18: `ls -la ~/projects/neurorvu-ios/.github` →
+  "No such file or directory". There is no CI in the repo at all.
+
+  N20x is exactly what the absence costs. Six files sit modified in the working tree at
+  HEAD bd19a47 — NeuroRVU/Pipeline/ExamDateParser.swift, OCRService.swift,
+  ParserService.swift, WorklistValidator.swift, NeuroRVUTests/OCRRulesTests.swift and an
+  app icon — carrying a 0.78 wRVU per-study mis-price (70551 resolving where 70553 belongs).
+  ProcedureMapper is exercised by OCRRulesTests.swift:29 `contrastSuffixDetection`, which
+  asserts `ContrastStatus.detect(in: "MRI BRAIN PERFUSION W/WO CONTRAST") == .withAndWithout`
+  — the exact rule the regression breaks. That test existed the whole time. It caught the
+  bug only because a human ran the suite by hand on 2026-08-17. HEAD itself is green.
+
+  This node does not fix N20x (D38 — it lands against green HEAD). It makes the next one
+  impossible to merge unnoticed.
+
+context_query: >
+  codegraph explore "project.yml NeuroRVUTests FixturePipelineTests OCRRulesTests WorklistValidator ParserService ExamDateParser"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Facts the Contractor verified on 2026-08-18 at bd19a47. The Builder may rely on
+# these without re-deriving them; if any turns out false, that is a contract change,
+# not a Builder judgement call.
+# ─────────────────────────────────────────────────────────────────────────────
+verified_repo_state:
+  head: bd19a47
+  project_generator: >
+    XcodeGen 2.46.0 drives project.yml. NeuroRVU.xcodeproj IS committed (4 tracked files,
+    including project.xcworkspace/xcshareddata/swiftpm/Package.resolved). Verified by
+    cloning bd19a47 into a scratch dir and running `xcodegen generate`: project.pbxproj
+    came back BYTE-IDENTICAL (`git status --short` empty) and Package.resolved survived.
+    Regeneration is therefore deterministic at 2.46.0 and drift is a real, checkable signal.
+  scheme: >
+    One shared scheme, NeuroRVU.xcodeproj/xcshareddata/xcschemes/NeuroRVU.xcscheme.
+    Its test action lists BOTH NeuroRVUTests and NeuroRVUUITests. No .xctestplan exists.
+  targets: [NeuroRVU (application), NeuroRVUTests (bundle.unit-test), NeuroRVUUITests (bundle.ui-testing)]
+  test_framework: >
+    ⚠️ LOAD-BEARING. NeuroRVUTests is 100% SWIFT TESTING, not XCTest:
+    `grep -c 'func test' NeuroRVUTests/*.swift` → 0 in all 13 files;
+    `import Testing` + @Suite + @Test throughout. 13 @Suite declarations,
+    52 @Test functions (10+2+4+5+1+1+5+8+3+5+5+2+1).
+    NeuroRVUUITests is XCTest: 3 `func test` cases across LaunchTests,
+    CodesSearchUITests, ExamPersistenceUITests.
+    CONSEQUENCE: the XCTest console line `Executed N tests` is emitted ONLY by the UI
+    bundle, with N=3. The backlog's proposed check
+    `gh run view <id> --log | grep -E 'Executed [0-9]+ tests'   # >= 52`
+    CANNOT SEE THE 52 UNIT TESTS and is retired here as a vacuous check
+    (INV-CHECKS-ACTUALLY-RUN). Counting is done from the .xcresult instead — see
+    verify.runtime.
+  no_conditional_traits: >
+    `grep -E '@Test\(.*(enabled|disabled)' NeuroRVUTests/*.swift` → no match. No test is
+    conditionally skipped, so 52 is a stable floor, not a best case.
+  foundation_models_are_safe_on_ci: >
+    FMProbeTests.swift and FoundationModelsEvalTests.swift import FoundationModels, which
+    has no model available on a CI simulator. Both degrade rather than fail:
+    each opens `guard #available(iOS 26.0, *) else { return }`, FMProbe catches and prints,
+    and the eval's only assertion is `#expect(totalAnswered >= 0)`. They will RUN and PASS
+    with no Apple Intelligence model present. The 52 floor holds on a bare runner.
+  ui_tests_need_no_secrets: >
+    All three UI tests set `app.launchArguments = [... "-uitest-bypass-auth"]`, so no Clerk
+    session, key or secret is required. The workflow needs zero repository secrets.
+  spm: >
+    project.yml declares clerk-ios `from: 1.0.0` — an OPEN 1.x range. The committed
+    Package.resolved pins clerk-ios 1.3.6 (rev 1a75c1e), Nuke 13.0.6, PhoneNumberKit 5.0.6.
+    Left unpinned at build time, any upstream 1.x release silently changes what CI tested.
+  toolchain_on_the_operator_mac: >
+    Xcode 26.6 (17F113) at /Applications/Xcode.app/Contents/Developer.
+    `xcrun simctl list runtimes` → iOS 26.5 (23F77) and iOS 27.0 (24A5380i — a BETA seed).
+    `xcrun simctl list devicetypes` → iPhone 17 Pro present.
+    iOS 27.0 being a beta seed runtime is the single biggest threat to a GitHub-hosted
+    runner satisfying the pinned destination. See blocked_external.
+  xcresulttool: >
+    version 24757, schema 0.1.0. `xcrun xcresulttool get test-results summary --path X`
+    emits keys totalTestCount / passedTests / failedTests / skippedTests / result /
+    environmentDescription. `... get test-results tests --path X` emits testNodes[] of
+    TestNode{nodeType,name,result,children[]} where nodeType ∈ {"Test Plan",
+    "Unit test bundle","UI test bundle","Test Suite","Test Case",...} and result ∈
+    {"Passed","Failed","Skipped","Expected Failure","unknown"}. These key names are
+    schema-confirmed, not guessed.
+  github: >
+    MarceloDe/neurorvu-ios is PRIVATE, owner type User, default_branch main.
+    Actions enabled, allowed_actions "all".
+    `gh api /repos/MarceloDe/neurorvu-ios/branches/main/protection` → 404 "Branch not
+    protected". main is currently unprotected.
+
+# ─────────────────────────────────────────────────────────────────────────────
+contracts:
+
+  # -- the artifact ----------------------------------------------------------
+  - "MarceloDe/neurorvu-ios gains exactly one file: .github/workflows/ios.yml. No source
+     file, no project.yml key, and no test is modified by this node."
+  - "Triggers: `on: {pull_request: {branches: [main]}, push: {branches: [main]}}`.
+     One job, id `ios`."
+
+  # -- the destination is one variable, referenced everywhere ---------------
+  - "The workflow declares the destination in a single job-level `env` block —
+     SIM_DEVICE, SIM_OS, SIM_RUNTIME_ID, XCODE_VERSION, XCODEGEN_VERSION — and every later
+     step derives from those. The xcodebuild -destination string is built as
+     'platform=iOS Simulator,name=${SIM_DEVICE},OS=${SIM_OS}' and the literal device name
+     and OS number appear NOWHERE ELSE in the file. Verified by:
+     `test $(grep -c 'iPhone 17 Pro' .github/workflows/ios.yml) -eq 1` and
+     `test $(grep -c '27\\.0' .github/workflows/ios.yml) -le 2`.
+     RATIONALE: the destination-poison run must trip the preflight. If the OS number is
+     written twice, editing the xcodebuild line alone bypasses the guard and the guard is
+     theatre."
+
+  # -- preflight: exit codes are the interface ------------------------------
+  - "A step `id: preflight`, positioned BEFORE xcodegen and before any xcodebuild
+     invocation, with this exact contract:
+       exit 0  — iff  (a) `xcodebuild -version` first line contains ${XCODE_VERSION},
+                      (b) `xcrun simctl list runtimes --json` contains a runtime whose
+                          .identifier == ${SIM_RUNTIME_ID} AND .isAvailable == true,
+                      (c) `xcrun simctl list devicetypes --json` contains a devicetype
+                          whose .name == ${SIM_DEVICE}
+       exit 1  — otherwise, having FIRST written the complete output of
+                 `xcrun simctl list runtimes devicetypes` and `xcodebuild -version` to
+                 stdout AND to $GITHUB_STEP_SUMMARY, and having named which of (a)(b)(c)
+                 failed in the first line of that output.
+     The step must NOT be `continue-on-error` and must NOT be guarded by `if: always()`."
+  - "DEVELOPER_DIR is set explicitly in the job env to the pinned Xcode. The workflow never
+     relies on the runner image's `xcode-select` default. `runs-on:` names a pinned image
+     label (e.g. `macos-26`) or a pinned self-hosted label set — never `macos-latest`.
+     Verified by: `! grep -n 'macos-latest\\|xcode-select -p *$' .github/workflows/ios.yml`
+     and `grep -qn 'DEVELOPER_DIR' .github/workflows/ios.yml`."
+
+  # -- deterministic inputs -------------------------------------------------
+  - "XcodeGen is installed at the pinned ${XCODEGEN_VERSION} (2.46.0) and its version is
+     printed to the log. After `xcodegen generate`, the workflow runs
+     `git diff --exit-code -- NeuroRVU.xcodeproj/project.pbxproj` and FAILS on any diff.
+     This is achievable today: the Contractor verified byte-identical regeneration at
+     bd19a47 with 2.46.0. A red here means project.yml and the committed project have
+     diverged, which is a real finding, not CI noise."
+  - "SPM resolution is pinned: `xcodebuild -resolvePackageDependencies
+     -onlyUsePackageVersionsFromResolvedFile`, followed by
+     `git diff --exit-code -- NeuroRVU.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`.
+     project.yml declares clerk-ios `from: 1.0.0`; without this, an upstream 1.x release
+     changes what CI tested with no commit in this repo and a red run becomes undiagnosable.
+     The resolved file is uploaded as evidence on every run, pass or fail."
+
+  # -- the build and the tests ----------------------------------------------
+  - "Two xcodebuild invocations, in this order, both `-scheme NeuroRVU
+     -destination \"$DESTINATION\" -resultBundlePath ${{ github.workspace }}/TestResults.xcresult`:
+       1. `build-for-testing`
+       2. `test-without-building`
+     Both carry `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=\"\"`.
+     Neither carries `-only-testing:` or `-skip-testing:`."
+  - "BOTH test bundles execute. NeuroRVUTests (13 suites / 52 Swift Testing @Test functions
+     at bd19a47) AND NeuroRVUUITests (3 XCTest cases). A workflow that runs only the unit
+     target is a partial check and is a contract violation, whether the omission is by
+     `-only-testing:`, by a test plan, or by a second job that is allowed to fail."
+
+  # -- the count is read from the result bundle, never from the log ---------
+  - "A step `id: count`, running `if: always()` AFTER the test step, asserts against
+     TestResults.xcresult and fails the job if any assertion fails:
+       UNIT   = `xcrun xcresulttool get test-results tests --path TestResults.xcresult --compact
+                 | jq '[.testNodes[] | recurse(.children[]?)
+                        | select(.nodeType==\"Unit test bundle\" and .name==\"NeuroRVUTests\")
+                        | recurse(.children[]?) | select(.nodeType==\"Test Case\")] | length'`
+                 must be >= 52
+       UI     = same expression with nodeType==\"UI test bundle\" and name==\"NeuroRVUUITests\"
+                 must be >= 3
+       SKIPPED= `xcrun xcresulttool get test-results summary --path TestResults.xcresult --compact
+                 | jq '.skippedTests'`   must be 0
+       FAILED = `... | jq '.failedTests'`   must be 0
+     Both bundle nodes must EXIST; a jq result of 0 because the node is absent is a
+     FAILURE, not a pass. The step writes UNIT, UI, SKIPPED, FAILED and
+     `.environmentDescription` to $GITHUB_STEP_SUMMARY.
+     RATIONALE (INV-CHECKS-ACTUALLY-RUN): the console string `Executed N tests` is emitted
+     only by XCTest and would report 3, not 52 — see verified_repo_state.test_framework.
+     Counting from the result bundle is the only way this check can see the unit target at all."
+
+  # -- evidence and PHI ------------------------------------------------------
+  - "`actions/upload-artifact` runs `if: failure()`, uploads ONLY
+     TestResults.xcresult (zipped) plus Package.resolved, with `retention-days: 7`.
+     No fixture image, no OCR text and no XCUITest screenshot is echoed to the job log.
+     D25a: fixtures/ holds sanitized-real worklist screenshots (docs/PLAN.md:64), not
+     synthetic ones. This node does not change that, but it does change where their
+     derivatives travel. The Builder records, as evidence, the attachment-type manifest of
+     one failing bundle so a reviewer can see exactly what class of data leaves the runner."
+
+  # -- what this node must not touch ----------------------------------------
+  - "No code signing, no provisioning profile, no keychain step. DEVELOPMENT_TEAM
+     (4D675UKY53), the CODE_SIGN_STYLE settings in project.yml, and the existing
+     altool → App Store Connect upload path are all untouched and unreferenced."
+  - "Zero repository secrets are consumed. All three UI tests bypass auth via
+     `-uitest-bypass-auth`, so nothing in this workflow needs a credential."
+  - "The uncommitted N20x OCR work is OUT of scope (D38). This lands against HEAD, where the
+     suite is green. When N20x's branch is pushed, this workflow going red on
+     OCRRulesTests / FixturePipelineTests is the workflow WORKING, not a regression in it."
+
+invariants:
+  - INV-CHECKS-ACTUALLY-RUN   # primary — the entire node exists to make a vacuous pass impossible
+  - INV-ALWAYS-SHIPPABLE      # the iOS third of the working-app gate
+  - INV-NO-PHI-IN-CLOUD       # .xcresult artifacts derived from fixtures/ leave the runner
+
+reuse_first: >
+  D38 — there is nothing to rebuild. No .github/ exists. The suite, the scheme, the
+  fixtures and the auth bypass all already work; this node only automates running them.
+  Do not add, rename, retag or "improve" a single test in either target.
+
+verification_environment: >
+  D20 verbatim: "XCUITest on a real simulator". A real GitHub Actions run on a real macOS
+  runner against a real iOS 27.0 simulator. No act, no dry-run, no `--validate-workflow`.
+  Every done_when below cites a real run id in MarceloDe/neurorvu-ios that a hostile fresh
+  agent can pull with `gh run view <id> --repo MarceloDe/neurorvu-ios`.
+
+verify:
+  runtime:
+    # ---- green run -------------------------------------------------------
+    - "gh run view $GREEN --repo MarceloDe/neurorvu-ios --json conclusion,headSha,workflowName
+       --jq '.conclusion'                                   # expect: success"
+    - "gh run view $GREEN --repo MarceloDe/neurorvu-ios --log | grep -c 'TEST SUCCEEDED'    # expect >= 1"
+    - "gh run download $GREEN --repo MarceloDe/neurorvu-ios --dir /tmp/n03d || true   # green run uploads nothing; the counts come from the step summary"
+    - "gh run view $GREEN --repo MarceloDe/neurorvu-ios --log
+       | grep -E 'UNIT=|UI=|SKIPPED=|FAILED='               # expect UNIT>=52 UI>=3 SKIPPED=0 FAILED=0"
+    - "gh api /repos/MarceloDe/neurorvu-ios/actions/runs/$GREEN
+       --jq '.jobs_url' | xargs gh api --jq '.jobs[0].steps[].name'
+       # expect the ordered step list to contain preflight BEFORE xcodegen BEFORE xcodebuild"
+    # ---- the count is re-derived locally from the bundle, not trusted -----
+    - "xcrun xcresulttool get test-results tests --path /tmp/n03d/TestResults.xcresult --compact
+       | jq '[.testNodes[]|recurse(.children[]?)
+              |select(.nodeType==\"Unit test bundle\" and .name==\"NeuroRVUTests\")
+              |recurse(.children[]?)|select(.nodeType==\"Test Case\")]|length'   # >= 52"
+    - "xcrun xcresulttool get test-results tests --path /tmp/n03d/TestResults.xcresult --compact
+       | jq '[.testNodes[]|recurse(.children[]?)
+              |select(.nodeType==\"UI test bundle\" and .name==\"NeuroRVUUITests\")
+              |recurse(.children[]?)|select(.nodeType==\"Test Case\")]|length'   # >= 3"
+    - "xcrun xcresulttool get test-results summary --path /tmp/n03d/TestResults.xcresult --compact
+       | jq '{result,totalTestCount,passedTests,failedTests,skippedTests,environmentDescription}'
+       # failedTests==0, skippedTests==0, environmentDescription names iPhone 17 Pro / iOS 27.0"
+
+    # ---- poison run 1: an inverted assertion must turn the job red -------
+    - "# Create it: branch poison/assertion off HEAD, invert exactly one #expect in
+       NeuroRVUTests/OCRRulesTests.swift:29 contrastSuffixDetection
+       (`== .withAndWithout` -> `== .without` on the 'MRI BRAIN PERFUSION W/WO CONTRAST'
+       line), open a PR, let it run, then close the PR without merging."
+    - "gh run view $POISON_ASSERT --repo MarceloDe/neurorvu-ios --json conclusion --jq '.conclusion'   # expect: failure"
+    - "gh run view $POISON_ASSERT --repo MarceloDe/neurorvu-ios --log | grep -c 'contrastSuffixDetection'  # expect >= 1"
+    - "gh run download $POISON_ASSERT --repo MarceloDe/neurorvu-ios --dir /tmp/n03d-pa
+       && xcrun xcresulttool get test-results summary --path /tmp/n03d-pa/TestResults.xcresult --compact
+       | jq '.failedTests'                                  # expect >= 1"
+    - "xcrun xcresulttool get test-results tests --path /tmp/n03d-pa/TestResults.xcresult --compact
+       | jq -r '[.testNodes[]|recurse(.children[]?)|select(.nodeType==\"Test Case\" and .result==\"Failed\")|.name]'
+       # expect the list to contain contrastSuffixDetection"
+
+    # ---- poison run 2: a bad destination must die at the preflight -------
+    - "# Create it: branch poison/destination off HEAD, change ONLY `SIM_OS: \"27.0\"` to
+       `SIM_OS: \"99.0\"` and SIM_RUNTIME_ID to ...SimRuntime.iOS-99-0 in the job env block.
+       Open a PR, let it run, close it without merging."
+    - "gh run view $POISON_DEST --repo MarceloDe/neurorvu-ios --json conclusion --jq '.conclusion'   # expect: failure"
+    - "gh api /repos/MarceloDe/neurorvu-ios/actions/runs/$POISON_DEST/jobs
+       --jq '.jobs[0].steps[] | select(.conclusion==\"failure\") | .name'
+       # expect EXACTLY 'preflight' — not 'build-for-testing', not 'test-without-building'"
+    - "gh run view $POISON_DEST --repo MarceloDe/neurorvu-ios --log
+       | grep -c 'com.apple.CoreSimulator.SimRuntime.iOS-27-0'
+       # expect >= 1: the AVAILABLE runtimes were printed, so the operator sees what to use"
+    - "gh run view $POISON_DEST --repo MarceloDe/neurorvu-ios --log | grep -c 'xcodebuild'
+       # expect 0 xcodebuild BUILD lines after preflight — the job stopped before compiling"
+
+    # ---- runner-availability probe (settles blocked_external empirically) --
+    - "gh run view $PROBE --repo MarceloDe/neurorvu-ios --log > goals/evidence/N03d-macos-runner/gh-hosted-runtime-probe.txt
+       # a preflight-only PR on the GitHub-hosted image, printing simctl list runtimes
+       devicetypes and xcodebuild -version. Its exit code is the ANSWER to 'does the hosted
+       image carry iOS 27.0 / iPhone 17 Pro', and is recorded either way."
+
+    # ---- the required-check wiring ---------------------------------------
+    - "gh api /repos/MarceloDe/neurorvu-ios/rulesets --jq '.[].name'   # a ruleset must exist"
+    - "gh api /repos/MarceloDe/neurorvu-ios/rulesets/$RULESET_ID
+       --jq '.rules[] | select(.type==\"required_status_checks\")
+             | .parameters.required_status_checks[].context'
+       # expect the ios job's check name.
+       # If the account plan refuses rulesets/protection on a private repo, this becomes a
+       # blocked_external with the verbatim API error recorded — never a silent skip."
+
+  static:
+    - "test -f .github/workflows/ios.yml"
+    - "! grep -n 'DEVELOPMENT_TEAM\\|ASC_\\|APP_STORE_CONNECT\\|altool\\|notarytool' .github/workflows/ios.yml"
+    - "! grep -n 'secrets\\.' .github/workflows/ios.yml"
+    - "! grep -n 'continue-on-error' .github/workflows/ios.yml"
+    - "! grep -n 'only-testing\\|skip-testing' .github/workflows/ios.yml"
+    - "! grep -n 'macos-latest\\|xcode-latest' .github/workflows/ios.yml"
+    - "! grep -nE '\\|\\| *true|; *true$|set \\+e' .github/workflows/ios.yml"
+    - "! grep -n 'security create-keychain\\|import .*\\.p12\\|provisioning' .github/workflows/ios.yml"
+    - "grep -qn 'CODE_SIGNING_ALLOWED=NO' .github/workflows/ios.yml"
+    - "grep -qn 'DEVELOPER_DIR' .github/workflows/ios.yml"
+    - "grep -qn 'onlyUsePackageVersionsFromResolvedFile' .github/workflows/ios.yml"
+    - "test $(grep -c 'iPhone 17 Pro' .github/workflows/ios.yml) -eq 1   # destination declared once"
+    - "git -C ~/projects/neurorvu-ios diff --stat origin/main -- NeuroRVU/ NeuroRVUTests/ NeuroRVUUITests/ project.yml
+       # expect EMPTY: this node changes no source, no test and no project config"
+
+  manual:
+    - "Choose the runner and RECORD the choice in runner-decision.md before the green run:
+       (a) GitHub-hosted macos-26 — bills at 10x on a PRIVATE personal repo, so confirm the
+       plan's included minutes and the expected monthly burn at ~15 min/run; or
+       (b) self-hosted on the operator's Mac via `gh runner` plus a launchd job — free, and
+       the only machine confirmed to hold the iOS 27.0 (24A5380i) seed runtime.
+       Silently letting the default pick the expensive one is not a decision."
+    - "Open one failing run's .xcresult in Xcode and confirm the attachment manifest contains
+       only sanitized fixture derivatives and XCUITest screenshots of synthetic app state —
+       no patient-identifying content (D25a). Record the manifest in xcresult-attachments.txt."
+
+  evidence:
+    - ios-green-run.json                  # gh run view --json conclusion,headSha,databaseId,workflowName,jobs
+    - ios-poison-assertion-run.json
+    - ios-poison-destination-run.json
+    - simctl-available-runtimes.txt       # from the green run's preflight step
+    - test-count.txt                      # UNIT=, UI=, SKIPPED=, FAILED= re-derived locally from the bundle
+    - xcresult-summary.json               # xcresulttool get test-results summary, green run
+    - xcresult-tests-bundles.json         # the two bundle nodes with their Test Case counts
+    - gh-hosted-runtime-probe.txt         # settles the iOS 27.0 availability question empirically
+    - runner-decision.md                  # hosted vs self-hosted, with the minutes/cost reasoning
+    - required-check.json                 # ruleset showing the ios job required on main, or the verbatim refusal
+    - package-resolved-green.json
+    - xcresult-attachments.txt            # D25a manifest
+    - ios.yml                             # the workflow as merged
+
+done_when:
+  - "1. `gh api /repos/MarceloDe/neurorvu-ios/contents/.github/workflows/ios.yml --jq .name`
+     returns ios.yml on main, and `git -C ~/projects/neurorvu-ios diff --stat origin/main --
+     NeuroRVU/ NeuroRVUTests/ NeuroRVUUITests/ project.yml` is empty — the node added CI and
+     changed nothing else."
+  - "2. A named GREEN run id exists whose conclusion is `success`, whose downloaded (or
+     step-summary-reported) TestResults.xcresult yields, by the jq expressions in
+     verify.runtime re-run by the Validator on their own machine:
+     Unit test bundle 'NeuroRVUTests' Test Case count >= 52,
+     UI test bundle 'NeuroRVUUITests' Test Case count >= 3,
+     summary.failedTests == 0, summary.skippedTests == 0.
+     Both bundle nodes present. A missing node is a fail, not a zero."
+  - "3. The green run's `summary.environmentDescription` names iPhone 17 Pro and iOS 27.0.
+     A run that quietly executed on another simulator does not satisfy this node even if
+     every test passed."
+  - "4. A named ASSERTION-POISON run id exists, conclusion `failure`, whose
+     xcresult lists `contrastSuffixDetection` among nodes with result==\"Failed\".
+     The check demonstrably fails when the code is wrong."
+  - "5. A named DESTINATION-POISON run id exists, conclusion `failure`, where
+     `gh api .../jobs --jq '.jobs[0].steps[]|select(.conclusion==\"failure\")|.name'`
+     returns exactly `preflight`, and the run log contains the string
+     `com.apple.CoreSimulator.SimRuntime.iOS-27-0`. The failure named the problem and
+     printed the fix; it did not surface as an opaque xcodebuild error."
+  - "6. Every static assertion above passes when re-run by the Validator against the merged
+     .github/workflows/ios.yml. In particular: no `secrets.`, no `continue-on-error`, no
+     `only-testing`, no `macos-latest`, no DEVELOPMENT_TEAM / ASC / altool string, and
+     `iPhone 17 Pro` appears exactly once."
+  - "7. goals/evidence/N03d-macos-runner/runner-decision.md states hosted-vs-self-hosted,
+     the per-run minute cost, and the empirical result from gh-hosted-runtime-probe.txt.
+     A missing or hedged file fails this node."
+  - "8. Either the ios job is a required status check on main (required-check.json shows the
+     ruleset), OR required-check.json contains the verbatim GitHub API refusal and
+     blocked_external below is updated with the exact operator command. There is no third
+     outcome in which the question is simply not addressed."
+
+blocked_external:
+  - id: BE-1-runner-billing
+    question: "GitHub-hosted macOS or self-hosted on the operator's Mac?"
+    facts: >
+      MarceloDe/neurorvu-ios is private and owned by a personal (User) account. GitHub-hosted
+      macOS runners bill at a 10x minute multiplier against included private-repo minutes.
+      A full xcodegen + build-for-testing + both-target run of this suite is on the order of
+      10-20 minutes wall clock, i.e. 100-200 billed minutes per PR run.
+    operator_command: "gh auth refresh -h github.com -s user && gh api /users/MarceloDe/settings/billing/actions"
+    resolution_required_before: "the green run"
+    default_is_forbidden: "Picking hosted by omission is not a decision. Record the choice in runner-decision.md."
+
+  - id: BE-2-ios27-simulator-availability
+    question: "Does the GitHub-hosted macOS image carry the iPhone 17 Pro / iOS 27.0 runtime?"
+    facts: >
+      The operator's Mac has iOS 27.0 build 24A5380i — a BETA SEED runtime, installed as an
+      additional download under Xcode 26.6. Hosted images are unlikely to carry a seed runtime.
+    settle_it_empirically: >
+      Open a throwaway PR with a preflight-only workflow on the hosted image that runs
+      `xcrun simctl list runtimes devicetypes && xcodebuild -version`, and keep the log as
+      gh-hosted-runtime-probe.txt. Do not reason about it; run it.
+    fallback_is_constrained: >
+      If unavailable, the fallback is the SELF-HOSTED Mac, NOT downgrading the destination.
+      The deployment target is iOS 18.0, but fixtures/*.golden.json were captured under the
+      pinned OS and OCRService runs on Vision, whose text-recognition output is OS-version
+      dependent. Re-baselining the golden files to make CI green would destroy the oracle
+      that D11 names as the only real safety net. A destination downgrade is a contract
+      change requiring a new node, not a Builder workaround.
+
+  - id: BE-3-required-check-on-a-private-personal-repo
+    question: "Can a required status check be attached to main?"
+    facts: >
+      `gh api /repos/MarceloDe/neurorvu-ios/branches/main/protection` currently returns 404
+      'Branch not protected'. Classic branch protection and rulesets on a PRIVATE repo may be
+      gated by the account plan.
+    operator_command: >
+      gh api -X POST /repos/MarceloDe/neurorvu-ios/rulesets -f name=require-ios-ci
+        -f target=branch -f enforcement=active
+        (conditions: ref_name include refs/heads/main; rules: required_status_checks with the ios job context)
+    if_refused: >
+      Record the verbatim API error in required-check.json and treat "CI runs and is visible
+      on every PR" as this node's delivered scope; the enforcement half moves to a follow-up
+      node with the plan upgrade as its dependency. Do NOT quietly drop done_when 8.
+
+rollback: >
+  `git rm .github/workflows/ios.yml` and delete the required_status_checks rule from the
+  ruleset (or the whole ruleset if this node created it), then `gh api -X DELETE
+  /repos/MarceloDe/neurorvu-ios/rulesets/$RULESET_ID`. If a self-hosted runner was
+  registered, deregister it with `gh runner remove` and `launchctl bootout` the job.
+  No effect on TestFlight, on the altool → App Store Connect pipeline, or on any of the
+  three deployables: the workflow builds and tests only, never signs, never uploads,
+  consumes no secret, and writes nothing outside the runner. INV-PROD-AUDITED is satisfied
+  by this stanza plus the run ids in the evidence directory; the node touches no production
+  system and no database, so no Neon snapshot is required.
+
+notes: >
+  Two traps the Builder will otherwise walk into.
+
+  (1) THE COUNT. Do not grep the log for `Executed N tests`. NeuroRVUTests is Swift Testing;
+  that XCTest line will report 3 (the UI target) and a `>= 52` comparison against it fails
+  forever, inviting someone to "fix" the check by relaxing it. Read the count from the
+  .xcresult with the jq expressions above. This is the single most likely way this node
+  ships as a vacuous pass.
+
+  (2) THE SEAM WITH N03e. The edge API in api/ shares this repo. Do not add a Node job to
+  ios.yml, do not add path filters that would let an api/-only PR skip the iOS job, and do
+  not name the workflow anything that implies repo-wide coverage. This node's job is the
+  iOS third of INV-ALWAYS-SHIPPABLE and nothing else (D24).
+
+  Ordering: run the DESTINATION-poison PR first. It is the cheapest run (it dies at
+  preflight, before any compile), it settles BE-2 as a side effect, and if the preflight is
+  wrong you learn it for a few seconds of runner time instead of fifteen minutes.
+
+  N09a's Validator harness will re-run every command in verify.runtime. Write them so they
+  work from a clean checkout with only `gh`, `jq` and Xcode present — no helper scripts in
+  the wruvs repo, because the Validator will not have this repo's PATH.

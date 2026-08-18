@@ -1,0 +1,579 @@
+id: N03b-eslint-invariant-rules
+title: Machine-check the static invariants in CI, and prove that no invariant check can pass vacuously
+goal_refs: [G10]
+decisions: [D19, D20, D24, D33, D38]
+depends_on: [N03a-github-actions-base]
+phase: A1
+estimate_hours: 8
+priority: 2
+severity: verification-integrity
+
+goal_done_when_refs:
+  - G10.7   # "npm run lint works, ESLint enforces INV-NO-SWALLOW, typecheck passes, CI runs tests"
+            # This node owns the "ESLint enforces INV-NO-SWALLOW" clause and the CI wiring of the
+            # static checks. The `typecheck` and `preview deploy` clauses belong to N03a.
+
+# ---------------------------------------------------------------------------
+rationale: >
+  INVARIANTS.yaml opens with its own rule: "Every invariant MUST have a machine check. An
+  invariant without an executable check is a slogan; the Contractor rejects it." Measured
+  against origin/main on 2026-08-18, a large fraction of its own `cmd:` entries are slogans,
+  and one of them is the check that was supposed to guard all the others.
+
+  Counted, not estimated. `grep -cE '^\s+cmd:' goals/INVARIANTS.yaml` returns 33 commands.
+  19 of them invoke `pnpm`. The repo has `package-lock.json`, no `pnpm-lock.yaml`, and
+  origin/main's package.json declares plain npm scripts — so those 19 name a package manager
+  that is not this repo's. Of the remaining commands, `node scripts/verify/*.mjs` resolves
+  for eight files that really exist on origin/main (fault-injection, log-correlation,
+  no-unredacted-path, phi-log-scan, prompt-cache-probe, rate-limit-probe, redaction-e2e,
+  spend-cap-probe) and dangles for at least ten that do not: phi-schema-scan,
+  clerk-callsite-scan, descriptor-separable, flag-hygiene, contract-compat, no-est-flag,
+  source-terms, rls-enabled, prod-audit-log, dead-code, parity-report.
+
+  Three of these are worse than merely missing, because they exit 0:
+
+  1. `node scripts/verify/checks-are-executable.mjs` — the check INV-CHECKS-ACTUALLY-RUN was
+     written to institute after the N00f Builder's finding — DOES NOT EXIST on origin/main.
+     `git ls-tree -r origin/main --name-only | grep checks-are-executable` returns nothing.
+     The invariant that guards every other invariant has no implementation. It is, right now,
+     the single most load-bearing slogan in the registry.
+
+  2. N00d's own static check is vacuous by construction:
+     `goals/nodes/N00d-error-envelope.yaml:68` reads `- "! grep -rn 'String(e)' app/ lib/"`.
+     Verified in a scratch directory: when `app/` and `lib/` do not exist, grep prints
+     "No such file or directory", exits 2, and the leading `!` inverts that to **exit 0**.
+     A negated grep over a path that has moved, been renamed, or not yet been created reports
+     PASS. N01 renames exactly those directories into a monorepo. This check is scheduled to
+     start lying.
+
+  3. `goals/nodes/N00f-redact-before-upload.yaml:46` reads
+     `- "pnpm --filter @rad/core test:redaction"`, with no `--fail-if-no-match`. That is the
+     precise failure mode N00f itself discovered and wrote INV-CHECKS-ACTUALLY-RUN about. The
+     invariant's four `pnpm --filter` entries were hardened; the discovering node's own verify
+     block was not. The registry is already inconsistent with its own remedy.
+
+  A fourth mode is not in the registry yet but will be the moment tests are added:
+  `node --test 'tests/*.test.mjs'` with a glob matching zero files prints `tests 0` and
+  **exits 0** (verified, Node v24.15.0). Every future test command is one empty directory
+  away from a silent pass.
+
+  A fifth mode is one the Contractor reproduced while sizing this node, and it is the reason
+  lint:money's contract below is written the way it is. A naive AST scanner built on `espree`
+  silently SKIPS the four TypeScript files on origin/main (`lib/http/errors.ts`,
+  `lib/observability/logger.ts`, `lib/redact/imageRedactor.ts`, `tests/error-envelope.test.ts`)
+  because espree cannot parse TS. A "money" check that skips unparseable files reports clean
+  over a codebase that D19 is about to convert entirely to TypeScript.
+
+  Against that, the second half of INV-NO-SWALLOW has no check at all. `.eslintrc.json` on
+  origin/main is six lines: `next/core-web-vitals` plus
+  `"no-empty": ["error", {"allowEmptyCatch": false}]`. That covers "no empty catch block".
+  It says nothing about "no HTTP 200 on a failed write", which is the half that actually
+  corrupts numbers. INV-NO-SWALLOW's own `detail` field already promises "plus a custom rule
+  for 200-on-error". The rule does not exist.
+
+  And INV-MONEY-ONE-PATH's check, `pnpm lint:money`, has no script behind it. Its
+  `detail` names `packages/core/pricing` and `ios/RadRVUKit/Pricing` as the allowed paths;
+  neither exists. Meanwhile components/NeuroRVU.jsx prices inline in **17 places**, counted by
+  AST against origin/main and enumerated in `notes` below. So this rule cannot be green on
+  main, and any version of it that is green on main is a version that is not checking
+  anything.
+
+  This node does not implement the eleven missing invariant scripts. It implements the
+  meta-check that tells the truth about which invariants are live, plus the two static rules
+  that are implementable against today's code. Its real product is the ability to trust every
+  other node's verification.
+
+# ---------------------------------------------------------------------------
+context_query: >
+  codegraph explore "withErrorEnvelope ctx.fail Response.json catch route error envelope;
+  ratePerWrvu wrvu ppcMri extraRates multiplication in NeuroRVU; eslint lint script package.json"
+
+context_query_caveat: >
+  RUN THE QUERY, THEN DISTRUST ITS BRANCH. The .codegraph index on this machine was built
+  against the `plan/goal-registry` worktree, which predates all of A0: it still contains
+  app/api/ocr-test/route.js (deleted by N00a) and has no withErrorEnvelope, no ctx.fail, no
+  lib/http/errors.ts. The authoritative baseline for this node is **origin/main**. Read it
+  directly and do not infer it from the graph:
+
+      git show origin/main:.eslintrc.json
+      git show origin/main:package.json
+      git show origin/main:app/api/store/route.js          # the ctx.fail(...) shape to NOT flag
+      git show origin/main:app/api/internal/usage/route.js # catch -> ctx.fail("...", 500)
+      git show origin/main:components/NeuroRVU.jsx         # the 17 money violations
+      git ls-tree -r origin/main --name-only | grep '^scripts/verify/'
+
+  This caveat is itself an instance of the invariant: a context source that silently serves a
+  stale branch is a vacuous read, exactly as a check that silently matches nothing is a
+  vacuous pass.
+
+# ---------------------------------------------------------------------------
+contracts:
+
+  # --- 1. The meta-check -----------------------------------------------------
+  - "scripts/verify/checks-are-executable.mjs is an executable Node ESM entrypoint with the CLI
+     signature:
+       node scripts/verify/checks-are-executable.mjs
+         [--registry <path=goals/INVARIANTS.yaml>]
+         [--nodes <glob=goals/nodes/*.yaml>]
+         [--json <path=goals/evidence/N03b-eslint-invariant-rules/checks-classification.json>]
+         [--self-test]"
+
+  - "Exit codes are a closed set and are part of the contract:
+       0 -> every collected command classified RUNNABLE or DECLARED-BLOCKED
+       1 -> at least one command classified VACUOUS
+       2 -> the classifier could not complete (registry unreadable, YAML unparseable, glob
+            matched zero node files, --json path unwritable)
+     Exit 2 is never 0. A classifier that cannot read its inputs must not report success."
+
+  - "It writes the --json report unconditionally on exit 0 and exit 1, with this shape:
+       { generated_at: ISO8601,
+         git_sha: string,
+         package_manager: 'npm' | 'pnpm',
+         package_manager_source: 'packageManager-field' | 'lockfile',
+         totals: { runnable: int, vacuous: int, declared_blocked: int },
+         entries: [ { source: string,          // 'goals/INVARIANTS.yaml#INV-NO-SWALLOW.checks[0].cmd'
+                      cmd: string,
+                      classification: 'RUNNABLE' | 'VACUOUS' | 'DECLARED-BLOCKED',
+                      reasons: string[],       // non-empty; the rule ids that fired, e.g. ['V2']
+                      blocked_by: string|null  // node id or operator action, only when DECLARED-BLOCKED
+                    } ] }
+     `entries` covers every `cmd:` in the registry AND every verify.runtime / verify.static
+     entry in every node YAML. totals.runnable + totals.vacuous + totals.declared_blocked ==
+     entries.length."
+
+  - "Exactly three classifications exist. DECLARED-BLOCKED means the command cannot run today
+     AND some node's `blocked_external` names it with a reason and an unblocker. VACUOUS means
+     the command cannot be trusted to mean what it claims — it covers BOTH the silent-exit-0
+     modes AND the permanently-red-but-undeclared mode, because a check nobody has admitted is
+     broken is indistinguishable from one nobody has noticed is broken."
+
+  - "The classification rules are a closed, versioned, individually-testable set. Each has an
+     id that appears in `reasons`:
+       V1  leading binary is a package manager other than the repo's resolved package manager
+       V2  `pnpm --filter <sel>` without `--fail-if-no-match`
+       V3  `npm run --workspace <sel>` where <sel> matches no committed `workspaces` glob
+       V4  `node <path>` where <path> does not exist on disk
+       V5  `npm run <script>` where <script> is absent from package.json `scripts`
+       V6  `node --test` with any operand containing a glob metacharacter (* ? [), because a
+           zero-match glob exits 0
+       V7  the cmd contains a swallow token: `|| true`, `; true`, `|| exit 0`,
+           `--no-error-on-unmatched-pattern`, `continue-on-error`, `--passWithNoTests`
+       V8  a negated path-consuming command (`! grep ...`, `! rg ...`) naming a path that does
+           not exist, because the tool's exit-2 inverts to 0
+       V9  the leading binary is not on PATH and is not installable by N03a's workflow
+     Any V-rule firing yields VACUOUS unless the command is declared under some node's
+     `blocked_external`, in which case it yields DECLARED-BLOCKED. No V-rule firing yields
+     RUNNABLE."
+
+  - "`--self-test` runs the classifier against
+     `scripts/verify/fixtures/checks-registry/` — a committed fixture tree holding one
+     deliberately-vacuous registry per V-rule (V1..V9) and one all-clean registry. It asserts
+     that each vacuous fixture yields exit 1 with that exact rule id in `reasons`, that the
+     clean fixture yields exit 0, and it exits non-zero if ANY fixture is misclassified. It
+     prints a per-rule PASS/FAIL table to stdout. A V-rule with no fixture is itself a
+     self-test failure."
+
+  - "goals/nodes/_TEMPLATE.yaml gains a documented optional key:
+       blocked_external:
+         - cmd: '<verbatim command string>'
+           reason: '<why it cannot run>'
+           unblocked_by: '<node id | operator action>'
+     This is a registry change, not a template edit for a Builder to copy around. Without it
+     nothing can ever be DECLARED-BLOCKED and the classifier's only options are RUNNABLE and
+     VACUOUS, which would force the registry to lie in the other direction."
+
+  # --- 2. Package-manager truth ---------------------------------------------
+  - "The repo's package manager is resolved deterministically: package.json `packageManager`
+     field if present, else the single committed lockfile, else exit 2. package.json gains
+     `\"packageManager\": \"npm@<the version N03a pins>\"` so the answer is declared, not sniffed."
+
+  - "Every `cmd:` in goals/INVARIANTS.yaml and every verify entry in goals/nodes/*.yaml is
+     rewritten to the resolved package manager. Concretely, given npm:
+       `pnpm <script>`                                   -> `npm run <script>`
+       `pnpm lint`                                       -> `npm run lint`
+       `pnpm --filter @rad/core --fail-if-no-match <s>`  -> `npm run --workspace @rad/core <s>`
+       `pnpm --filter @rad/core <s>` (N00f:46, unhardened) -> `npm run --workspace @rad/core <s>`
+     The fail-loud property of the hardened form is PRESERVED, not softened: verified on
+     npm 12.0.2 that `npm run --workspace @rad/core test:pricing` against a root package.json
+     whose workspaces glob matches no such package exits **1** with `npm error No workspaces
+     found`, and that `--if-present` does NOT suppress it. The @rad/core commands therefore
+     stay red until N01 creates the package, and are recorded as `blocked_external` with
+     `unblocked_by: N01-monorepo-typescript` rather than being softened, deleted, or wrapped."
+
+  # --- 3. local/no-200-on-error ---------------------------------------------
+  - "eslint-plugin-local/ is a repo-local ESLint 8 plugin package (index.js + package.json,
+     name `eslint-plugin-local`), wired as `\"eslint-plugin-local\": \"file:eslint-plugin-local\"`
+     in devDependencies so `npm ci` resolves it from the committed lockfile. `--rulesdir` is
+     NOT used: it namespaces rules as `rulesdir/<name>`, which would defeat the config-name
+     assertion in verify.static."
+
+  - "eslint-plugin-local exports rule `no-200-on-error` with
+     `meta.type: 'problem'`, `meta.schema: []`, `meta.messages` keyed
+     `twoXXInCatch` and `indeterminateStatus`. .eslintrc.json declares
+     `\"plugins\": [\"local\"]` and `\"rules\": { \"local/no-200-on-error\": \"error\" }`."
+
+  - "no-200-on-error reports on any ReturnStatement lexically inside a CatchClause body
+     (including inside arrow functions nested in that body) whose argument is a CallExpression
+     matching `Response.json`, `NextResponse.json`, `NextResponse.next`, `new Response`, or
+     `ctx.fail`, and whose effective status is 2xx, where effective status is:
+       - the numeric literal `status` property of the init object argument, if present;
+       - the second positional argument for `ctx.fail(code, status)`, if a numeric literal;
+       - 200 when no init object / status argument is supplied (`Response.json(x)` defaults
+         to 200);
+       - INDETERMINATE when the status expression is not a statically-resolvable number
+         literal -> reported as `indeterminateStatus`. Fail closed: a rule that passes because
+         it could not evaluate the status is a vacuous rule."
+
+  - "The rule is not suppressible. `eslint-disable` for `local/no-200-on-error` is itself a
+     violation, asserted statically (verify.static). An unavoidable exception is a DECISIONS.md
+     entry, not a comment."
+
+  - "tests/eslint-no-200-on-error.test.mjs drives ESLint 8's RuleTester under `node --test`
+     with named cases, at minimum:
+       valid   : catch -> `return ctx.fail('storage_unavailable', 503, {cause: err})`
+                 (the shape origin/main's app/api/store/route.js:31 actually uses)
+       valid   : `return Response.json(data)` on the success path outside any catch
+                 (origin/main app/api/claude/route.js:150 — must not be flagged)
+       invalid : catch -> `return Response.json({ ok: true })`               -> twoXXInCatch
+       invalid : catch -> `return Response.json({e}, { status: 200 })`       -> twoXXInCatch
+       invalid : catch -> `return NextResponse.json({}, { status: 204 })`    -> twoXXInCatch
+       invalid : catch -> `return ctx.fail('x', 200)`                        -> twoXXInCatch
+       invalid : catch -> `return Response.json({}, { status: someVar })`    -> indeterminateStatus
+       invalid : catch -> `.catch(() => Response.json({ ok: true }))` returned from the catch
+     RuleTester is a pure-function unit harness, permitted under D20; it is NOT the evidence
+     any done_when rests on — poison run 1 is."
+
+  - "Explicitly out of scope, named so the boundary is deliberate rather than an oversight: a
+     catch that neither throws nor returns and falls through to the surrounding success path.
+     That shape is caught at runtime by `npm run test:route-contracts` (INV-NO-SWALLOW's
+     runtime check, already live on origin/main), not by this rule."
+
+  # --- 4. lint:money and the ratchet ----------------------------------------
+  - "package.json gains `\"lint:money\": \"node scripts/verify/lint-money.mjs\"`.
+     CLI: `node scripts/verify/lint-money.mjs [--allowlist .money-allowlist] [--json <path>]
+     [--update-lines]`. Exit 0 = no unallowlisted violation and no stale allowlist entry;
+     exit 1 = at least one; exit 2 = the scanner could not complete."
+
+  - "lint-money.mjs flags a BinaryExpression or AssignmentExpression with operator `*`, `/`,
+     `*=` or `/=` where any Identifier or MemberExpression property in either operand's
+     subtree, split on camelCase and non-alphanumeric boundaries and lowercased, yields a
+     token in the set { wrvu, rvu, gpci, conversion, rate, rates, cf }. Whole-token matching,
+     not substring: `ratePerWrvu` and `extraRates.ppcMri` match; `cFTE` (clinical FTE) and
+     `monthlyBenchmark` do not. The substring form of INV-MONEY-ONE-PATH's stated regex
+     `/wrvu|rvu|gpci|conversion|rate|cf/i` produces three false positives on
+     `settings.cFTE` in origin/main; INVARIANTS.yaml's `detail` is updated to the
+     whole-token form so the registry and the implementation agree."
+
+  - "Allowed paths (never flagged): `packages/core/pricing/**`, `ios/RadRVUKit/Pricing/**`,
+     `scripts/verify/lint-money.mjs` itself, and `**/*.test.*`. Scanned paths: every committed
+     .js/.jsx/.mjs/.ts/.tsx outside node_modules/.next/public/out."
+
+  - "lint-money.mjs EXITS 2 ON ANY FILE IT CANNOT PARSE. It never skips. .js/.jsx/.mjs parse
+     with `espree` (ecmaFeatures.jsx true); .ts/.tsx parse with `@typescript-eslint/parser`.
+     Both are added as DIRECT devDependencies rather than relied on transitively through
+     eslint-config-next. Rationale, and this is the whole point of the node: a scanner built
+     naively on espree silently skips origin/main's four .ts files, and D19 converts the entire
+     codebase to TypeScript in the very next node."
+
+  - "`.money-allowlist` is a committed text file. Comment lines start with `#` and carry the
+     dated provenance and the owning removal nodes. Each entry line is
+     `<path>:<sha12>:<ordinal>  # L<line> <operator> <identifiers>`
+     where sha12 is the first 12 hex chars of sha256 over the violating expression's source
+     text with all whitespace collapsed, ordinal disambiguates identical expressions within one
+     file, and the trailing comment (including the line number) is INFORMATIONAL and refreshed
+     by `--update-lines`. Identity is (path, sha12, ordinal). Line numbers are deliberately not
+     load-bearing: they churn on every unrelated edit to a 1833-line file, and an allowlist that
+     goes red on unrelated edits is an allowlist that gets deleted."
+
+  - "lint-money.mjs fails on: any violation whose (path, sha12, ordinal) is absent from the
+     allowlist; and any allowlist entry that matches nothing in the tree (a stale entry is a
+     ratchet that has quietly loosened)."
+
+  - "scripts/verify/money-allowlist-monotonic.mjs, CLI
+     `node scripts/verify/money-allowlist-monotonic.mjs --base origin/main`, exits 1 if the
+     working tree's `.money-allowlist` contains MORE entry lines than the same file at --base,
+     or contains any (path, sha12, ordinal) not present at --base. Exit 2 if --base is
+     unresolvable — never 0. On a base ref where the file does not yet exist, the baseline is 0
+     entries and any entry fails, which is the correct answer for the commit that introduces it
+     only if that commit is the base; the node's own landing commit is compared against the
+     merge-base with origin/main, not against origin/main's tip."
+
+  # --- 5. CI wiring ----------------------------------------------------------
+  - "All four commands run as named steps inside N03a's `checks` job, each as its own step so a
+     failure names itself in the GitHub UI: `checks-are-executable`, `checks-are-executable
+     --self-test`, `lint`, `lint:money`, `money-allowlist-monotonic`. No step carries
+     `continue-on-error`. The job uploads goals/evidence/N03b-eslint-invariant-rules/ as a
+     workflow artifact so the Validator reads the report rather than the log."
+
+invariants: [INV-CHECKS-ACTUALLY-RUN, INV-NO-SWALLOW, INV-MONEY-ONE-PATH, INV-ALWAYS-SHIPPABLE]
+
+blocked_external:
+  - cmd: "npm run --workspace @rad/core test:pricing"
+    reason: "@rad/core does not exist until the monorepo lands. Exits 1 (verified, npm 12.0.2)."
+    unblocked_by: "N01-monorepo-typescript"
+  - cmd: "npm run --workspace @rad/core test:prompt-builder"
+    reason: "Same; @rad/core absent."
+    unblocked_by: "N01-monorepo-typescript"
+  - cmd: "npm run --workspace @rad/core test:unpriced"
+    reason: "Same; @rad/core absent."
+    unblocked_by: "N01-monorepo-typescript"
+  - cmd: "npm run --workspace @rad/core test:fixtures"
+    reason: "Same; @rad/core absent."
+    unblocked_by: "N01-monorepo-typescript"
+  - cmd: "npm run --workspace @rad/core test:redaction"
+    reason: "Same; @rad/core absent. Was N00f:46's unhardened `pnpm --filter` form."
+    unblocked_by: "N01-monorepo-typescript"
+  - cmd: "xcodebuild test -scheme RadRVUKit -only-testing:FixtureParityTests"
+    reason: "No macOS runner in CI until N03d; RadRVUKit does not exist."
+    unblocked_by: "N03d-macos-runner"
+  - cmd: "node scripts/verify/phi-schema-scan.mjs --against $DATABASE_URL"
+    reason: >
+      Script unwritten AND no non-production DATABASE_URL is obtainable — `vercel env pull`
+      returns the literal [SENSITIVE] for integration secrets (DECISIONS.md, 2026-08-18).
+    unblocked_by: "operator provides a synthetic-only Neon project connection string (N03c-neon-branch-runner)"
+
+# ---------------------------------------------------------------------------
+verify:
+  runtime:
+    - "npm ci
+       # proves eslint-plugin-local resolves from the committed lockfile, not from a local link"
+
+    - "npm run lint
+       # ESLint 8.57.1 over app components lib scripts tests middleware.js with
+       # --max-warnings=0; local/no-200-on-error must load. An unresolvable plugin or an
+       # unknown rule name is an ESLint startup error, i.e. fail-loud, not a silent skip."
+
+    - "node scripts/verify/checks-are-executable.mjs
+         --json goals/evidence/N03b-eslint-invariant-rules/checks-classification.json
+       # exit 0; totals.vacuous == 0; entries covers all 33 registry cmds plus every node
+       # verify entry"
+
+    - "node scripts/verify/checks-are-executable.mjs --self-test
+         | tee goals/evidence/N03b-eslint-invariant-rules/checks-selftest.txt
+       # nine per-rule vacuous fixtures (V1..V9) each force exit 1 with the right rule id;
+       # the clean fixture exits 0. This is the proof the classifier CAN fail."
+
+    - "npm run lint:money
+         -- --json goals/evidence/N03b-eslint-invariant-rules/money-report.json
+       # exit 0 against the allowlist; the report enumerates all 17 baseline violations"
+
+    - "node scripts/verify/money-allowlist-monotonic.mjs --base origin/main
+       # exit 0; the allowlist has not grown against the merge-base"
+
+    - "node --test tests/eslint-no-200-on-error.test.mjs
+       # RuleTester unit cases, named file, not a glob (a glob matching zero files exits 0)"
+
+    - "POISON RUN 1 (poison-swallow-run.json) — no-200-on-error.
+       On a throwaway branch, append to app/api/store/route.js's POST catch:
+         } catch (err) { return Response.json({ ok: true }); }
+       Then: `npm run lint`. MUST exit non-zero with messageId twoXXInCatch at that
+       file:line. Record the branch sha, the patch, the full ESLint output and the exit code.
+       Then revert and re-run to green. A poison run with no recorded red output did not happen."
+
+    - "POISON RUN 2 (poison-money-run.json) — lint:money.
+       On a throwaway branch, add to components/Kpi.jsx (or any component outside the allowed
+       paths and outside the allowlist):
+         const pay = wrvu * rate;
+       Then: `npm run lint:money`. MUST exit 1 naming that file and expression. Separately
+       assert the ratchet: add that violation's entry to .money-allowlist and run
+       `node scripts/verify/money-allowlist-monotonic.mjs --base origin/main` — MUST exit 1,
+       proving a Builder cannot buy silence by widening the allowlist. Record both."
+
+    - "POISON RUN 3 (poison-vacuous-run.json) — checks-are-executable.
+       On a throwaway branch, append to goals/INVARIANTS.yaml a check whose command string is
+       `pnpm --filter @rad/core test:nothing`. Then run
+       `node scripts/verify/checks-are-executable.mjs`. MUST exit 1 with that entry classified
+       VACUOUS and `reasons` containing V1 (wrong package manager) and V2 (no
+       --fail-if-no-match). Repeat with the command string `node --test 'tests/*.test.mjs'`
+       and assert V6. Record both, with the emitted JSON entries."
+
+    - "POISON RUN 4 (poison-selftest-run.json) — the self-test's own honesty.
+       Neuter one V-rule in the classifier (make V8 always return RUNNABLE) and run
+       `--self-test`. MUST exit non-zero and name V8 in its failure table. This is the check
+       on the check on the checks; without it, `--self-test` is one `return true` away from
+       being the very thing this node exists to prevent."
+
+  static:
+    - "grep -q 'local/no-200-on-error' .eslintrc.json"
+    - "grep -q '\"plugins\"' .eslintrc.json && grep -q '\"local\"' .eslintrc.json"
+    - "test -f .money-allowlist"
+    - "test -f scripts/verify/checks-are-executable.mjs"
+    - "test -f scripts/verify/money-allowlist-monotonic.mjs"
+    - "grep -q '\"packageManager\"' package.json"
+    - "grep -q 'blocked_external' goals/nodes/_TEMPLATE.yaml"
+    - "! grep -rn 'no-200-on-error' --include='*.js' --include='*.jsx' --include='*.ts' --include='*.tsx' app lib components
+       # zero eslint-disable escapes; note these three paths EXIST on this branch, so the
+       # negated-grep vacuity of V8 does not apply — the classifier must confirm that, not the
+       # Builder's word"
+    - "! grep -rn 'continue-on-error' .github/workflows/"
+    - "! grep -nE '^[[:space:]]*cmd:.*pnpm' goals/INVARIANTS.yaml
+       # zero COMMAND lines naming a package manager this repo does not use. Deliberately
+       # scoped to `cmd:` lines and to this one file: INV-CHECKS-ACTUALLY-RUN's `discovered:`
+       # prose cites `pnpm --filter` and `pnpm 10.33.1` as the historical finding, and that
+       # prose must survive. A grep broad enough to catch the prose is a grep that forces the
+       # deletion of the evidence — which is how a registry loses its memory."
+    - "python3 -c \"import json,sys;r=json.load(open('goals/evidence/N03b-eslint-invariant-rules/checks-classification.json'));
+       bad=[e for e in r['entries'] if 'V1' in e['reasons']];sys.exit(1 if bad else 0)\"
+       # the structural form of the same assertion, over node YAMLs too: no collected command
+       # anywhere in the registry trips the wrong-package-manager rule. Structural rather than
+       # textual because node YAMLs contain prose (this file's own poison-run spec quotes the
+       # forbidden string on purpose)."
+
+  manual: []
+
+  evidence:
+    - checks-classification.json      # full classification of all 33 registry cmds + node verify entries
+    - checks-selftest.txt             # per-rule V1..V9 PASS/FAIL table
+    - money-report.json               # all 17 baseline violations, with sha12 identities
+    - money-allowlist.txt             # verbatim copy of .money-allowlist as landed, plus `wc -l`
+    - poison-swallow-run.json         # branch sha, patch, ESLint output, exit code, revert-to-green
+    - poison-money-run.json           # both halves: unallowlisted violation red, allowlist growth red
+    - poison-vacuous-run.json         # V1+V2 entry and V6 entry, with emitted JSON
+    - poison-selftest-run.json        # neutered V8 detected by --self-test
+    - lint-report.txt                 # npm run lint, exit 0, on the node's branch
+    - npm-ci.txt                      # proves the file: plugin resolves from the lockfile
+
+# ---------------------------------------------------------------------------
+done_when:
+
+  - "1. `node scripts/verify/checks-are-executable.mjs` exits 0 on the node's branch, and
+     checks-classification.json contains an entry for EVERY `cmd:` in goals/INVARIANTS.yaml —
+     the Validator re-derives the denominator itself with
+     `grep -cE '^[[:space:]]+cmd:' goals/INVARIANTS.yaml` (33 on origin/main at 2026-08-18;
+     POSIX class, not \\s, so it is portable between the BSD grep on the operator's Mac and the
+     GNU grep in CI) and asserts it equals the number of
+     registry-sourced entries in the report — with `totals.vacuous == 0` and every non-RUNNABLE
+     entry carrying a non-null `blocked_by`. The Validator reads the artifact. A summary line
+     saying 'all checks pass' is not evidence and is not accepted."
+
+  - "2. `--self-test` exits 0 on the shipped classifier and exits non-zero on the V8-neutered
+     classifier (poison run 4). Both transcripts are in evidence. This is the entry that
+     matters most: a classifier incapable of returning non-zero is precisely the failure
+     INV-CHECKS-ACTUALLY-RUN was written about, and 'the self-test passed' proves nothing
+     unless the self-test has been shown to fail on demand."
+
+  - "3. Four named poison runs, each recorded with a branch sha, the exact patch applied, the
+     exact command, the non-zero exit code, and the full stderr/stdout:
+       poison-swallow-run  red at `npm run lint`
+       poison-money-run    red at `npm run lint:money` AND red at money-allowlist-monotonic
+       poison-vacuous-run  red at checks-are-executable, reasons include V1, V2 and V6
+       poison-selftest-run red at `--self-test`
+     The Validator re-applies at least one patch from the evidence and re-observes the red."
+
+  - "4. `.money-allowlist` contains exactly 17 entry lines on landing, all with path
+     `components/NeuroRVU.jsx`, matching the AST baseline recorded in `notes`. The count is
+     written into money-allowlist.txt. `node scripts/verify/money-allowlist-monotonic.mjs
+     --base origin/main` exits 0 on the branch and exits 1 when a line is added — demonstrated,
+     not asserted."
+
+  - "5. No collected command names a package manager this repo does not use, verified two
+     independent ways so neither can be gamed alone: textually,
+     `! grep -nE '^[[:space:]]*cmd:.*pnpm' goals/INVARIANTS.yaml` exits 0; and structurally,
+     zero entries in checks-classification.json carry 'V1' in `reasons`. In particular
+     goals/nodes/N00f-redact-before-upload.yaml:46 no longer reads
+     `pnpm --filter @rad/core test:redaction`, and the five @rad/core commands appear under
+     `blocked_external` with `unblocked_by: N01-monorepo-typescript`. The `discovered:` prose
+     in INV-CHECKS-ACTUALLY-RUN still cites the original pnpm finding verbatim — if that prose
+     has been deleted to make a grep pass, the node has failed."
+
+  - "6. Fail-loud is preserved rather than traded away: running
+     `npm run --workspace @rad/core test:pricing` on the node's branch exits non-zero, and its
+     transcript is in checks-selftest.txt. If that command has become green, or silent, the
+     node has failed even if every other criterion passes."
+
+  - "7. `npm ci` from a clean clone followed by `npm run lint` exits 0, proving
+     eslint-plugin-local resolves from the committed package-lock.json. A rule that only loads
+     on the Builder's machine is not enforced."
+
+  - "8. All three deployables still build (INV-ALWAYS-SHIPPABLE). This node touches only
+     lint/CI/registry files, so the check is `npm run build` green plus no diff under app/,
+     components/, lib/ other than any change poison runs reverted."
+
+# ---------------------------------------------------------------------------
+rollback: >
+  Revert the commit. Repo-only: no deploy, no migration, no data, no production action, so
+  INV-PROD-AUDITED needs no log entry beyond the merge itself. The one irreversible-feeling
+  piece is the registry rewrite (pnpm -> npm across INVARIANTS.yaml and node YAMLs); it is a
+  text change in git and reverts with the rest.
+
+  If `.money-allowlist` proves unmaintainable — churning red on unrelated edits despite the
+  sha12 identity scheme — the fallback is to demote `lint:money` to a report-only step that
+  still uploads money-report.json but does not gate the job. That demotion is a recorded
+  entry in DECISIONS.md naming the date, the reason and the node that restores the gate. It is
+  NEVER a quiet `continue-on-error:` in the workflow, and never a deleted step. A gate that
+  disappears without a decision is how a registry becomes slogans again.
+
+# ---------------------------------------------------------------------------
+split:
+  recommended: true
+  reason: >
+    Two contracts, no shared code (D24). They share only the CI job they land in.
+  order: "N03b2 FIRST, then N03b1."
+  why_that_order: >
+    Every other node's verification — including the Validator's re-derivation of the whole of
+    A1, and including N03b1's own poison runs — is only as trustworthy as the classifier. Build
+    the instrument before the measurements.
+  parts:
+    - id: N03b2-checks-are-executable
+      hours: 4
+      owns: >
+        scripts/verify/checks-are-executable.mjs, its V1..V9 fixture tree, --self-test,
+        the packageManager field, the pnpm->npm registry rewrite, the blocked_external key in
+        _TEMPLATE.yaml, poison runs 3 and 4.
+      verify_subset: [checks-are-executable, --self-test, poison-vacuous-run, poison-selftest-run]
+    - id: N03b1-static-invariant-rules
+      hours: 4
+      owns: >
+        eslint-plugin-local, local/no-200-on-error, its RuleTester suite,
+        scripts/verify/lint-money.mjs, .money-allowlist,
+        scripts/verify/money-allowlist-monotonic.mjs, poison runs 1 and 2.
+      verify_subset: [lint, lint:money, money-allowlist-monotonic, poison-swallow-run, poison-money-run]
+
+# ---------------------------------------------------------------------------
+notes: >
+  MONEY BASELINE, measured not guessed. AST scan of every committed .js/.jsx/.mjs/.ts/.tsx on
+  origin/main at 2026-08-18, using the whole-token identifier rule contracted above.
+  Seventeen violations, all in components/NeuroRVU.jsx, at lines:
+    368, 379 (x2: the `*` and the `/` of `Math.round(b.wrvu * 10) / 10`),
+    618 (x2), 626, 665, 1212, 1213, 1214, 1388, 1658, 1670 (x2), 1732, 1740, 1782.
+  1212-1214 are the extra-duty PPC computation (`exCounts.mri * Number(extraRates.ppcMri)`),
+  caught through the `extraRates` object name — these are the same lines G10.10 says must move
+  server-side, so N05/N14 will remove them for an independent reason. No violation exists
+  outside that one file: lib/, app/ and scripts/ are clean, and the only hits in the four .ts
+  files are inside comments. The line numbers WILL drift; the sha12 identity is what the
+  allowlist keys on, and `--update-lines` refreshes the informational comment.
+
+  ALLOWLIST OWNERSHIP. Removal is not this node's job and must not be attempted here (D38:
+  improve, never rebuild; D33: leave the app shippable). The owners are
+  N06-decompose-dashboard (which splits the 1833-line component, at which point the entries
+  move file with their sha12 intact) and N14-pricing-engine (which creates
+  packages/core/pricing and deletes them). Every allowlist line carries `# owner: N06` or
+  `# owner: N14` in its comment so the ratchet has a visible end state.
+
+  WHY npm AND NOT pnpm. The alternative — adopt pnpm to match the registry — was considered
+  and rejected here, though not forever. Against it: package-lock.json is committed and is
+  what Vercel builds both projects from; swapping the lockfile of a repo with three live
+  deployables is an INV-ALWAYS-SHIPPABLE risk taken for a cosmetic gain; and the fail-loud
+  property that motivated `--fail-if-no-match` is empirically preserved by
+  `npm run --workspace` (verified: exit 1, npm 12.0.2). For it: D19's monorepo may prefer pnpm
+  workspaces. That is N01's decision to make, on N01's evidence. What this node forbids is the
+  status quo — a registry naming a package manager the repo does not use, which is a
+  vacuous-check generator by construction. If N01 chooses pnpm, it flips `packageManager` and
+  re-runs checks-are-executable, which will then classify every `npm run` cmd as V1 and force
+  the same rewrite in the other direction. That is the mechanism working, not a regression.
+
+  THE TYPECHECK CLAUSE OF G10.7 IS N03a's, NOT THIS NODE'S. `npm run typecheck` does not exist
+  on origin/main and no invariant references it, so checks-are-executable will not see it and
+  will not classify it. If N03a adds a `typecheck` step, this node's classifier covers it the
+  moment any invariant or node YAML names it. Recorded so the seam is deliberate and nobody
+  later reads its absence as an oversight.
+
+  WHAT THIS NODE DOES NOT DO. It does not write the eleven missing scripts/verify/*.mjs
+  implementations (phi-schema-scan, clerk-callsite-scan, descriptor-separable, flag-hygiene,
+  contract-compat, no-est-flag, source-terms, rls-enabled, prod-audit-log, dead-code,
+  parity-report). After this node they are all classified VACUOUS-or-DECLARED-BLOCKED and the
+  registry says so out loud in a committed artifact. Making the registry honest about being
+  incomplete is the deliverable; making it complete is eleven other nodes. The Builder must
+  therefore expect that landing this node REQUIRES adding `blocked_external` stanzas to
+  several existing node YAMLs, or the classifier will correctly exit 1 on its own branch —
+  and that work is in scope, because a classifier that cannot go green is not landable.
