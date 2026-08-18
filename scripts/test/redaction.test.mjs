@@ -38,6 +38,15 @@ async function main() {
     await page.goto(`${harness.origin}/`, { waitUntil: "networkidle" });
     await page.waitForFunction(() => !!window.__runRedactionTests, null, { timeout: 20000 });
     const results = await page.evaluate(() => window.__runRedactionTests());
+    // INV-CHECKS-ACTUALLY-RUN. Without this floor, a harness that returns [] prints
+    // "0/0 passed" and exits 0 — a green build for a suite that ran nothing, guarding
+    // the control that stops patient images leaving the device. The number is a FLOOR,
+    // not an exact count: adding cases must never require editing this line.
+    const MIN_CASES = 25;
+    if (!Array.isArray(results) || results.length < MIN_CASES) {
+      console.error(`test:redaction FAILED — collected ${Array.isArray(results) ? results.length : "non-array"} case(s), expected at least ${MIN_CASES}. A suite that runs nothing must not report success.`);
+      process.exit(1);
+    }
     for (const result of results) {
       if (!result.ok) failed += 1;
       lines.push(`${result.ok ? "ok  " : "FAIL"} ${result.name}${result.ok ? "" : ` — ${result.error}`}`);
