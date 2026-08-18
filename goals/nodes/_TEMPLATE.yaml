@@ -1,0 +1,43 @@
+# Node template — copy this, do not edit it.
+#
+# A node is ONE contract (D24): one function, one route, one table, one screen.
+# If you cannot state the contract in a single sentence, it is two nodes.
+#
+# The Contractor writes this file BEFORE any code exists. A node with no runnable
+# `verify.runtime` block is rejected — "it compiles" is not verification.
+
+id: NXX-short-kebab-name
+title: One line, imperative
+goal_refs: []          # G1..G12 — at least one, or the node has no reason to exist
+decisions: []          # D1..D27 that shaped this node
+depends_on: []         # node ids that must be PASS before this may start
+phase: A               # A0 | A | B | C | D | E | F
+estimate_hours: 0
+
+# The ONLY context the Builder loads. Never the repo.
+context_query: >
+  codegraph explore "<symbol names or a natural-language question>"
+
+# What must exist when this node is done, stated as an interface, not a description.
+contracts:
+  - "path/to/file.ts exports someFunction(input: In): Promise<Out>"
+  - "it throws SomeError when <precondition> is violated"
+
+invariants: []         # INV-* especially at risk here. The full suite still runs.
+
+verify:
+  runtime:             # real infrastructure only — no mocks outside pure-function units
+    - command one
+    - command two
+  static: []           # grep/AST assertions
+  manual: []           # named procedures a human performs, if genuinely unavoidable
+  evidence: []         # artifact filenames written to goals/evidence/<node-id>/
+
+done_when:             # each entry independently re-derivable by the Validator
+  - statement that a fresh agent can check without trusting the Builder
+
+rollback: >            # required by INV-PROD-AUDITED for anything touching production
+  How to undo this if it lands badly.
+
+notes: >
+  Anything the Builder needs that is not a contract.

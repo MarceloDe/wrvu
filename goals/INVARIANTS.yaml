@@ -1,0 +1,337 @@
+# RadRVU — Invariants
+#
+# Rules no node may violate, regardless of what that node is trying to achieve.
+# Every invariant MUST have a machine check. An invariant without an executable check
+# is a slogan; the Contractor rejects it.
+#
+# The Validator runs the full invariant suite on every node delivery, not just the
+# invariants the node YAML happens to list. Listing them in a node means "this node is
+# especially likely to break these" — it does not narrow what is checked.
+
+version: 2
+derived_from: goals/DECISIONS.md
+updated: 2026-08-17
+
+invariants:
+
+  - id: INV-NO-PHI-IN-CLOUD
+    rule: >
+      No patient identifier appears in any cloud table, log line, notification payload,
+      analytics event, error message or LLM prompt. Ever.
+    goals: [G3, G8]
+    severity: blocking
+    checks:
+      - kind: schema-introspection
+        cmd: node scripts/verify/phi-schema-scan.mjs --against $DATABASE_URL
+        detail: Introspects the live schema and fails on any column matching the PHI name/pattern list.
+      - kind: log-scan
+        cmd: node scripts/verify/phi-log-scan.mjs --stream captured-session.log
+      - kind: unit
+        cmd: pnpm --filter @rad/core test:prompt-builder
+        detail: Asserts every prompt builder emits patient_ref placeholders, never names.
+    fixture_policy: >
+      Verified with synthetic PHI fixtures only (D25a). Real patient data never enters a
+      test, a CI run, or an agent context.
+
+  - id: INV-CLERK-PHI-FREE
+    rule: No PHI in Clerk metadata, Clerk-bound payloads, or any auth-scoped log line.
+    goals: [G9]
+    severity: blocking
+    checks:
+      - kind: static
+        cmd: node scripts/verify/clerk-callsite-scan.mjs
+        detail: AST scan of every Clerk SDK call site for PHI-shaped fields.
+
+  - id: INV-MONEY-ONE-PATH
+    rule: >
+      Every dollar and every RVU figure in the product originates from resolveValue().
+      No component, route, view or worker performs its own pricing arithmetic.
+    goals: [G2]
+    severity: blocking
+    checks:
+      - kind: ast
+        cmd: pnpm lint:money
+        detail: >
+          Fails on multiplication or division involving an identifier matching
+          /wrvu|rvu|gpci|conversion|rate|cf/i outside packages/core/pricing
+          and ios/RadRVUKit/Pricing.
+      - kind: runtime
+        cmd: pnpm --filter @rad/core test:pricing
+
+  - id: INV-DESCRIPTOR-SEPARABLE
+    rule: >
+      All procedure descriptor text is reached through the descriptor_source abstraction and
+      lives in its own table, never inlined into code_rvus or a client bundle's pricing rows.
+      Turning descriptors off must degrade the UI to in-house labels, never break it.
+    goals: [G2]
+    decisions: [D14]
+    severity: blocking
+    supersedes: INV-NO-LICENSED-TEXT
+    rationale: >
+      The MVP already ships CMS descriptor text (rvu26a.jsonl `procedure_name` /
+      `cms_description`) for all 828 codes, and the Codes view renders it. D14-v3 keeps it
+      because the founder rule puts the working MVP ahead of a prior decision. Separability
+      is what preserves the option to drop it if the product ever goes commercial.
+    checks:
+      - kind: static
+        cmd: node scripts/verify/descriptor-separable.mjs
+        detail: >
+          Fails if any call site reads descriptor text outside descriptor_source, or if a
+          pricing row carries an inlined descriptor. Also runs the UI with descriptors
+          disabled and asserts it still renders using in-house labels.
+
+  - id: INV-ALWAYS-SHIPPABLE
+    rule: >
+      Every node leaves ALL THREE deployables working: the PWA (project-m6jfw), the edge API
+      (neurorvu-edge-api) and the iOS app. A node whose functionality cannot stand alone is
+      merged with its dependants into ONE node that lands as ONE pull request.
+    goals: [G10]
+    decisions: [D33, D33a, D38]
+    severity: blocking
+    rationale: >
+      This is a brownfield plan over a production MVP with real users on TestFlight. A node
+      that leaves the app broken is not progress, it is an outage with a commit message.
+    checks:
+      - kind: runtime
+        cmd: pnpm verify:shippable
+        detail: >
+          Runs the PWA smoke suite against a preview deploy, the edge API contract tests, and
+          the iOS build + XCUITest launch/persistence suites. All three must be green on the
+          node's own branch BEFORE the Validator considers any done_when.
+      - kind: static
+        cmd: node scripts/verify/flag-hygiene.mjs
+        detail: >
+          Any incomplete work must sit behind a feature flag that is OFF in production
+          (D33a), with a named owner and a removal node. An unflagged partial implementation
+          is a violation.
+
+  - id: INV-ADDITIVE-CONTRACTS
+    rule: >
+      API and sync-contract changes are additive-only. No field is removed or retyped in a
+      single release. A replacement field is added alongside the old one, both are served,
+      and the old one is dropped only after a release in which no client reads it. Server
+      and both clients ship in the SAME pull request.
+    goals: [G10, G9]
+    decisions: [D33b]
+    severity: blocking
+    rationale: >
+      A server deploy is instant; a TestFlight client update is not. Users WILL call today's
+      API from yesterday's build. This invariant is the reason INV-ALWAYS-SHIPPABLE is
+      achievable at all rather than aspirational.
+    checks:
+      - kind: ci
+        cmd: node scripts/verify/contract-compat.mjs --base origin/main
+        detail: >
+          Diffs the OpenAPI spec against main and fails on any removed field, narrowed type,
+          new required request field, or changed enum value.
+      - kind: runtime
+        cmd: pnpm test:client-skew
+        detail: >
+          Replays the previous release's recorded client requests against the new server and
+          asserts every one still succeeds.
+
+  - id: INV-SITE-NEVER-FAILS
+    rule: >
+      No exam is ever rejected, dropped or left uncounted because its `site` string is
+      unrecognised. An unmapped site preserves the raw text and falls back to an
+      unclassified bucket. The same applies to specialty: it ranks and defaults, it never
+      restricts the reachable code catalog.
+    goals: [G1, G4]
+    decisions: [D34, D35, D36]
+    severity: blocking
+    rationale: >
+      The iOS Institution.overrides implementation already gets this right — "classification
+      never fails a row". Generalising to N institutions must not lose that property, and
+      onboarding must stay skippable (D35).
+    checks:
+      - kind: runtime
+        cmd: pnpm test:site-fallback
+        detail: >
+          Feeds unmapped, empty and adversarial site strings through the pipeline and asserts
+          every exam still lands, priced, with the raw site preserved.
+      - kind: runtime
+        cmd: pnpm test:onboarding-skip
+        detail: >
+          Completes a fresh install skipping every onboarding step and asserts the Tracker is
+          usable, exams can be captured, and no dollar figure is shown as zero rather than hidden.
+
+  - id: INV-NO-ESTIMATES
+    rule: >
+      No code contributes a value to an authoritative total unless that value came from
+      an ingested CMS version or from a flagged status-C carrier-priced override. Codes
+      absent from the authoritative version resolve to `unpriced`, are surfaced in the
+      UI, and are excluded from totals — never silently guessed.
+    goals: [G2]
+    decisions: [D16]
+    severity: blocking
+    checks:
+      - kind: runtime
+        cmd: pnpm --filter @rad/core test:unpriced
+        detail: >
+          Asserts resolveValue throws PricingUnavailable for an unknown code, that the
+          unpriced state propagates to the UI, and that status-C overrides are totalled
+          in a separate bucket that is never added to the authoritative sum.
+      - kind: static
+        cmd: node scripts/verify/no-est-flag.mjs
+        detail: Fails if any `est:` or equivalent estimate flag survives outside the status-C override table.
+
+  - id: INV-NO-PEER-DATA
+    rule: >
+      No API route, job or model tool can return data derived from another user's rows.
+      There is no cohort, no aggregate over users, no peer comparison of any kind.
+    goals: [G11]
+    decisions: [D21]
+    severity: blocking
+    supersedes: INV-KANON
+    checks:
+      - kind: runtime
+        cmd: pnpm test:cross-user-probe
+        detail: Per-route probe asserting user A can never observe a value influenced by user B.
+
+  - id: INV-SOURCE-PERMISSIBLE
+    rule: >
+      Every ProductivityBenchmarkSource adapter declares a terms_basis. Ingest refuses to
+      run an adapter without one. No LinkedIn adapter may exist.
+    goals: [G11]
+    decisions: [D21a, D21b]
+    severity: blocking
+    checks:
+      - kind: static
+        cmd: node scripts/verify/source-terms.mjs
+        detail: Fails on a missing terms_basis, or on any adapter referencing linkedin.
+
+  - id: INV-NO-CLINICAL
+    rule: >
+      The product never interprets imaging findings. Enforced by a refusal clause in the
+      system prompt, a DICOM-viewport input detector, and a persistent UI disclaimer.
+    goals: [G7, G8]
+    severity: blocking
+    rationale: >
+      Non-device CDS under FDA guidance requires no analysis of medical images or
+      signals. Extracting text from a worklist UI screenshot is not image analysis;
+      interpreting a DICOM viewport is. Crossing this line makes RadRVU a regulated device.
+    checks:
+      - kind: eval
+        cmd: pnpm eval:clinical-refusal
+        detail: Adversarial suite of "read this scan for me" prompts. 100% refusal required.
+      - kind: runtime
+        cmd: pnpm test:dicom-detector
+
+  - id: INV-NO-SWALLOW
+    rule: >
+      No empty catch block. No HTTP 200 on a failed write. A failed save must be
+      distinguishable from a successful one, at every layer.
+    goals: [G10]
+    severity: blocking
+    checks:
+      - kind: lint
+        cmd: pnpm lint
+        detail: ESLint no-empty with allowEmptyCatch disabled, plus a custom rule for 200-on-error.
+      - kind: runtime
+        cmd: pnpm test:route-contracts
+        detail: Fault injection per route asserting a non-2xx status and a surfaced client error.
+
+  - id: INV-TENANT
+    rule: Every app-schema query is RLS-scoped. Tenant identity comes from auth(), never from input.
+    goals: [G10]
+    severity: blocking
+    checks:
+      - kind: runtime
+        cmd: pnpm test:cross-tenant-probe
+      - kind: schema-introspection
+        cmd: node scripts/verify/rls-enabled.mjs
+        detail: >
+          Asserts FORCE ROW LEVEL SECURITY on every app table and that the production
+          connection role holds neither BYPASSRLS nor ownership.
+
+  - id: INV-SERVER-PROMPTS
+    rule: >
+      The LLM proxy accepts a named template id and typed parameters only. No
+      client-supplied system prompt, no client-supplied tools, a hard maxTokens cap, a
+      per-user rate limit and a per-user spend cap.
+    goals: [G10]
+    severity: blocking
+    checks:
+      - kind: runtime
+        cmd: pnpm test:llm-proxy-contract
+        detail: >
+          Asserts that requests carrying system, tools or an oversized maxTokens are
+          rejected, that an unknown template id is rejected, and that the rate limit and
+          spend cap actually fire.
+
+  - id: INV-NO-RAW-ERRORS
+    rule: No driver, database or upstream-vendor error text appears in any response body. Every error carries a correlation id.
+    goals: [G10]
+    severity: blocking
+    checks:
+      - kind: runtime
+        cmd: pnpm test:error-envelope
+        detail: Fault injection per route asserting a generic body plus a correlation id.
+
+  - id: INV-DELETABLE
+    rule: Account deletion removes every row for that subject, in every table, in both cloud and device.
+    goals: [G10, G3]
+    severity: blocking
+    checks:
+      - kind: runtime
+        cmd: pnpm test:deletion
+        detail: Create user -> populate every table -> delete -> assert zero rows everywhere.
+
+  - id: INV-CONTRACT-SYNC
+    rule: The Swift and TypeScript API clients are generated from the current contracts/openapi.yaml. No hand-written request code on either side.
+    goals: [G2, G9]
+    decisions: [D5]
+    severity: blocking
+    checks:
+      - kind: ci
+        cmd: pnpm contracts:regen && git diff --exit-code
+        detail: Regenerates both clients in CI and fails on any diff.
+
+  - id: INV-PARITY
+    rule: The Swift and TypeScript implementations of pricing and de-identification agree on every shared golden fixture.
+    goals: [G2, G3]
+    decisions: [D5, D11]
+    severity: blocking
+    rationale: >
+      Agents write the Swift (D11). Two independent implementations agreeing on a
+      third-party-derived oracle is the only real safety net. This check may never be
+      disabled to unblock a release; if it is, the architecture has failed.
+    checks:
+      - kind: runtime
+        cmd: pnpm --filter @rad/core test:fixtures
+      - kind: runtime
+        cmd: xcodebuild test -scheme RadRVUKit -only-testing:FixtureParityTests
+      - kind: runtime
+        cmd: node scripts/verify/parity-report.mjs
+
+  - id: INV-PROD-AUDITED
+    rule: >
+      Every agent-initiated action against production is appended to an immutable audit
+      log with actor, timestamp, command, and a recorded rollback path. Any production
+      migration is preceded by a Neon branch snapshot.
+    goals: [G10]
+    decisions: [D25]
+    severity: blocking
+    rationale: >
+      D25 grants agents production access without an approval gate. These rails cost no
+      approval cycles and are the reason that decision is survivable. They replace the
+      human gate; they do not reinstate it.
+    checks:
+      - kind: runtime
+        cmd: node scripts/verify/prod-audit-log.mjs
+        detail: >
+          Asserts the audit log is append-only, that every production action in the run
+          window has an entry, and that every migration entry names a snapshot branch.
+
+  - id: INV-NO-DEAD-CODE
+    rule: >
+      No table, route or module exists that nothing reads. Discovered violations open a
+      remediation node rather than being tolerated.
+    goals: [G10]
+    severity: advisory
+    rationale: >
+      The current repo carries a dead `users` table and a correctly-written
+      /api/rvu-tables that nobody calls. Both cost real confusion.
+    checks:
+      - kind: static
+        cmd: node scripts/verify/dead-code.mjs

@@ -1,0 +1,39 @@
+{
+  "$comment": "DAG state. Owned by the orchestrator. Do not hand-edit while a workflow is running.",
+  "version": 2,
+  "updated": "2026-08-17",
+  "current_phase": "A0",
+  "gate": {
+    "rule": "No node outside phase A0 may start until every A0 node is PASS.",
+    "decision": "D18"
+  },
+  "human_gate_policy": {
+    "decision": "D25",
+    "approve_when": ["validator_fail", "validator_uncertain"],
+    "agent_may_touch_production": true,
+    "required_rails": [
+      "INV-PROD-AUDITED: append-only log of every production action",
+      "Neon branch snapshot before any production migration",
+      "recorded rollback path in every node YAML"
+    ],
+    "never": "Real PHI in agent context. Synthetic fixtures only (D25a)."
+  },
+  "nodes": {
+    "N00a-remove-token-gated-routes": { "status": "ready",   "depends_on": [], "priority": 1 },
+    "N00b-rotate-credentials":        { "status": "blocked", "depends_on": ["N00a-remove-token-gated-routes"], "priority": 2 },
+    "N00c-lock-llm-proxy":            { "status": "ready",   "depends_on": [], "priority": 3 },
+    "N00d-error-envelope":            { "status": "ready",   "depends_on": [], "priority": 4 },
+    "N00e-mfa-and-password-policy":   { "status": "blocked", "depends_on": ["N00b-rotate-credentials"], "priority": 5 },
+    "N00f-redact-before-upload":      { "status": "ready",   "depends_on": [], "priority": 6 }
+  },
+  "statuses": {
+    "ready": "dependencies satisfied, not started",
+    "building": "a Builder holds this node",
+    "validating": "a fresh Validator is re-deriving done_when",
+    "pass": "Validator confirmed with evidence",
+    "fail": "Validator rejected — human review required",
+    "blocked": "waiting on a dependency"
+  },
+  "backlog_ref": "goals/BACKLOG.yaml",
+  "evidence_dir": "goals/evidence"
+}

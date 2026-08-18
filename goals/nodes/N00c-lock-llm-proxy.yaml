@@ -1,0 +1,97 @@
+id: N00c-lock-llm-proxy
+title: Replace the pass-through LLM relay with server-owned named prompt templates
+goal_refs: [G10]
+decisions: [D18, D8]
+depends_on: []
+phase: A0
+estimate_hours: 4
+priority: 3
+severity: live-exposure
+
+rationale: >
+  app/api/claude/route.js:16 destructures `messages, system, tools, maxTokens` from the
+  client and lines 22-28 forward all four verbatim to the Anthropic Messages API. The
+  route's own header comment claims auth "prevents the key being used as an open relay",
+  which is true — line 13 does require a session — but it is an UNBOUNDED relay for
+  anyone holding one. Any signed-in user can issue an arbitrary system prompt with
+  arbitrary tool definitions, including billed web_search, at the model's maximum token
+  count, with no rate limit, no spend cap and no per-user attribution, against the shared
+  organisational key. Chained with N00a's exposure, an attacker who mints an account owns
+  unlimited inference on that key.
+  Separately, D8 requires the hardcoded Florida web_search call to be removed: it is
+  uncached, unvalidated, geographically hardcoded, and sits on the exact feature boundary
+  where Anthropic's public documentation disagrees with itself about BAA coverage.
+
+context_query: >
+  codegraph explore "api/claude route messages system tools maxTokens anthropic proxy web_search ocrPrompt timelineSystemPrompt"
+
+scope_amended_2026_08_17: >
+  There are TWO LLM paths, not one. neurorvu-edge-api holds its own ANTHROPIC_API_KEY and
+  serves POST /api/v1/resolve. That route ALREADY does most of this correctly — Clerk JWT
+  verification via jose, MAX_FRAGMENTS 40, MAX_FRAGMENT_LENGTH 120, a SUSPICIOUS regex
+  rejecting dob/mrn/ssn and SSN-shaped content, and an explicit contract that bodies are
+  never logged or persisted. EXTEND it (rate limit, spend cap, usage attribution); do not
+  rewrite it. The uncapped relay is the PWA's /api/claude.
+
+contracts:
+  - "app/api/claude/route.ts accepts only { template: string, params: Record<string, unknown>, images?: string[] }"
+  - "lib/prompts/registry.ts exports PROMPT_TEMPLATES: Record<string, PromptTemplate> where
+     PromptTemplate = { id, system, tools, maxTokens, paramsSchema }"
+  - The route resolves system, tools and maxTokens from the registry entry only; a request
+    supplying any of those three fields is rejected with 400
+  - An unknown template id is rejected with 400 and does not reach Anthropic
+  - Per-user rate limiting is enforced server-side (token bucket, persisted, not in-memory)
+  - A per-user daily spend cap is enforced; exceeding it returns 429 with a correlation id
+  - Every call writes a usage row (user_id, template, input_tokens, output_tokens, cost_estimate)
+  - No template in the registry declares a web_search tool
+  - neurorvu-edge-api /api/v1/resolve gains a per-user rate limit, a per-user daily spend cap
+    and a usage row, keeping its existing caps and PHI-shaped rejection unchanged
+  - Both projects' ANTHROPIC_API_KEY usage is attributable to a user
+  - Anthropic prompt caching is enabled on the static code-reference block in the OCR template
+
+invariants: [INV-SERVER-PROMPTS, INV-NO-RAW-ERRORS, INV-NO-SWALLOW, INV-ALWAYS-SHIPPABLE, INV-ADDITIVE-CONTRACTS]
+
+couples:
+  - locking /api/claude
+  - extending /api/v1/resolve
+  # One PR: iOS calls /api/v1/resolve on every ambiguous scan. Changing its contract while
+  # the PWA proxy changes shape independently risks a skew no TestFlight user can escape.
+
+verify:
+  runtime:
+    - "pnpm test:llm-proxy-contract"
+    - "curl -X POST $PREVIEW/api/claude -H \"$AUTH\" -d '{\"system\":\"x\",\"messages\":[]}'              # expect 400"
+    - "curl -X POST $PREVIEW/api/claude -H \"$AUTH\" -d '{\"template\":\"ocr\",\"tools\":[{}]}'            # expect 400"
+    - "curl -X POST $PREVIEW/api/claude -H \"$AUTH\" -d '{\"template\":\"nope\",\"params\":{}}'            # expect 400"
+    - "curl -X POST $PREVIEW/api/claude -H \"$AUTH\" -d '{\"template\":\"ocr\",\"maxTokens\":200000}'      # expect 400"
+    - "node scripts/verify/rate-limit-probe.mjs --route /api/claude   # expect 429 after the configured burst"
+    - "node scripts/verify/spend-cap-probe.mjs                        # expect 429 once the daily cap is reached"
+    - "node scripts/verify/resolve-contract.mjs --base https://neurorvu-edge-api.vercel.app
+       # asserts existing caps + PHI rejection still hold, and the new rate limit fires"
+    - "pnpm verify:shippable   # PWA + edge API + iOS all green (INV-ALWAYS-SHIPPABLE)"
+    - "psql $DATABASE_URL -c 'select count(*) from llm_usage'         # rows written for every call above"
+  static:
+    - "! grep -rn 'web_search' app/ lib/ components/"
+    - "! grep -rn 'body.system\\|body.tools' app/api/claude/"
+  evidence: [llm-proxy-contract.json, rate-limit-probe.txt, spend-cap-probe.txt]
+
+done_when:
+  - A request carrying system, tools or maxTokens is rejected without reaching Anthropic
+  - An unknown template id is rejected without reaching Anthropic
+  - The rate limit and the spend cap both demonstrably fire against a real preview deployment
+  - Every successful call has a corresponding usage row attributing cost to a user
+  - No web_search tool is declared anywhere in the codebase
+  - Prompt caching is active on the OCR template's static code-reference block, verified
+    by a cache_read_input_tokens value greater than zero on the second identical call
+
+rollback: >
+  The old route is a strict superset of the new one in capability, so reverting restores
+  function but also restores the exposure. Prefer fixing forward. No schema change beyond
+  the additive llm_usage table, which is safe to leave in place on revert.
+
+notes: >
+  The two existing prompt builders — lib/ocr-prompt.js and lib/timeline-prompt.js — become
+  the first two registry entries. They are already server-side and already correct in
+  shape; this node moves them behind an id rather than rewriting them.
+  The ~4k-character code reference resent on every OCR call is exactly what prompt caching
+  exists for. Enabling it here is a cost fix, not a nicety.

@@ -1,0 +1,72 @@
+id: N00f-redact-before-upload
+title: Redact patient identifiers from worklist images before any network call
+goal_refs: [G3, G8, G10]
+decisions: [D8]
+depends_on: []
+phase: A0
+estimate_hours: 6
+priority: 6
+severity: live-exposure
+
+scope_amended_2026_08_17: >
+  THIS NODE IS PWA-ONLY. The iOS app already has a tested Redaction module
+  (NeuroRVUTests/RedactionTests.swift: Redaction.redact("MRI BRAIN MRN 4521") ==
+  "MRI BRAIN [id]") and never uploads images at all — it sends de-identified text fragments
+  to /api/v1/resolve behind a per-upload consent sheet. Only the PWA still POSTs raw
+  screenshots to Anthropic. Do not touch the iOS path here; N25 extends it to the full
+  Safe Harbor 18.
+
+rationale: >
+  Full worklist screenshots containing patient names and MRNs are POSTed to
+  api.anthropic.com today, unredacted and uncropped, with no BAA in place. This is the
+  only A0 exposure that is a disclosure rather than a vulnerability — it is not a risk
+  that something bad could happen, it is a thing that happens on every scan.
+  D8 closes it with client-side redaction now rather than a procurement cycle: the BAA is
+  deferred and conditional, and the eventual Vision OCR path (N24) removes the cloud from
+  the primary flow entirely. This node is the bridge that makes the months until then safe.
+
+context_query: >
+  codegraph explore "OCR upload image base64 ocrPrompt UploadsView screenshot capture api/claude"
+
+contracts:
+  - "lib/redact/imageRedactor.ts exports redactImage(bitmap, regions): Blob"
+  - "The capture UI requires the user to mark the patient-name and MRN column regions
+     before the first upload for a given institution, and persists those regions as a
+     redaction profile keyed on (user, institution)"
+  - "Redaction is destructive: masked pixels are overwritten in the encoded output, not
+     covered by an overlay, and the original never enters a request body"
+  - No image reaches /api/claude without passing through redactImage
+  - A scan whose redaction profile is missing or stale blocks upload and re-prompts
+  - The redaction profile stores geometry only — never any extracted text
+
+invariants: [INV-NO-PHI-IN-CLOUD, INV-NO-SWALLOW, INV-ALWAYS-SHIPPABLE]
+
+verify:
+  runtime:
+    - "pnpm --filter @rad/core test:redaction"
+    - "node scripts/verify/redaction-e2e.mjs
+       # drives a real upload with a synthetic PHI fixture image, intercepts the outbound
+       # request body, decodes the image, OCRs it, and asserts zero fixture identifiers present"
+    - "node scripts/verify/no-unredacted-path.mjs
+       # asserts every call site reaching /api/claude with an image passes through redactImage"
+  static:
+    - "node scripts/verify/phi-log-scan.mjs --stream captured-session.log"
+  evidence: [redaction-e2e.json, outbound-image-ocr.txt]
+
+done_when:
+  - An intercepted outbound request body, decoded and re-OCR'd, contains none of the synthetic fixture's identifiers
+  - Every image-bearing call site provably routes through redactImage; there is no bypass
+  - A missing redaction profile blocks the upload rather than silently sending the original
+  - Masked regions are destroyed in the encoded bytes, verified by pixel inspection, not by an overlay in the DOM
+
+rollback: >
+  Reverting restores the disclosure. If redaction misbehaves, disable the upload path
+  entirely rather than falling back to unredacted send.
+
+notes: >
+  Verified against SYNTHETIC PHI fixtures only (D25a). Never test this with a real
+  worklist photograph — doing so would perform the exact disclosure the node prevents.
+  This is throwaway-adjacent work: N24 (Vision OCR) removes the cloud from the primary
+  path and N27 (layout profiles) supersedes the region-tagging UI. That is acceptable.
+  The alternative is months of continued disclosure while waiting for native, and the
+  region-tagging interaction is a genuine prototype of N27's column tagger.
