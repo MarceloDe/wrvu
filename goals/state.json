@@ -55,7 +55,7 @@
       "roster_conclusion": "No unexplained accounts. The one flagged account (gaurav.saigal@rocketmail.com, created 2026-08-14 while SETUP_TOKEN was live) was confirmed by the owner as Gaurav Saigal's personal email. Session revocation is NOT required as incident response."
     },
     "N00c-pwa-lock-llm-proxy": {
-      "status": "blocked_integration",
+      "status": "ready",
       "priority": 3,
       "built": "builder/N00c-llm-proxy (d57302b). NOT merged.",
       "verified_by_builder": [
@@ -63,7 +63,8 @@
         "spend cap PASSES --direct against real llm_usage rows"
       ],
       "blocked_on": "INTEGRATION, not credentials. N00c changes callClaude from (messages,{system,tools,maxTokens}) to (template,{params,attachments}). N00f's assertNoUnredactedImages() walks message.content[] and identifies redacted blocks by WeakSet IDENTITY; under the new signature the client passes data-URL strings, so the guard loses its identity handle and degrades to the isRedactedPayload string check. Restoring that guarantee is a DESIGN change to a PHI control, not a merge conflict.",
-      "partial_resolution": "route.js was reconciled (N00c structure + N00d code vocabulary) and preserved at goals/evidence/A0-integration/route.js.resolved. package.json and tsconfig.json resolutions preserved alongside."
+      "partial_resolution": "route.js was reconciled (N00c structure + N00d code vocabulary) and preserved at goals/evidence/A0-integration/route.js.resolved. package.json and tsconfig.json resolutions preserved alongside.",
+      "recontracted": "2026-08-18 \u2014 the redaction guard redesign is now the PRIMARY contract, not a merge afterthought. Start from builder/N00c-llm-proxy (d57302b) per D38."
     },
     "N00c-edge-usage-cap": {
       "status": "blocked",
@@ -74,7 +75,7 @@
       "note": "needs contracting; lives in the neurorvu-ios repo at api/"
     },
     "N00d-error-envelope": {
-      "status": "blocked_external",
+      "status": "pass",
       "priority": 4,
       "built": "builder/N00d-errors; merged into fix/A0-proxy-errors-redaction",
       "verified": [
@@ -86,7 +87,9 @@
         "authenticated fault injection needs a real Clerk session (.env.local holds no Clerk keys)",
         "ERROR_MONITOR_URL / ERROR_MONITOR_TOKEN unprovisioned, so shipToMonitor() is a no-op in production"
       ],
-      "known_boundary": "An unsupported METHOD on an existing route is answered by Next with a bodyless 405 before application code runs, so it carries no correlation id. It carries no information either."
+      "known_boundary": "An unsupported METHOD on an existing route is answered by Next with a bodyless 405 before application code runs, so it carries no correlation id. It carries no information either.",
+      "merged": "PR #2 -> main 8107e5b, deployed to production 2026-08-18",
+      "verified_in_production": "GET https://fella.cc/api/exams unauthenticated returns 401 with header x-correlation-id and body {\"error\":{\"code\":\"unauthorized\",\"correlationId\":\"...\"}} \u2014 the envelope is live"
     },
     "N00e-mfa-and-password-policy": {
       "status": "ready",
@@ -96,7 +99,7 @@
       "warning": "enabling forces every colleague to enrol at next sign-in"
     },
     "N00f-redact-before-upload": {
-      "status": "blocked_external",
+      "status": "pass",
       "priority": 6,
       "built": "builder/N00f-redaction; merged into fix/A0-proxy-errors-redaction",
       "verified": [
@@ -107,7 +110,9 @@
         "`pnpm --filter @rad/core test:redaction` is vacuous until the N01 monorepo exists; the same suite runs as `npm run test:redaction`"
       ],
       "bounded_gap": "PDFs bypass redaction BY DESIGN. prepareDoc() (components/NeuroRVU.jsx:209, called at :632) base64s application/pdf straight through to Anthropic. That path carries the HR consolidated report \u2014 the physician's own productivity and compensation, not patient data. PDF is the ONLY bypass and an AST check enforces it stays PDF-only. Tracked as N00g.",
-      "known_weakness": "Staleness is detected by aspect ratio within 2%. A differently-laid-out screenshot with the same aspect ratio would be masked with stored geometry rather than re-prompting. N27 (layout profiles) supersedes this heuristic."
+      "known_weakness": "Staleness is detected by aspect ratio within 2%. A differently-laid-out screenshot with the same aspect ratio would be masked with stored geometry rather than re-prompting. N27 (layout profiles) supersedes this heuristic.",
+      "merged": "PR #2 -> main 8107e5b, deployed to production 2026-08-18",
+      "verified_in_production": "app healthy after deploy; upload path now requires a redaction profile per institution"
     },
     "N00g-pdf-redaction-gap": {
       "status": "backlog",

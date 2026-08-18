@@ -1,7 +1,7 @@
 id: N00c-pwa-lock-llm-proxy
-title: Replace the pass-through LLM relay with server-owned named prompt templates
-goal_refs: [G10]
-decisions: [D18, D8]
+title: Lock the LLM proxy to server-owned templates, preserving the redaction guarantee
+goal_refs: [G10, G3]
+decisions: [D18, D8, D33b]
 depends_on: []
 phase: A0
 estimate_hours: 4
@@ -9,128 +9,90 @@ priority: 3
 severity: live-exposure
 
 rationale: >
-  app/api/claude/route.js:16 destructures `messages, system, tools, maxTokens` from the
-  client and lines 22-28 forward all four verbatim to the Anthropic Messages API. The
-  route's own header comment claims auth "prevents the key being used as an open relay",
-  which is true — line 13 does require a session — but it is an UNBOUNDED relay for
-  anyone holding one. Any signed-in user can issue an arbitrary system prompt with
-  arbitrary tool definitions, including billed web_search, at the model's maximum token
-  count, with no rate limit, no spend cap and no per-user attribution, against the shared
-  organisational key. Chained with N00a's exposure, an attacker who mints an account owns
-  unlimited inference on that key.
-  Separately, D8 requires the hardcoded Florida web_search call to be removed: it is
-  uncached, unvalidated, geographically hardcoded, and sits on the exact feature boundary
-  where Anthropic's public documentation disagrees with itself about BAA coverage.
-
-context_query: >
-  codegraph explore "api/claude route messages system tools maxTokens anthropic proxy web_search ocrPrompt timelineSystemPrompt"
+  app/api/claude/route.js takes `system`, `tools` and `maxTokens` from the client and
+  forwards all three verbatim. Any signed-in user can issue an arbitrary system prompt with
+  arbitrary tools at the model's maximum token count, with no rate limit, no spend cap and
+  no per-user attribution, against the shared organisational key.
 
 recontracted_2026_08_18: >
-  The first build attempt returned `blocked` and was RIGHT to. Three defects in the
-  original contract, all mine, all now fixed:
-  (1) `couples:` required the PWA and edge halves in ONE PR, but they live in two GitHub
-      repos and two repos cannot be one PR. DECOUPLED (founder call): the edge API's
-      request/response contract is not changing, only rate limiting is being ADDED, which
-      is backward-compatible and already covered by INV-ADDITIVE-CONTRACTS. Reserve
-      `couples:` for genuine contract changes. The edge half is now N00c-edge-usage-cap.
-  (2) Contracts named .ts paths, but A0 precedes the TypeScript migration (D19, phase A1).
-      The project is plain JS with jsconfig.json. All paths are now .js; A1 migrates them.
-  (3) The edge API has no datastore (deps are {jose} only) and a per-user usage row would
-      be user data, contradicting D29. Accounting moves to project-m6jfw entirely.
+  The first build produced a COMPLETE and VERIFIED implementation on branch
+  builder/N00c-llm-proxy (d57302b): template registry, persisted token bucket, daily spend
+  cap, usage rows, and a shared meter that the edge API reports into. Its rate limit and
+  spend cap both PASS --direct against the real dev Neon branch.
 
-scope_note: >
-  There are TWO LLM paths, not one. neurorvu-edge-api holds its own ANTHROPIC_API_KEY and
-  serves POST /api/v1/resolve. That route ALREADY does most of this correctly — Clerk JWT
-  verification via jose, MAX_FRAGMENTS 40, MAX_FRAGMENT_LENGTH 120, a SUSPICIOUS regex
-  rejecting dob/mrn/ssn and SSN-shaped content, and an explicit contract that bodies are
-  never logged or persisted. EXTEND it (rate limit, spend cap, usage attribution); do not
-  rewrite it. The uncapped relay is the PWA's /api/claude.
+  It was not merged, for one reason, and that reason is now this node's PRIMARY contract:
+
+    N00c changes callClaude from (messages, {system, tools, maxTokens})
+                            to (template, {params, attachments}).
+
+    N00f's assertNoUnredactedImages() walks message.content[] and identifies redacted
+    images by WeakSet IDENTITY on the block objects returned by buildRedactedImageBlock().
+    Under the new signature the client passes data-URL STRINGS, so the WeakSet has nothing
+    to hold and the guard silently degrades to the isRedactedPayload() string check.
+
+  A string marker is forgeable and, more importantly, absent by default — an image that
+  never went through redactImage() would carry no marker and the degraded guard would have
+  to decide whether "no marker" means "block" or "pass". Getting that wrong ships a hole in
+  the control that stops patient images leaving the device. This is a DESIGN change to a
+  PHI control and must be contracted, not merged by hand.
+
+context_query: >
+  codegraph explore "callClaude assertNoUnredactedImages buildRedactedImageBlock prepareImage prepareDoc redactedBlocks isRedactedPayload api/claude route"
 
 contracts:
-  - "app/api/claude/route.js accepts only { template: string, params: Record<string, unknown>, images?: string[] }"
-  - "lib/prompts/registry.js exports PROMPT_TEMPLATES: Record<string, PromptTemplate> where
-     PromptTemplate = { id, system, tools, maxTokens, paramsSchema }"
-  - The route resolves system, tools and maxTokens from the registry entry only; a request
-    supplying any of those three fields is rejected with 400
-  - An unknown template id is rejected with 400 and does not reach Anthropic
-  - Per-user rate limiting is enforced server-side (token bucket, persisted, not in-memory)
-  - A per-user daily spend cap is enforced; exceeding it returns 429 with a correlation id
-  - Every call writes a usage row (user_id, template, input_tokens, output_tokens, cost_estimate)
-  - No template in the registry declares a web_search tool
-  - "lib/usage/meter.js exports recordUsage(userId, source, tokensIn, tokensOut) and
-     checkCap(userId): Promise<{allowed: boolean, remaining: number}>, backed by an
-     additive llm_usage table in project-m6jfw's Neon database"
-  - "app/api/internal/usage/route.js accepts a Clerk-verified call from neurorvu-edge-api
-     and applies the same meter, so BOTH LLM paths bill against one per-user budget"
-  - Anthropic prompt caching is enabled on the static code-reference block in the OCR template
+  - "The redaction guarantee survives the signature change: an attachment that did not come
+     from buildRedactedImageBlock() is BLOCKED before any network call, and the guard FAILS
+     CLOSED — an unrecognised or unmarked attachment is refused, never allowed through"
+  - "The guard's identity mechanism is explicit and documented. If WeakSet identity cannot
+     survive the new call shape, the replacement must be at least as strong: state in the
+     node evidence why the chosen mechanism cannot be bypassed by a caller who simply
+     constructs an attachment by hand"
+  - "app/api/claude/route.js accepts only { template, params, attachments } — a request
+     carrying system, tools or maxTokens is 400 and never reaches the vendor"
+  - "lib/prompts/registry.js resolves system prompt, tool set (always empty) and token
+     ceiling from the server, and from nowhere else"
+  - "Per-user persisted token bucket and per-user daily spend cap, with a usage row per call"
+  - "Error codes use the vocabulary components/NeuroRVU.jsx already branches on:
+     upstream_payload_too_large, upstream_rate_limited, upstream_overloaded,
+     upstream_timeout, upstream_invalid_image, unauthorized, config_missing.
+     A reconciled route.js is preserved at goals/evidence/A0-integration/route.js.resolved"
+  - No template declares a web_search tool
+  - Anthropic prompt caching stays enabled on the OCR template's static code-reference block
 
-verification_environment_2026_08_18: >
-  DO NOT run fault injection, rate-limit probes or spend-cap probes against a Vercel
-  PREVIEW deployment. Preview shares the PRODUCTION DATABASE_URL: the Neon integration owns
-  that variable on target `production,preview` and Vercel refuses a project-level override
-  ("A variable with the name DATABASE_URL already exists for the target production,preview").
-  Isolating Preview requires disconnecting and reconnecting the store, which has no restore
-  path because `vercel env pull` returns the literal [SENSITIVE] for every integration
-  secret. So a preview probe would inject faults into the live production database.
+reuse_first: >
+  D38 — improve, never rebuild. Start from builder/N00c-llm-proxy (d57302b), which is
+  already written and partly verified. Do NOT re-implement it. The new work is the guard,
+  the vocabulary alignment, and the merge with origin/main (which now carries N00f + N00d).
 
-  INSTEAD: run a local server against the dev Neon branch.
+invariants: [INV-SERVER-PROMPTS, INV-NO-PHI-IN-CLOUD, INV-NO-RAW-ERRORS, INV-NO-SWALLOW, INV-ALWAYS-SHIPPABLE, INV-CHECKS-ACTUALLY-RUN]
+
+verification_environment: >
+  Local server against the dev Neon branch, never a Vercel preview — Preview shares the
+  PRODUCTION DATABASE_URL and Vercel refuses a project-level override.
       node --env-file=.env.local ./node_modules/.bin/next dev -p 3111
-      PREVIEW=http://localhost:3111
-  .env.local points at the `dev` branch (br-late-paper-at5h75si, schema-only, zero rows,
-  writable, Postgres 17.10). This is still REAL infrastructure under D20 — a real Neon
-  database over real HTTP, with no mock anywhere. It is not a Vercel preview, and that
-  substitution is recorded here deliberately rather than silently.
-
-  A real Clerk session is still unavailable. Any probe that needs one is `blocked_external`
-  with the exact command an operator must run.
-
-invariants: [INV-SERVER-PROMPTS, INV-NO-RAW-ERRORS, INV-NO-SWALLOW, INV-ALWAYS-SHIPPABLE, INV-ADDITIVE-CONTRACTS]
-
-decoupled_from: N00c-edge-usage-cap
-# NOT coupled. The edge API's request/response contract is unchanged; rate limiting is
-# purely additive and INV-ADDITIVE-CONTRACTS covers the skew risk. Older TestFlight builds
-# keep working because nothing they send or parse changes.
-
-prerequisites: >
-  This node CANNOT be built without: a writable DATABASE_URL (for the additive llm_usage
-  migration, taken on a Neon branch per INV-PROD-AUDITED), a deployed preview URL, and a
-  real Clerk session. The first attempt failed on exactly these. An operator must run
-  `vercel env pull .env.local` and confirm the Builder may read it, or the node stays
-  blocked_external.
+  .env.local holds no Clerk keys, so any probe needing a real session is blocked_external
+  with the exact closing command.
 
 verify:
   runtime:
-    - "pnpm test:llm-proxy-contract"
-    - "curl -X POST $PREVIEW/api/claude -H \"$AUTH\" -d '{\"system\":\"x\",\"messages\":[]}'              # expect 400"
-    - "curl -X POST $PREVIEW/api/claude -H \"$AUTH\" -d '{\"template\":\"ocr\",\"tools\":[{}]}'            # expect 400"
-    - "curl -X POST $PREVIEW/api/claude -H \"$AUTH\" -d '{\"template\":\"nope\",\"params\":{}}'            # expect 400"
-    - "curl -X POST $PREVIEW/api/claude -H \"$AUTH\" -d '{\"template\":\"ocr\",\"maxTokens\":200000}'      # expect 400"
-    - "node scripts/verify/rate-limit-probe.mjs --route /api/claude   # expect 429 after the configured burst"
-    - "node scripts/verify/spend-cap-probe.mjs                        # expect 429 once the daily cap is reached"
-    - "pnpm verify:shippable   # PWA + edge API + iOS all green (INV-ALWAYS-SHIPPABLE)"
-    - "psql $DATABASE_URL -c 'select count(*) from llm_usage'         # rows written for every call above"
+    - "npm run test:redaction                 # 30/30 must STILL pass after the signature change"
+    - "npm run test:llm-proxy-contract"
+    - "node scripts/verify/rate-limit-probe.mjs --direct"
+    - "node scripts/verify/spend-cap-probe.mjs --direct"
+    - "node scripts/test/forged-attachment.test.mjs   # NEW: a hand-constructed attachment must be BLOCKED"
+    - "node --env-file=.env.local ./node_modules/.bin/next build"
   static:
-    - "! grep -rn 'web_search' app/ lib/ components/"
     - "! grep -rn 'body.system\\|body.tools' app/api/claude/"
-  evidence: [llm-proxy-contract.json, rate-limit-probe.txt, spend-cap-probe.txt]
+    - "! grep -rn 'web_search' app/ lib/ components/"
+  evidence: [redaction-still-30-30.txt, forged-attachment-blocked.txt, rate-limit-probe.txt, spend-cap-probe.txt]
 
 done_when:
-  - A request carrying system, tools or maxTokens is rejected without reaching Anthropic
-  - An unknown template id is rejected without reaching Anthropic
-  - The rate limit and the spend cap both demonstrably fire against a real preview deployment
-  - Every successful call has a corresponding usage row attributing cost to a user
-  - No web_search tool is declared anywhere in the codebase
-  - Prompt caching is active on the OCR template's static code-reference block, verified
-    by a cache_read_input_tokens value greater than zero on the second identical call
+  - The 30/30 redaction suite still passes with callClaude's new signature
+  - A hand-constructed attachment that never went through buildRedactedImageBlock() is blocked, and the test proves it
+  - system / tools / maxTokens in a request are rejected 400 without reaching Anthropic
+  - The rate limit and the spend cap both fire against the real dev branch
+  - next build passes against the dev branch
 
 rollback: >
-  The old route is a strict superset of the new one in capability, so reverting restores
-  function but also restores the exposure. Prefer fixing forward. No schema change beyond
-  the additive llm_usage table, which is safe to leave in place on revert.
-
-notes: >
-  The two existing prompt builders — lib/ocr-prompt.js and lib/timeline-prompt.js — become
-  the first two registry entries. They are already server-side and already correct in
-  shape; this node moves them behind an id rather than rewriting them.
-  The ~4k-character code reference resent on every OCR call is exactly what prompt caching
-  exists for. Enabling it here is a cost fix, not a nicety.
+  Revert the merge commit. That restores the uncapped relay, so prefer fixing forward. The
+  additive llm_usage table is safe to leave in place.
