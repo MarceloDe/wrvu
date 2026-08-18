@@ -91,8 +91,8 @@ Clerk (production, Pro) -> sends auth email from  clkmail.fella.cc  (DKIM: clk._
 ## API endpoints
 
 All under `app/api/`. `runtime = "nodejs"`. Auth column: **session** = requires a
-signed-in Clerk user (`auth()`); **token** = requires `x-setup-token: $SETUP_TOKEN`;
-**public** = whitelisted in `middleware.js`.
+signed-in Clerk user (`auth()`); **public** = whitelisted in `middleware.js`.
+There are no token-gated endpoints: operator actions run locally, never over HTTP.
 
 | Endpoint | Auth | Methods & purpose |
 |----------|------|-------------------|
@@ -101,9 +101,6 @@ signed-in Clerk user (`auth()`); **token** = requires `x-setup-token: $SETUP_TOK
 | `/api/store` | session | Per-user key/value in `user_kv`. `GET ?key=`; `POST {key,value}`; `DELETE ?key=`. |
 | `/api/rvu-tables` | session | `GET` list (system + owned); `GET ?tableId=` codes; `POST {name,codes}` create a table. |
 | `/api/claude` | session | `POST {messages, system, tools, maxTokens}` -> proxy to Anthropic (key stays server-side). Preserves vision + web_search. |
-| `/api/setup` | token | `POST`/`GET` DDL (create tables) + seed CMS-2026; `?inspect=1` shows per-user `user_kv` isolation. |
-| `/api/setup-clerk` | token | Clerk Backend-API admin: `?inspect=1` restrictions/invites/allowlist; `?user=email` diagnose an account; `POST` enable allowlist + allowlist/invite `ADMIN_EMAILS`; `?action=create-user`; `?action=fix-user` (reset password / clear lockout / verify email). |
-| `/api/ocr-test` | token | `POST {media_type,data}` test the OCR extraction/validation prompt on an image. |
 
 Server actions (`app/admin/actions.js`, admin-gated): `inviteUser`,
 `createUser`, `revokeInvitation`, `setRole`, `deleteUser`.
@@ -158,14 +155,22 @@ vercel ls                  # list deployments
 vercel logs <deployment-url>
 ```
 
-**Env vars** (all set in Vercel, all "sensitive"): `DATABASE_URL` (+ Neon
-aliases), `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` (`pk_live`), `CLERK_SECRET_KEY`
-(`sk_live`), `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional), `ADMIN_EMAILS`
-(comma-sep), `SETUP_TOKEN` (gates the setup endpoints).
+**Env vars** (all set in Vercel): `DATABASE_URL` (+ Neon aliases),
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` (`pk_live`), `CLERK_SECRET_KEY` (`sk_live`),
+`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional), `ADMIN_EMAILS` (comma-sep).
 
-Because secrets are unpullable, **DB setup and Clerk config run at runtime** via
-the token-gated `/api/setup` and `/api/setup-clerk` endpoints (call with
-`x-setup-token: $SETUP_TOKEN`), not from a local machine.
+**Clerk operator actions run locally**, never from a deployed route:
+
+```bash
+vercel env pull .env.local
+node --env-file=.env.local scripts/ops/clerk-admin.mjs --inspect
+node --env-file=.env.local scripts/ops/clerk-admin.mjs --list-allowlist
+node --env-file=.env.local scripts/ops/clerk-admin.mjs --user you@example.com
+node --env-file=.env.local scripts/ops/clerk-admin.mjs --fix-user --email you@example.com --password '...'
+```
+
+Every invocation appends to `goals/evidence/ops-audit.jsonl`. Schema changes run
+through `drizzle-kit` against a locally supplied `DATABASE_URL`.
 
 ---
 
