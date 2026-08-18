@@ -64,6 +64,26 @@ contracts:
      and applies the same meter, so BOTH LLM paths bill against one per-user budget"
   - Anthropic prompt caching is enabled on the static code-reference block in the OCR template
 
+verification_environment_2026_08_18: >
+  DO NOT run fault injection, rate-limit probes or spend-cap probes against a Vercel
+  PREVIEW deployment. Preview shares the PRODUCTION DATABASE_URL: the Neon integration owns
+  that variable on target `production,preview` and Vercel refuses a project-level override
+  ("A variable with the name DATABASE_URL already exists for the target production,preview").
+  Isolating Preview requires disconnecting and reconnecting the store, which has no restore
+  path because `vercel env pull` returns the literal [SENSITIVE] for every integration
+  secret. So a preview probe would inject faults into the live production database.
+
+  INSTEAD: run a local server against the dev Neon branch.
+      node --env-file=.env.local ./node_modules/.bin/next dev -p 3111
+      PREVIEW=http://localhost:3111
+  .env.local points at the `dev` branch (br-late-paper-at5h75si, schema-only, zero rows,
+  writable, Postgres 17.10). This is still REAL infrastructure under D20 — a real Neon
+  database over real HTTP, with no mock anywhere. It is not a Vercel preview, and that
+  substitution is recorded here deliberately rather than silently.
+
+  A real Clerk session is still unavailable. Any probe that needs one is `blocked_external`
+  with the exact command an operator must run.
+
 invariants: [INV-SERVER-PROMPTS, INV-NO-RAW-ERRORS, INV-NO-SWALLOW, INV-ALWAYS-SHIPPABLE, INV-ADDITIVE-CONTRACTS]
 
 decoupled_from: N00c-edge-usage-cap
