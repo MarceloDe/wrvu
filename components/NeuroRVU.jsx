@@ -10,8 +10,8 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine, Cell, PieChart, Pie
 } from "recharts";
-import { extractionSystemPrompt, extractionUserText } from "../lib/ocr-prompt";
-import { timelineSystemPrompt, timelineUserText } from "../lib/timeline-prompt";
+// Prompts are NOT imported here any more: they are server-owned and reachable
+// only by template id through /api/claude (INV-SERVER-PROMPTS).
 
 /* ============================================================================
    NEURORADIOLOGY CPT REFERENCE — CMS 2026 professional-component work RVU
@@ -114,31 +114,30 @@ function migrateLog(raw) {
 const DEFAULTS = { ratePerWrvu: 78, cFTE: 1.0, monthlyBenchmark: 578, privateMult: 1.6, umYTD: 0, jhsYTD: 0 };
 
 /* ============================== API ============================== */
-async function callClaude(messages, { system, tools, maxTokens = 4000 } = {}) {
-  // Calls our own server route, which holds the Anthropic key (never exposed to the browser).
+// Calls our own server route, which holds the Anthropic key (never exposed to
+// the browser) AND owns the prompt. We send a template id + typed params only:
+// the system prompt, the tool set and the token budget are server-resolved and
+// cannot be influenced from here (INV-SERVER-PROMPTS).
+// `attachments` are data URLs (image/* or application/pdf).
+async function callClaude(template, { params = {}, attachments = [] } = {}) {
   const res = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, system, tools, maxTokens }),
+    body: JSON.stringify({ template, params, images: attachments }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    // Keep the status + Anthropic's message so callers can give specific feedback.
+    // The server returns a stable code + correlation id, never vendor text.
     const err = new Error(`API ${res.status}`);
     err.status = res.status;
-    err.detail = String(data?.error?.message || data?.error || "");
+    err.code = String(data?.code || "");
+    err.correlationId = String(data?.correlationId || "");
+    err.retryAfterSeconds = Number(data?.retryAfterSeconds) || 0;
     throw err;
   }
   return data;
 }
 const textOf = (d) => (d.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
-function parseJSON(raw) {
-  const clean = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
-  const s = clean.indexOf("["), e = clean.lastIndexOf("]"), so = clean.indexOf("{"), eo = clean.lastIndexOf("}");
-  let slice = clean;
-  if (s !== -1 && e !== -1) slice = clean.slice(s, e + 1); else if (so !== -1 && eo !== -1) slice = clean.slice(so, eo + 1);
-  return JSON.parse(slice);
-}
 const toBase64 = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(file); });
 
 // The vision API only accepts JPEG/PNG/GIF/WebP and rejects oversized images.
@@ -167,8 +166,7 @@ async function prepareImage(file) {
     const canvas = document.createElement("canvas");
     canvas.width = w; canvas.height = h;
     canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-    const jpeg = canvas.toDataURL("image/jpeg", 0.85);
-    return { type: "image", source: { type: "base64", media_type: "image/jpeg", data: jpeg.split(",")[1] } };
+    return canvas.toDataURL("image/jpeg", 0.85);
   } catch (e) {
     // Couldn't decode (unsupported format like HEIC on this browser). If the raw
     // type isn't one the API accepts, signal an unsupported-format error so the
@@ -178,37 +176,46 @@ async function prepareImage(file) {
       err.code = "unsupported-format";
       throw err;
     }
-    return { type: "image", source: { type: "base64", media_type: file.type || "image/png", data: await toBase64(file) } };
+    return `data:${file.type || "image/png"};base64,${await toBase64(file)}`;
   }
 }
 
 // Turn any OCR failure into a specific, actionable message for the user.
+// The server never returns vendor error text (INV-NO-RAW-ERRORS), so we branch
+// on its stable `code` and fall back to the HTTP status.
 function ocrErrorMessage(err) {
   const status = err?.status;
-  const detail = String(err?.detail || err?.message || "").toLowerCase();
-  if (err?.code === "unsupported-format")
+  const code = String(err?.code || "");
+  const ref = err?.correlationId ? ` (ref ${String(err.correlationId).slice(0, 8)})` : "";
+  if (code === "unsupported-format")
     return "That photo format isn't supported. On iPhone, take a screenshot of the worklist instead of a photo, or set Settings → Camera → Formats → “Most Compatible” (JPEG). PNG/JPEG work best.";
+  if (code === "unsupported_media_type")
+    return "That file type can't be read. Upload a PNG/JPEG screenshot (or a PDF for a monthly report).";
+  if (code === "attachment_too_large" || code === "payload_too_large" || status === 413)
+    return "That image is too large. Crop tightly to the worklist, or upload a screenshot instead of a full-resolution photo.";
+  if (code === "too_many_attachments")
+    return "Too many files at once — upload up to 8 screenshots per batch.";
+  if (code === "daily_cap_reached")
+    return `You've reached today's AI usage limit. It resets at midnight UTC — add exams manually until then.${ref}`;
+  if (code === "rate_limited" || status === 429)
+    return `Too many requests right now — wait a few seconds and try again.${ref}`;
   if (status === 401 || status === 403)
     return "Your session expired — sign in again and re-upload.";
-  if (status === 413 || detail.includes("too large") || detail.includes("exceeds") || detail.includes("image dimensions"))
-    return "That image is too large. Crop tightly to the worklist, or upload a screenshot instead of a full-resolution photo.";
-  if (status === 429)
-    return "Too many requests right now — wait a few seconds and try again.";
-  if (status === 529 || detail.includes("overloaded"))
-    return "The AI service is momentarily busy — please retry in a few seconds.";
-  if (status === 504 || status === 408 || detail.includes("timeout") || detail.includes("timed out"))
-    return "That took too long — the photo may be too large or complex. Crop to just the worklist and retry.";
-  if (detail.includes("media type") || detail.includes("invalid_request") || detail.includes("could not process image"))
-    return "The image couldn't be read. Use a clear PNG/JPEG screenshot of the worklist, or add exams manually.";
-  return "Extraction failed — the image may be blurry or low quality. Retake in good light, hold steady, and fill the frame with the worklist (or add exams manually).";
+  if (code === "upstream_busy" || status === 529)
+    return `The AI service is momentarily busy — please retry in a few seconds.${ref}`;
+  if (code === "upstream_timeout" || status === 504 || status === 408)
+    return `That took too long — the photo may be too large or complex. Crop to just the worklist and retry.${ref}`;
+  if (code === "unprocessable_attachment")
+    return `The image couldn't be read. Use a clear PNG/JPEG screenshot of the worklist, or add exams manually.${ref}`;
+  return `Extraction failed — the image may be blurry or low quality. Retake in good light, hold steady, and fill the frame with the worklist (or add exams manually).${ref}`;
 }
 
-// Build the Anthropic content block for a monthly-report upload. PDFs go through
-// as a `document` block (the /api/claude proxy forwards them untouched); images
-// reuse prepareImage (downscale + JPEG). Used by the Timeline import.
+// Build the attachment data URL for a monthly-report upload. A PDF is sent as
+// `data:application/pdf;base64,…` and the proxy turns it into a document block
+// server-side; images reuse prepareImage (downscale + JPEG). Timeline import.
 async function prepareDoc(file) {
   if (file.type === "application/pdf" || /\.pdf$/i.test(file.name || "")) {
-    return { type: "document", source: { type: "base64", media_type: "application/pdf", data: await toBase64(file) } };
+    return `data:application/pdf;base64,${await toBase64(file)}`;
   }
   return prepareImage(file);
 }
@@ -630,7 +637,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
     setImpBusy(true); setImpPreview(null); setImpStatus(`Reading ${file.name || "report"}…`);
     try {
       const doc = await prepareDoc(file);
-      const data = await callClaude([{ role: "user", content: [doc, { type: "text", text: timelineUserText }] }], { system: timelineSystemPrompt(), maxTokens: 4000 });
+      const data = await callClaude("timeline", { attachments: [doc] });
       const raw = textOf(data).replace(/```json/gi, "").replace(/```/g, "").trim();
       const so = raw.indexOf("{"), eo = raw.lastIndexOf("}");
       const parsed = JSON.parse(so !== -1 ? raw.slice(so, eo + 1) : raw);
@@ -1093,7 +1100,7 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
     setBusy(true); setStatus(`Reading ${files.length} screenshot${files.length > 1 ? "s" : ""}…`);
     try {
       const imgs = await Promise.all(files.map(prepareImage));
-      const data = await callClaude([{ role: "user", content: [...imgs, { type: "text", text: extractionUserText }] }], { system: extractionSystemPrompt(), maxTokens: 8000 });
+      const data = await callClaude("ocr", { attachments: imgs });
       // Response is an object: {valid:true, exams:[...]} OR {valid:false, reason:"..."}
       const rawText = textOf(data).replace(/```json/gi, "").replace(/```/g, "").trim();
       const so = rawText.indexOf("{"), eo = rawText.lastIndexOf("}");
@@ -1531,17 +1538,15 @@ function ExamsView({ log, settings }) {
 }
 
 /* ============================================================================ CODES REFERENCE ============================================================================ */
+// D8: the per-code "live value" lookup was removed. It issued an ad-hoc,
+// geographically hardcoded search-tool call on every click — uncached,
+// unvalidated, billed, and sitting on the exact boundary where the vendor's own
+// BAA coverage is unclear. The static wRVU table below is the authoritative
+// figure; a sourced pricing layer arrives with the CMS reference platform.
 function Reference({ settings }) {
-  const [q, setQ] = useState(""); const [mod, setMod] = useState("ALL"); const [live, setLive] = useState({});
+  const [q, setQ] = useState(""); const [mod, setMod] = useState("ALL");
   const mods = ["ALL", "CT", "CTA", "MRI", "MRA", "Add-on"];
   const rows = useMemo(() => { const t = q.toLowerCase(); return CODES.filter(c => (mod === "ALL" || c.mod === mod) && (!t || c.cpt.includes(t) || c.desc.toLowerCase().includes(t) || c.region.toLowerCase().includes(t))); }, [q, mod]);
-  async function lookup(c) {
-    setLive(s => ({ ...s, [c.cpt]: { loading: true } }));
-    try {
-      const data = await callClaude([{ role: "user", content: `For CPT ${c.cpt} (${c.desc} ${c.con}), give CURRENT 2026 values: (1) work RVU, (2) Florida Medicare professional-component (mod 26) payment USD, (3) typical commercial/private professional-component payment USD at a Florida academic center (e.g., University of Miami / Jackson). Use web search. Respond ONLY JSON: {"wrvu":0,"medicare_fl":0,"private":0,"note":"short"}` }], { tools: [{ type: "web_search_20250305", name: "web_search" }], maxTokens: 1500 });
-      setLive(s => ({ ...s, [c.cpt]: { loading: false, data: parseJSON(textOf(data)) } }));
-    } catch { setLive(s => ({ ...s, [c.cpt]: { loading: false, error: true } })); }
-  }
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-2xl border border-slate-200 p-4">
@@ -1554,30 +1559,24 @@ function Reference({ settings }) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-200 bg-slate-50/60">
-              <th className="py-2.5 px-4 font-medium">CPT</th><th className="py-2.5 px-2 font-medium">Exam</th><th className="py-2.5 px-2 font-medium">Con.</th><th className="py-2.5 px-2 font-medium text-right">wRVU</th><th className="py-2.5 px-2 font-medium text-right">Comp $</th><th className="py-2.5 px-2 font-medium text-right">Live value</th>
+              <th className="py-2.5 px-4 font-medium">CPT</th><th className="py-2.5 px-2 font-medium">Exam</th><th className="py-2.5 px-2 font-medium">Con.</th><th className="py-2.5 px-2 font-medium text-right">wRVU</th><th className="py-2.5 px-2 font-medium text-right">Comp $</th>
             </tr></thead>
             <tbody>
-              {rows.map(c => { const L = live[c.cpt]; return (
+              {rows.map(c => (
                 <tr key={c.cpt} className="border-b border-slate-50 hover:bg-slate-50/60">
                   <td className="py-2 px-4 font-mono text-xs"><span className="font-semibold">{c.cpt}</span>{c.flag && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-600 align-middle">{c.flag}</span>}</td>
                   <td className="py-2 px-2"><span className="inline-flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full" style={{ background: MOD_COLORS[c.mod] || "#94a3b8" }} />{c.desc}</span></td>
                   <td className="py-2 px-2 font-mono text-xs text-slate-500">{c.con}</td>
                   <td className="py-2 px-2 text-right font-mono font-semibold">{c.wrvu.toFixed(2)}{c.est && <span className="text-amber-500 text-[10px] ml-1">est.</span>}</td>
                   <td className="py-2 px-2 text-right font-mono text-slate-600">${fmt(c.wrvu * settings.ratePerWrvu, 0)}</td>
-                  <td className="py-2 px-2 text-right">
-                    {L?.loading ? <Loader2 className="w-4 h-4 animate-spin text-teal-600 inline" />
-                      : L?.data ? <div className="text-[11px] font-mono leading-tight text-right"><div className="text-emerald-600">wRVU {L.data.wrvu ?? "—"}</div><div className="text-slate-500">FL Mcr ${L.data.medicare_fl ?? "—"}</div><div className="text-indigo-600">Priv ${L.data.private ?? "—"}</div></div>
-                      : L?.error ? <button onClick={() => lookup(c)} className="text-[11px] text-red-400 hover:text-red-600">retry</button>
-                      : <button onClick={() => lookup(c)} className="text-[11px] font-medium text-teal-600 hover:text-teal-700 flex items-center gap-1 ml-auto"><Sparkles className="w-3 h-3" />lookup</button>}
-                  </td>
                 </tr>
-              ); })}
+              ))}
             </tbody>
           </table>
         </div>
         {!rows.length && <div className="py-10 text-center text-sm text-slate-400">No codes match.</div>}
       </div>
-      <p className="text-[11px] text-slate-400 px-1"><span className="text-teal-600 font-medium">Live value</span> queries current Florida Medicare + private/UM-style commercial rates via web search. Static Comp $ = wRVU × your ${settings.ratePerWrvu}/wRVU rate.</p>
+      <p className="text-[11px] text-slate-400 px-1">Comp $ = wRVU × your ${settings.ratePerWrvu}/wRVU rate.</p>
     </div>
   );
 }

@@ -1,31 +1,86 @@
 // Server-side proxy to the Anthropic Messages API.
-// The API key lives ONLY here (as an env var) and is never sent to the browser.
-// Passing `tools` straight through preserves web search; base64 images preserve vision.
-// Auth: only signed-in users may call this (prevents the key being used as an open relay).
+//
+// This route used to forward a client-supplied prompt, tool set and token
+// budget verbatim. It no longer does. The client names a TEMPLATE ID; the
+// system prompt, the tool set (always empty) and the token ceiling are resolved
+// from lib/prompts/registry.js and from nowhere else. A request that carries any
+// of those three fields is a 400 and never reaches the vendor (INV-SERVER-PROMPTS).
+//
+// Every accepted call passes a persisted per-user token bucket and a per-user
+// daily spend cap, and writes a usage row. The edge API's own model calls report
+// into the same meter via /api/internal/usage, so one user has one budget across
+// both services.
+//
+// Errors carry a correlation id and never echo vendor or driver text
+// (INV-NO-RAW-ERRORS); the detail is logged server-side against the same id.
 
 import { auth } from "@clerk/nextjs/server";
+import { parseProxyRequest, buildAnthropicRequest } from "@/lib/prompts/registry";
+import { consumeRateToken, checkCap, recordUsage } from "@/lib/usage/meter";
 
 export const runtime = "nodejs";
-export const maxDuration = 60; // vision + web search can take a while; Pro plan recommended
+export const maxDuration = 60; // vision on a multi-page report can take a while
+
+function envelope(status, code, correlationId, extra = {}) {
+  return Response.json({ error: code, code, correlationId, ...extra }, { status });
+}
+
+// Anthropic's status -> a stable code the client can branch on. The vendor's own
+// message is logged, never returned.
+function upstreamCode(status) {
+  if (status === 413) return "payload_too_large";
+  if (status === 429) return "upstream_rate_limited";
+  if (status === 400) return "unprocessable_attachment";
+  if (status === 401 || status === 403) return "upstream_auth";
+  if (status === 529 || status === 503) return "upstream_busy";
+  if (status === 408 || status === 504) return "upstream_timeout";
+  return "upstream_error";
+}
 
 export async function POST(req) {
+  const correlationId = crypto.randomUUID();
   try {
     const { userId } = await auth();
-    if (!userId) return Response.json({ error: "unauthorized" }, { status: 401 });
+    if (!userId) return envelope(401, "unauthorized", correlationId);
 
-    const { messages, system, tools, maxTokens } = await req.json();
-    const key = process.env.ANTHROPIC_API_KEY;
-    if (!key) {
-      return Response.json({ error: "Missing ANTHROPIC_API_KEY env var" }, { status: 500 });
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      // Not swallowed: the request is rejected and the reason is surfaced.
+      return envelope(400, "invalid_json", correlationId);
     }
 
-    const body = {
-      model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
-      max_tokens: maxTokens || 4000,
-      messages,
-    };
-    if (system) body.system = system;
-    if (tools) body.tools = tools;
+    // --- Per-user rate limit (persisted token bucket). ---
+    // Deliberately BEFORE validation: a stream of malformed requests is still a
+    // stream of requests, and this ordering also makes the limiter probe-able
+    // without spending a cent upstream.
+    const rate = await consumeRateToken(userId);
+    if (!rate.allowed) {
+      return envelope(429, "rate_limited", correlationId, { retryAfterSeconds: rate.retryAfterSeconds });
+    }
+
+    // --- Contract gate. Runs before the vendor is contacted at all. ---
+    const parsed = parseProxyRequest(body);
+    if (!parsed.ok) {
+      console.warn(`[claude] ${correlationId} rejected: ${parsed.code}${parsed.detail ? ` (${parsed.detail})` : ""}`);
+      return envelope(parsed.status || 400, parsed.code, correlationId);
+    }
+    const { template, attachments } = parsed;
+
+    // --- Per-user daily spend cap, shared with the edge API's LLM path. ---
+    const cap = await checkCap(userId);
+    if (!cap.allowed) {
+      return envelope(429, "daily_cap_reached", correlationId, { remaining: 0 });
+    }
+
+    const key = process.env.ANTHROPIC_API_KEY;
+    if (!key) {
+      console.error(`[claude] ${correlationId} ANTHROPIC_API_KEY is not set`);
+      return envelope(500, "not_configured", correlationId);
+    }
+
+    const upstream = buildAnthropicRequest(template, attachments, process.env.ANTHROPIC_MODEL);
 
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -34,24 +89,34 @@ export async function POST(req) {
         "x-api-key": key,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(upstream),
     });
 
-    const data = await r.json();
+    const data = await r.json().catch(() => null);
     if (!r.ok) {
-      // Surface Anthropic's own error (bad image format, payload too large, rate
-      // limit, overloaded, …) in the server logs so silent OCR failures are
-      // diagnosable, and pass the human-readable message back to the client.
-      const detail = data?.error?.message || data?.error || `HTTP ${r.status}`;
-      const imgCount = Array.isArray(messages)
-        ? messages.reduce((n, m) => n + ((Array.isArray(m?.content) ? m.content : []).filter(b => b?.type === "image").length), 0)
-        : 0;
-      console.error(`[claude] Anthropic ${r.status} (${imgCount} image${imgCount === 1 ? "" : "s"}):`, detail);
-      return Response.json({ error: detail, status: r.status }, { status: r.status });
+      const detail = data?.error?.message || data?.error?.type || `HTTP ${r.status}`;
+      console.error(
+        `[claude] ${correlationId} template=${template.id} attachments=${attachments.length} upstream ${r.status}: ${detail}`,
+      );
+      return envelope(r.status, upstreamCode(r.status), correlationId);
     }
-    return Response.json(data, { status: r.status });
+
+    // --- Accounting. A call we cannot account for is not a success. ---
+    const usage = data?.usage || {};
+    const tokensIn =
+      (usage.input_tokens || 0) +
+      (usage.cache_creation_input_tokens || 0) +
+      (usage.cache_read_input_tokens || 0);
+    try {
+      await recordUsage(userId, template.id, tokensIn, usage.output_tokens || 0);
+    } catch (e) {
+      console.error(`[claude] ${correlationId} usage write failed:`, e);
+      return envelope(500, "usage_write_failed", correlationId);
+    }
+
+    return Response.json(data, { status: 200 });
   } catch (e) {
-    console.error("[claude] proxy error:", e);
-    return Response.json({ error: String(e) }, { status: 500 });
+    console.error(`[claude] ${correlationId} proxy error:`, e);
+    return envelope(500, "internal_error", correlationId);
   }
 }

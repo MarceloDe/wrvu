@@ -9,7 +9,9 @@
     "lint": "next lint",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "db:seed": "node --env-file=.env.local scripts/seed.mjs"
+    "db:seed": "node --env-file=.env.local scripts/seed.mjs",
+    "test:llm-proxy-contract": "node scripts/test/llm-proxy-contract.mjs",
+    "verify:shippable": "node scripts/verify/shippable.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^5.7.5",
