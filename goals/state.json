@@ -193,15 +193,12 @@
       ]
     },
     "N21b-repo-strategy": {
-      "status": "ready",
+      "status": "pass",
       "phase": "C",
-      "depends_on": [
-        "N21-ios-rebaseline"
-      ],
-      "blocks": [
+      "decision": "D43 \u2014 keep neurorvu-ios as its own repo; share only contracts/openapi.yaml and the golden fixtures.",
+      "unblocks": [
         "N01-repo-and-typescript"
-      ],
-      "note": "N21 is done, so the monorepo-vs-federated decision can be taken. It is a founder decision, not a build."
+      ]
     },
     "N25x-examdate-precision": {
       "status": "ready",
@@ -216,6 +213,23 @@
       "priority": "major",
       "finding": "Redaction.redact() covers labelled MRN/DOB/SSN, SSN-shaped, date-shaped and 5+ digit runs \u2014 roughly 4 of the Safe Harbor 18. NAMES are not redacted at all, and a name is the identifier a worklist actually contains. Mitigated but not solved by the escalation path's fragment caps, consent sheet and the edge API's own dob|mrn|ssn rejection.",
       "from": "N21"
+    },
+    "N01-repo-and-typescript": {
+      "status": "ready",
+      "phase": "A1",
+      "scope_narrowed_by_D43": "No monorepo. N01 is now TypeScript-in-place for the PWA only \u2014 and N00d/N00f already landed tsconfig.json, .eslintrc.json and several .ts modules, so a good part of it is done."
+    },
+    "N02-real-migrations": {
+      "status": "contracting",
+      "phase": "A1",
+      "priority": 1,
+      "collapsed_by": "D41 \u2014 was N02a/b/c; they shared the migration system and ci.yml"
+    },
+    "N03-ci": {
+      "status": "contracting",
+      "phase": "A1",
+      "priority": 2,
+      "collapsed_by": "D41 \u2014 was N03a/b/c/d/e; 6 of 8 A1 nodes edited ci.yml and 5 mutated branch protection"
     }
   },
   "statuses": {

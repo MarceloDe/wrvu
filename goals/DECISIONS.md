@@ -180,6 +180,16 @@ founder rule, and it is why D12 and D14 were revised again above.
 
 ---
 
+## D41–D43 · Corrections from the A1 contract attempts (2026-08-18)
+
+| ID | Decision | Consequence |
+|---|---|---|
+| **D41** | **One contract per node, EXCEPT where nodes share a mutable target.** Nodes that edit the same file, or mutate the same production setting, are ONE node. | **Amends D24.** Two Contractor passes on N02/N03 were rejected 0-of-8 and got *worse* (142 → 154 problems, blockers flat at 14). Root cause measured: **6 of 8 nodes edit `.github/workflows/ci.yml` and 5 of 8 mutate branch protection on `main`.** One node's teardown deleted another's base; one node's static assertion was falsified by an edit a sibling was *required* to make. The auditor was correct every time — the granularity was wrong. Same failure as N00c/N00d/N00f all rewriting `callClaude()`. `N02a/b/c` collapse to **`N02`**; `N03a/b/c/d/e` collapse to **`N03`**. |
+| **D42** | **When the loop fails to converge, the operator writes the contract and the loop audits it.** | Two passes cost ~4.3M subagent tokens for zero accepted contracts. The Contractor→Auditor loop is valuable precisely because the auditor is independent — that property is preserved by having a different author, not necessarily an agent author. Auditing stays with a fresh agent that did not write the contract. |
+| **D43** | **Keep `neurorvu-ios` as its own repo.** Share only `contracts/openapi.yaml` and the golden fixtures. | **Resolves N21b, unblocking N01.** Lowest disruption to an app already on TestFlight: no Vercel re-link, no Xcode path shuffle, no harness-pointer rewrite. Cross-repo PRs remain impossible — N00c already proved that is survivable, since additive-only contract changes (INV-ADDITIVE-CONTRACTS) cover the skew risk without needing one atomic PR. |
+
+---
+
 ## Open items still unresolved
 
 1. ~~**AMA CPT distribution licence**~~ — **closed by D14-v2.** No licensed descriptor text is

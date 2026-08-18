@@ -1,0 +1,137 @@
+id: N02-real-migrations
+title: Drizzle migrations become the single schema source, with a rollback that is proven
+goal_refs: [G10]
+decisions: [D19, D41]
+depends_on: []
+phase: A1
+estimate_hours: 10
+priority: 1
+
+collapsed_by_D41: >
+  Was N02a-baseline-migration + N02b-migration-ci-check + N02c-rollback-harness. All three
+  mutate the same migration system and the same ci.yml, so their verification steps tore
+  down each other's preconditions. Two Contractor passes were rejected with 51 problems
+  across the three. One node, one owner.
+
+rationale: >
+  Two schema definitions used to exist and were hand-synced; N00a deleted the DDL-over-HTTP
+  endpoint, so the Drizzle model in lib/db/schema.js is now the only definition — but there
+  is still no migration history. drizzle.config.js points `out` at ./drizzle, which today
+  contains exactly one hand-written file (0001_llm_usage.sql from N00c) and no journal.
+  There is no _migrations table, so nothing records that 0001 was applied to production —
+  and it WAS applied, by hand, through a SQL console, on 2026-08-18. That is precisely the
+  failure this node exists to end: the schema of record is currently "what somebody typed".
+
+context_query: >
+  codegraph explore "drizzle.config.js lib/db/schema.js lib/db/index.js drizzle 0001_llm_usage migration"
+
+contracts:
+  - "drizzle/0000_baseline.sql exists and reproduces the CURRENT production schema exactly:
+     every table, column, type, default, index and constraint present on Neon branch main
+     as of this node, and nothing else"
+  - "drizzle/meta/_journal.json lists 0000_baseline then 0001_llm_usage, in that order"
+  - "lib/db/migrate.mjs exports run(url) which applies pending migrations inside a
+     transaction, records each in a `_migrations` table (name, checksum, applied_at), is
+     idempotent (a second run applies nothing), and REFUSES to run when the checksum of an
+     already-applied migration no longer matches the file on disk"
+  - "package.json gains db:migrate (apply) and db:migrate:check (report pending, exit 1 if
+     the Drizzle model and the migration files disagree). db:push is REMOVED — it is the
+     unversioned path this node exists to replace"
+  - "The _migrations table is backfilled on the production branch so 0000_baseline and
+     0001_llm_usage are both recorded as applied, WITHOUT re-running their DDL"
+  - "A rollback exists per migration as drizzle/<name>.down.sql, and 0001_llm_usage.down.sql
+     is the pair already stated in that file's header"
+
+invariants: [INV-PROD-AUDITED, INV-NO-SWALLOW, INV-CHECKS-ACTUALLY-RUN, INV-ALWAYS-SHIPPABLE]
+
+# Every command below is INDEPENDENT: no shared shell, no shared cwd, no variables carried
+# between steps. Placeholders in <angle brackets> are filled by the operator/Validator from
+# a named evidence file. Run from the repo root unless a step says otherwise.
+verify:
+  runtime:
+    - "mkdir -p goals/evidence/N02-real-migrations"
+
+    # --- the baseline actually reproduces production ---
+    - "node scripts/verify/schema-diff.mjs --left \"$DATABASE_URL_UNPOOLED\" --right-from-sql drizzle/0000_baseline.sql --out goals/evidence/N02-real-migrations/baseline-vs-dev.json
+       # dev branch already carries the real schema; asserts ZERO differences and exits 1 otherwise"
+    - "test -s goals/evidence/N02-real-migrations/baseline-vs-dev.json"
+    - "node -e \"const d=require('./goals/evidence/N02-real-migrations/baseline-vs-dev.json'); if(!Array.isArray(d.differences)) {console.error('malformed report'); process.exit(1);} if(d.differences.length){console.error(d.differences); process.exit(1);} console.log('baseline matches, 0 differences')\""
+
+    # --- the journal exists and is ordered ---
+    - "node -e \"const j=require('./drizzle/meta/_journal.json'); const n=j.entries.map(e=>e.tag); if(JSON.stringify(n)!==JSON.stringify(['0000_baseline','0001_llm_usage'])){console.error('journal order wrong:',n); process.exit(1)} console.log('journal ok')\""
+
+    # --- replay from empty proves the migrations, not the seed ---
+    - "node scripts/verify/migration-replay.mjs --fresh-branch --out goals/evidence/N02-real-migrations/replay.json
+       # creates a Neon branch from EMPTY, applies 0000 then 0001, diffs the result against
+       # the dev branch schema, deletes the branch, and exits 1 on any difference"
+    - "node -e \"const r=require('./goals/evidence/N02-real-migrations/replay.json'); if(r.applied!==2||r.differences.length){console.error(r); process.exit(1)} console.log('replay clean')\""
+
+    # --- idempotence and checksum guard ---
+    - "node --env-file=.env.local lib/db/migrate.mjs --url \"$DATABASE_URL_UNPOOLED\" 2>&1 | tee goals/evidence/N02-real-migrations/migrate-second-run.txt"
+    - "grep -q 'nothing to apply' goals/evidence/N02-real-migrations/migrate-second-run.txt"
+    - "node scripts/verify/checksum-guard.mjs --out goals/evidence/N02-real-migrations/checksum-guard.txt
+       # mutates a byte of an APPLIED migration in a temp copy, runs the migrator against it,
+       # asserts a NON-ZERO exit and a message naming the file; restores the file"
+    - "grep -q 'REFUSED' goals/evidence/N02-real-migrations/checksum-guard.txt"
+
+    # --- the app still works ---
+    - "node --env-file=.env.local ./node_modules/.bin/next build 2>&1 | tee goals/evidence/N02-real-migrations/next-build.txt"
+    - "grep -q 'Compiled successfully' goals/evidence/N02-real-migrations/next-build.txt"
+    - "npm run test:route-contracts"
+
+  static:
+    # Each negated check first asserts its target EXISTS, so it cannot pass vacuously
+    # (INV-CHECKS-ACTUALLY-RUN).
+    - "test -f package.json && ! grep -q '\"db:push\"' package.json"
+    - "test -f package.json && grep -q '\"db:migrate\"' package.json"
+    - "test -f package.json && grep -q '\"db:migrate:check\"' package.json"
+    - "test -f drizzle/0000_baseline.sql && test -s drizzle/0000_baseline.sql"
+    - "test -f drizzle/0001_llm_usage.down.sql && test -s drizzle/0001_llm_usage.down.sql"
+    - "test -f lib/db/migrate.mjs && grep -q '_migrations' lib/db/migrate.mjs"
+
+  evidence:
+    - baseline-vs-dev.json
+    - replay.json
+    - migrate-second-run.txt
+    - checksum-guard.txt
+    - next-build.txt
+    - prod-backfill.txt
+
+done_when:
+  - "drizzle/0000_baseline.sql applied to a Neon branch created from EMPTY, followed by
+     0001_llm_usage, produces a schema with ZERO differences from the current dev branch —
+     proven by replay.json, which a fresh agent can regenerate by re-running the command"
+  - "drizzle/meta/_journal.json lists exactly ['0000_baseline','0001_llm_usage'] in order"
+  - "Running the migrator twice applies nothing the second time and says so"
+  - "Corrupting an already-applied migration file makes the migrator exit non-zero and name
+     the file — proven by checksum-guard.txt, regenerable on demand"
+  - "db:push no longer exists in package.json; db:migrate and db:migrate:check do"
+  - "On the PRODUCTION branch, _migrations records 0000_baseline and 0001_llm_usage as
+     applied, and the tables llm_usage and llm_rate_buckets are unchanged (they were created
+     by hand on 2026-08-18; the backfill must RECORD, never re-run)"
+  - "next build compiles and test:route-contracts passes on the node's branch"
+
+production_step:
+  what: "Backfill _migrations on the production branch so history starts recorded rather than assumed."
+  order: >
+    INV-PROD-AUDITED requires the audit entry to be written BEFORE the mutation, not after a
+    successful one. Append the entry naming the snapshot, then mutate, then append the outcome.
+  procedure:
+    - "append a pending entry to goals/evidence/prod-audit-log.jsonl naming the snapshot branch"
+    - "create Neon branch pre-N02-migrations-backfill from main (full data+schema, auto-delete never)"
+    - "apply ONLY the _migrations table creation and the two INSERT rows — no other DDL"
+    - "verify: select name from _migrations order by name  ->  0000_baseline, 0001_llm_usage"
+    - "verify: llm_usage and llm_rate_buckets still exist and are untouched"
+    - "append the outcome to the same audit entry, and tee the console output to prod-backfill.txt"
+
+rollback: >
+  drop table if exists _migrations;  — removes only the history table. No application
+  schema is touched by the backfill, so nothing else needs undoing. If a future migration
+  goes wrong, restore from the pre-N02-migrations-backfill branch.
+
+notes: >
+  Do NOT let the baseline be generated by `drizzle-kit pull` against dev and left at that:
+  introspection output is a description of the current state, not a migration that has been
+  shown to produce it. The replay-from-empty step is what turns it into one.
+  drizzle.config.js already resolves DATABASE_URL_UNPOOLED for migrations (main, c297b89) —
+  do not re-point it at the pooled URL; pgBouncer breaks session-level DDL.

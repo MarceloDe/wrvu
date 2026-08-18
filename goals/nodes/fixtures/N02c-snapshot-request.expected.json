@@ -1,0 +1,20 @@
+{
+  "method": "POST",
+  "url": "https://console.neon.tech/api/v2/projects/proj-fixture-0000/branches",
+  "headers": {
+    "Accept": "application/json",
+    "Authorization": "Bearer <NEON_API_KEY>",
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "branch": {
+      "name": "pre-N02c-selftest-2026-01-02",
+      "parent_id": "br-fixture-0000"
+    },
+    "endpoints": [
+      {
+        "type": "read_write"
+      }
+    ]
+  }
+}

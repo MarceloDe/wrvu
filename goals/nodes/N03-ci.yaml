@@ -1,0 +1,140 @@
+id: N03-ci
+title: CI runs the real checks on every PR, and a red PR cannot merge
+goal_refs: [G10]
+decisions: [D19, D41, D33]
+depends_on: []
+phase: A1
+estimate_hours: 12
+priority: 2
+
+collapsed_by_D41: >
+  Was N03a-github-actions-base + N03b-eslint-invariant-rules + N03c-neon-branch-runner +
+  N03d-macos-runner + N03e-verify-shippable. Six of eight A1 nodes edited .github/workflows/ci.yml
+  and five mutated branch protection on main. Two Contractor passes were rejected with 103
+  problems across the five, most of them caused by that sharing: one node's teardown deleted
+  another's base, and one node's file-wide static assertion was falsified by an edit a sibling
+  was REQUIRED to make. This node owns ci.yml and branch protection outright.
+
+rationale: >
+  There is no CI at all. `npm run lint` only became real in N00d. INV-ALWAYS-SHIPPABLE has no
+  executable check, so it is currently a slogan — the same vacuous-invariant class that
+  INV-CHECKS-ACTUALLY-RUN was created to forbid, sitting on the invariant that every later
+  node depends on. Nothing prevents a red PR from merging to a branch that auto-deploys to
+  production.
+
+context_query: >
+  codegraph explore "package.json scripts lint test:redaction test:error-envelope test:route-contracts test:llm-proxy-contract verify shippable"
+
+contracts:
+  - ".github/workflows/ci.yml defines ONE job with the key `checks` and NO job-level `name:`
+     and NO `strategy.matrix` — because the required-status-check context is the job's DISPLAY
+     name, and either of those silently renames it, leaving main requiring a context that
+     never reports and therefore permanently unmergeable"
+  - "The job runs, in order: npm ci · npm run lint · npx tsc --noEmit · npm run test:redaction ·
+     npm run test:error-envelope · npm run test:route-contracts · npm run test:llm-proxy-contract ·
+     node scripts/verify/forged-attachment-ci.mjs"
+  - "It triggers on pull_request and on push to main, and runs on ubuntu-latest"
+  - "package.json gains `verify:shippable`, which runs the PWA suite above and exits non-zero
+     if any part fails. It does NOT attempt the iOS build — see ios_scope"
+  - "goals/INVARIANTS.yaml: the four `pnpm --filter @rad/core --fail-if-no-match <script>`
+     checks whose scripts EXIST under npm today are rewritten as `npm run <script>`. The total
+     count of `cmd:` lines is unchanged, so the rewrite cannot be satisfied by deletion"
+  - "Branch protection on main requires the `checks` context, with enforce_admins TRUE —
+     every actor here holds an admin token, so enforce_admins false would leave the rule
+     decorative"
+
+ios_scope: >
+  verify:shippable covers the PWA only, deliberately. N20y established that
+  rotatedFixtureStillParses fails on the iOS 27.0 runtime and passes 52/52 on 26.5 — a Vision
+  regression, not a code defect. Wiring the iOS suite into a required check before N20y is
+  resolved would make main unmergeable for a reason unrelated to any change. A macOS runner is
+  a follow-up node, gated on N20y, and must PIN the simulator runtime.
+
+invariants: [INV-ALWAYS-SHIPPABLE, INV-CHECKS-ACTUALLY-RUN, INV-PROD-AUDITED, INV-NO-SWALLOW]
+
+verify:
+  runtime:
+    - "mkdir -p goals/evidence/N03-ci"
+
+    # --- the workflow is well-formed BEFORE anything is pushed ---
+    - "test -f .github/workflows/ci.yml"
+    - "python3 -c \"import yaml,sys; w=yaml.safe_load(open('.github/workflows/ci.yml')); j=w['jobs']; assert list(j)==['checks'], list(j); assert 'name' not in j['checks'], 'job-level name renames the required context'; assert 'strategy' not in j['checks'], 'matrix renames the required context'; assert j['checks']['runs-on']=='ubuntu-latest'; print('workflow shape ok')\""
+
+    # --- a GREEN run exists, and its steps are the contracted ones in order ---
+    - "gh pr create --draft --base main --head builder/N03-ci --title 'N03 CI' --body 'verification' || gh pr view builder/N03-ci --json number
+       # idempotent: a re-deriving Validator must not abort on 'a pull request already exists'"
+    - "node scripts/verify/gh-wait-run.mjs --branch builder/N03-ci --sha \"$(git rev-parse origin/builder/N03-ci)\" --out goals/evidence/N03-ci/ci-green-run.json
+       # polls until a run whose headSha MATCHES exists and has completed; never picks a stale run"
+    - "node -e \"const r=require('./goals/evidence/N03-ci/ci-green-run.json'); if(r.conclusion!=='success'){console.error(r.conclusion);process.exit(1)} if(r.event!=='pull_request'){console.error('event',r.event);process.exit(1)} const s=r.jobs[0].steps.map(x=>x.name); const want=['npm ci','npm run lint','npx tsc --noEmit','npm run test:redaction','npm run test:error-envelope','npm run test:route-contracts','npm run test:llm-proxy-contract']; for(const w of want){ if(!s.includes(w)){console.error('missing step',w);process.exit(1)} } console.log('green run ok, context name:', r.jobs[0].name)\""
+
+    # --- POISON: each must go red AT ITS OWN STEP. Cut from main AFTER ci.yml is there. ---
+    - "node scripts/verify/poison.mjs --name lint      --expect-step 'npm run lint'            --out goals/evidence/N03-ci/poison-lint.json"
+    - "node scripts/verify/poison.mjs --name typecheck --expect-step 'npx tsc --noEmit'        --out goals/evidence/N03-ci/poison-typecheck.json"
+    - "node scripts/verify/poison.mjs --name redaction --expect-step 'npm run test:redaction'  --out goals/evidence/N03-ci/poison-redaction.json"
+    - "node scripts/verify/poison.mjs --name zerotests --expect-step 'npm run test:redaction'  --out goals/evidence/N03-ci/poison-zerotests.json
+       # stubs the runner to collect ZERO tests. On a suite without a count guard this goes
+       # GREEN; it must go RED. This is the INV-CHECKS-ACTUALLY-RUN probe."
+    - "node -e \"for(const f of ['lint','typecheck','redaction','zerotests']){const r=require('./goals/evidence/N03-ci/poison-'+f+'.json'); if(r.conclusion!=='failure'){console.error(f,'was',r.conclusion);process.exit(1)} if(r.failedStep!==r.expectedStep){console.error(f,'failed at',r.failedStep,'wanted',r.expectedStep);process.exit(1)}} console.log('all four poisons red at the right step')\""
+
+    # --- enforcement is BEHAVIOURAL, not just configured ---
+    - "node scripts/verify/merge-blocked.mjs --pr-from goals/evidence/N03-ci/poison-lint.json --out goals/evidence/N03-ci/merge-blocked.json
+       # polls mergeStateStatus until it is not UNKNOWN, asserts BLOCKED, then attempts the
+       # merge via the API and asserts a NON-ZERO exit. Leaves the PR OPEN."
+    - "node -e \"const m=require('./goals/evidence/N03-ci/merge-blocked.json'); if(m.mergeStateStatus!=='BLOCKED'||m.mergeAttemptSucceeded){console.error(m);process.exit(1)} console.log('a red PR cannot merge')\""
+
+    - "npm run verify:shippable 2>&1 | tee goals/evidence/N03-ci/verify-shippable.txt"
+
+  static:
+    - "test -f .github/workflows/ci.yml && ! grep -qE '^\\s*name:' .github/workflows/ci.yml"
+    - "test -f goals/INVARIANTS.yaml && test \"$(grep -c 'cmd:' goals/INVARIANTS.yaml)\" = 33"
+    - "test -f goals/INVARIANTS.yaml && grep -q 'cmd: npm run lint' goals/INVARIANTS.yaml"
+    - "test -f goals/INVARIANTS.yaml && grep -q 'cmd: npm run test:route-contracts' goals/INVARIANTS.yaml"
+    - "test -f goals/INVARIANTS.yaml && grep -q 'cmd: npm run test:llm-proxy-contract' goals/INVARIANTS.yaml"
+    - "test -f goals/INVARIANTS.yaml && grep -q 'cmd: npm run test:error-envelope' goals/INVARIANTS.yaml"
+    - "test -f package.json && grep -q '\"verify:shippable\"' package.json"
+
+  evidence:
+    - ci-green-run.json
+    - poison-lint.json
+    - poison-typecheck.json
+    - poison-redaction.json
+    - poison-zerotests.json
+    - merge-blocked.json
+    - verify-shippable.txt
+    - branch-protection.json
+
+done_when:
+  - "A green run on a real PR shows the eight contracted steps, in order, with event=pull_request"
+  - "Four poison branches each go RED at their own named step — proven by four JSON files a
+     fresh agent can regenerate, because the poison branches and their PRs are LEFT OPEN"
+  - "The zero-tests poison goes RED. On a suite without a count guard it would go green; that
+     contrast is the check that INV-CHECKS-ACTUALLY-RUN is real here"
+  - "The poison-lint PR reports mergeStateStatus BLOCKED and an API merge attempt exits
+     non-zero, with enforce_admins true"
+  - "INVARIANTS.yaml still has exactly 33 cmd: lines, and the four rewritten ones are present
+     as npm run — so the rewrite cannot have been satisfied by deleting them"
+  - "npm run verify:shippable exits zero on the node's branch"
+
+teardown: >
+  DO NOT delete builder/N03-ci or any poison branch or PR as part of this node. Six verify
+  steps resolve them, and done_when #2 and #4 are only re-derivable while they exist. A
+  closed PR reports CLOSED and cannot be merge-attempted, which would leave the Validator
+  with nothing but Builder-written JSON. The Validator signs off first; cleanup is a separate
+  chore afterwards.
+
+production_step:
+  what: "Branch protection on main."
+  order: "Append the audit entry BEFORE the PUT, then record the outcome — INV-PROD-AUDITED covers every attempt, not every success."
+  note: "enforce_admins MUST be true. Every actor here holds an admin token."
+
+rollback: >
+  gh api -X DELETE repos/MarceloDe/wrvu/branches/main/protection removes the rule; deleting
+  .github/workflows/ci.yml removes the checks. Both are reversible and neither touches
+  application code. Prefer fixing forward: without this node a red PR can reach production.
+
+notes: >
+  The poison branches must be cut from main AFTER ci.yml is on main. A poison branch cut from
+  a base where the workflow does not exist produces ZERO runs, and `gh run list ... --jq '.[0]'`
+  then prints null and exits 0 — a vacuous pass inside the node that exists to forbid them.
+  Pick poison content that cannot break the production build if protection fails and it merges:
+  put it under scripts/, which npm run lint covers and next build does not.
