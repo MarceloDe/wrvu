@@ -52,10 +52,11 @@
       "blocked_on": "clerk-coffee-notebook is shared with brainstywebsitevercel, so an installation-level rotation affects both projects"
     },
     "N00c-pwa-lock-llm-proxy": {
-      "status": "blocked_external",
+      "status": "ready",
       "depends_on": [],
       "priority": 3,
-      "blocked_on": "writable DATABASE_URL + preview deploy + real Clerk session; see prerequisites in the node"
+      "unblocked_2026_08_18": "dev Neon branch + .env.local + permission rules now exist; the llm_usage migration and the rate-limit/spend-cap probes can run against dev",
+      "still_needs": "a preview deployment URL and a real Clerk session for the live HTTP probes"
     },
     "N00c-edge-usage-cap": {
       "status": "blocked",
@@ -71,12 +72,11 @@
       "priority": 4
     },
     "N00e-mfa-and-password-policy": {
-      "status": "blocked",
-      "depends_on": [
-        "N00b-rotate-credentials"
-      ],
+      "status": "ready",
+      "depends_on": [],
       "priority": 5,
-      "warning": "forces MFA enrolment on every colleague"
+      "verified_2026_08_18": "ZERO MFA strategies are enabled in Clerk. SMS is unavailable (phone numbers disabled); Authenticator app is OFF; backup codes require it; 'Require MFA' is not selectable until a strategy is enabled.",
+      "warning": "enabling forces every colleague to enrol at next sign-in"
     },
     "N00f-redact-before-upload": {
       "status": "ready",
@@ -94,5 +94,24 @@
     "blocked_external": "work complete and all runnable checks pass; named verifications need operator credentials, a deploy, or infrastructure the agent cannot reach"
   },
   "backlog_ref": "goals/BACKLOG.yaml",
-  "evidence_dir": "goals/evidence"
+  "evidence_dir": "goals/evidence",
+  "dev_database": {
+    "provider": "Neon branch on neon-almond-leaf",
+    "branch": "dev",
+    "branch_id": "br-late-paper-at5h75si",
+    "parent": "main",
+    "type": "SCHEMA-ONLY \u2014 15 tables, zero rows, verified writable",
+    "auto_delete": "Never",
+    "postgres": "17.10",
+    "created": "2026-08-18",
+    "local_env": ".env.local (mode 600, gitignored) \u2014 pooled DATABASE_URL + unpooled DATABASE_URL_UNPOOLED",
+    "verified": [
+      "pooled connect ok",
+      "unpooled connect ok",
+      "drizzle-kit check ok",
+      "drizzle-kit pull ok",
+      "write/read/drop ok"
+    ],
+    "note": "Contains no production rows, so it is safe for agent use and satisfies D25a."
+  }
 }
