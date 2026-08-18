@@ -174,8 +174,48 @@
       "relevant_to": "N03d-macos-runner must pin a runtime, or CI will be red on 27 for reasons unrelated to the code."
     },
     "N21-ios-rebaseline": {
+      "status": "pass",
+      "phase": "C",
+      "priority": 1,
+      "deliverable": "goals/evidence/N21-ios-rebaseline/rebaseline-2026-08-18.md",
+      "audited": "neurorvu-ios @ 5bbae8a, clean tree",
+      "phase_c_estimate": "~10-14 weeks (was 12-20 as greenfield, withdrawn). Less construction, more hardening: Xcode, Vision OCR, Clerk auth, cloud sync, CloudKit backup, privacy manifest and the TestFlight pipeline are all DONE.",
+      "key_findings": [
+        "PARITY HOLDS exactly today: 61/61 codes, zero wRVU disagreements, same CF \u2014 but by duplication, not construction",
+        "NO patient identifier field exists in any SwiftData model",
+        "examDate is transmitted at full ISO8601 SECOND precision \u2014 a live Safe Harbor issue confirming the proposal's 1.8 analysis against the shipping app",
+        "Redaction covers ~4 of the Safe Harbor 18; NAMES are not redacted at all",
+        "Zero MFA and zero app lock on the client",
+        "No clinical-refusal clause on the FoundationModels path \u2014 low risk by construction (narrow task, structured output), but INV-NO-CLINICAL is unenforced"
+      ],
+      "unblocks": [
+        "N21b-repo-strategy"
+      ]
+    },
+    "N21b-repo-strategy": {
       "status": "ready",
-      "unblocked": "2026-08-18 \u2014 N20x fixed and pushed; the iOS working tree is clean for the first time this session"
+      "phase": "C",
+      "depends_on": [
+        "N21-ios-rebaseline"
+      ],
+      "blocks": [
+        "N01-repo-and-typescript"
+      ],
+      "note": "N21 is done, so the monorepo-vs-federated decision can be taken. It is a founder decision, not a build."
+    },
+    "N25x-examdate-precision": {
+      "status": "ready",
+      "phase": "C",
+      "priority": "major",
+      "finding": "CloudSyncService.swift:177 sends examDate at full ISO8601 second precision. Under Safe Harbor any date finer than the year is an identifier, so the cloud store is a limited data set rather than de-identified data. Truncating to DAY in the sync payload (keeping second precision on device) is a small change with real compliance value and should not wait for Phase C.",
+      "from": "N21"
+    },
+    "N25y-redact-names": {
+      "status": "ready",
+      "phase": "C",
+      "priority": "major",
+      "finding": "Redaction.redact() covers labelled MRN/DOB/SSN, SSN-shaped, date-shaped and 5+ digit runs \u2014 roughly 4 of the Safe Harbor 18. NAMES are not redacted at all, and a name is the identifier a worklist actually contains. Mitigated but not solved by the escalation path's fragment caps, consent sheet and the edge API's own dob|mrn|ssn rejection.",
+      "from": "N21"
     }
   },
   "statuses": {
