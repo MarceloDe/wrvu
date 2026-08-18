@@ -220,16 +220,50 @@
       "scope_narrowed_by_D43": "No monorepo. N01 is now TypeScript-in-place for the PWA only \u2014 and N00d/N00f already landed tsconfig.json, .eslintrc.json and several .ts modules, so a good part of it is done."
     },
     "N02-real-migrations": {
-      "status": "contracting",
+      "status": "blocked",
       "phase": "A1",
       "priority": 1,
-      "collapsed_by": "D41 \u2014 was N02a/b/c; they shared the migration system and ci.yml"
+      "collapsed_by": "D41 \u2014 was N02a/b/c; they shared the migration system and ci.yml",
+      "blocked_on": "verification tooling does not exist: schema-diff.mjs, migration-replay.mjs, checksum-guard.mjs. See N0V."
     },
     "N03-ci": {
-      "status": "contracting",
+      "status": "blocked",
       "phase": "A1",
       "priority": 2,
-      "collapsed_by": "D41 \u2014 was N03a/b/c/d/e; 6 of 8 A1 nodes edited ci.yml and 5 mutated branch protection"
+      "collapsed_by": "D41 \u2014 was N03a/b/c/d/e; 6 of 8 A1 nodes edited ci.yml and 5 mutated branch protection",
+      "blocked_on": "verification tooling does not exist: gh-wait-run.mjs, poison.mjs, merge-blocked.mjs, and the verify:shippable npm script. See N0V."
+    },
+    "N0V-verification-tooling": {
+      "status": "ready",
+      "phase": "A1",
+      "priority": 0,
+      "title": "Make the invariant suite executable",
+      "why": "Three contract passes were rejected (two Contractor, one hand-written). The mechanical cause is now visible: 12 of 33 checks in INVARIANTS.yaml reference scripts that DO NOT EXIST, and N02/N03 reference 6 more. Contracts cannot be accepted while they reference fiction, so this blocks all of A1.",
+      "already_done": "scripts/verify/checks-are-executable.mjs \u2014 the meta-check for INV-CHECKS-ACTUALLY-RUN. It finds all 26 problems mechanically in under a second, including three in A0 nodes already marked pass.",
+      "missing_invariant_scripts": [
+        "contract-compat.mjs",
+        "no-est-flag.mjs",
+        "source-terms.mjs",
+        "rls-enabled.mjs",
+        "parity-report.mjs",
+        "prod-audit-log.mjs",
+        "dead-code.mjs",
+        "phi-schema-scan.mjs",
+        "clerk-callsite-scan.mjs",
+        "descriptor-separable.mjs",
+        "flag-hygiene.mjs"
+      ],
+      "missing_node_scripts": [
+        "schema-diff.mjs",
+        "migration-replay.mjs",
+        "checksum-guard.mjs",
+        "gh-wait-run.mjs",
+        "poison.mjs",
+        "merge-blocked.mjs",
+        "mfa-required.mjs",
+        "weak-password-rejected.mjs"
+      ],
+      "also": "N00f still carries a vacuous 'pnpm --filter' without --fail-if-no-match, and N00b references $OLD_CLERK_KEY which is unset. Both were marked pass before the meta-check existed."
     }
   },
   "statuses": {
