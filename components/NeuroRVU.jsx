@@ -130,15 +130,48 @@ async function callClaude(messages, { system, tools, maxTokens = 4000 } = {}) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ messages, system, tools, maxTokens }),
   });
-  const data = await res.json().catch(() => ({}));
+  let data = {};
+  let readable = true;
+  try { data = await res.json(); } catch { readable = false; }
   if (!res.ok) {
-    // Keep the status + Anthropic's message so callers can give specific feedback.
+    // The server sends a generic code + correlation id — never vendor text.
+    // ocrErrorMessage() turns the code into the specific guidance below.
     const err = new Error(`API ${res.status}`);
     err.status = res.status;
-    err.detail = String(data?.error?.message || data?.error || "");
+    err.code = data?.error?.code || (readable ? "" : "invalid_response");
+    err.correlationId = data?.error?.correlationId || res.headers.get("x-correlation-id") || "";
+    throw err;
+  }
+  if (!readable) {
+    const err = new Error("API response was not JSON");
+    err.status = res.status;
+    err.code = "invalid_response";
     throw err;
   }
   return data;
+}
+
+/* ---------------------------- failure messages ----------------------------
+   The API never tells the browser what went wrong internally — it sends
+   { error: { code, correlationId } }. These two helpers turn that into a
+   sentence the UI renders, keeping the correlation id so a user can quote it. */
+async function apiFailure(res, what) {
+  let code = "";
+  let ref = res.headers.get("x-correlation-id") || "";
+  try {
+    const body = await res.json();
+    code = body?.error?.code || "";
+    ref = body?.error?.correlationId || ref;
+  } catch { code = code || ""; }
+  const reason =
+    res.status === 401 || code === "unauthorized" ? "your session expired — sign in again"
+    : code === "storage_unavailable" ? "the database could not be reached"
+    : res.status >= 500 ? "the server had a problem"
+    : "the request was rejected";
+  return `${what} — ${reason}.${ref ? ` (ref ${ref})` : ""}`;
+}
+function networkFailure(what) {
+  return `${what} — the server is unreachable. Check your connection and try again.`;
 }
 const textOf = (d) => (d.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
 function parseJSON(raw) {
@@ -158,7 +191,10 @@ const toBase64 = (file) => new Promise((res, rej) => { const r = new FileReader(
 // Turn any OCR failure into a specific, actionable message for the user.
 function ocrErrorMessage(err) {
   const status = err?.status;
+  const code = err?.code;
   const detail = String(err?.detail || err?.message || "").toLowerCase();
+  // N00f/D8 first: these are CLIENT-side blocks that fire before anything is sent,
+  // so they can never be confused with an upstream failure.
   // N00f/D8 — redaction refusals are surfaced verbatim: the upload was blocked
   // on purpose and the user has to know why (INV-NO-SWALLOW).
   if (err?.code === "redaction-profile-required" || err?.code === "profile-incomplete" || err?.code === "profile-not-geometry" || err?.code === "profile-invalid")
@@ -167,6 +203,24 @@ function ocrErrorMessage(err) {
     return "Upload blocked: that image was not redacted. Nothing was sent. Re-mark the patient-name and MRN columns and try again.";
   if (err?.code === "image-undecodable" || err?.code === "canvas-unavailable")
     return "That image couldn't be processed on this device, so it can't be redacted — and an unredacted image is never uploaded. Try a PNG/JPEG screenshot.";
+  // N00d: server-classified upstream failures, each carrying a correlation id.
+  const ref = err?.correlationId ? ` (ref ${err.correlationId})` : "";
+  // The server classifies the upstream failure into one of these codes; the
+  // wording below is the same guidance this function has always given.
+  if (code === "upstream_payload_too_large")
+    return "That image is too large. Crop tightly to the worklist, or upload a screenshot instead of a full-resolution photo." + ref;
+  if (code === "upstream_rate_limited")
+    return "Too many requests right now — wait a few seconds and try again." + ref;
+  if (code === "upstream_overloaded")
+    return "The AI service is momentarily busy — please retry in a few seconds." + ref;
+  if (code === "upstream_timeout")
+    return "That took too long — the photo may be too large or complex. Crop to just the worklist and retry." + ref;
+  if (code === "upstream_invalid_image")
+    return "The image couldn't be read. Use a clear PNG/JPEG screenshot of the worklist, or add exams manually." + ref;
+  if (code === "unauthorized")
+    return "Your session expired — sign in again and re-upload." + ref;
+  if (code === "config_missing")
+    return "Extraction is not configured on the server — tell the administrator." + ref;
   if (err?.code === "unsupported-format")
     return "That photo format isn't supported. On iPhone, take a screenshot of the worklist instead of a photo, or set Settings → Camera → Formats → “Most Compatible” (JPEG). PNG/JPEG work best.";
   if (status === 401 || status === 403)
@@ -181,7 +235,7 @@ function ocrErrorMessage(err) {
     return "That took too long — the photo may be too large or complex. Crop to just the worklist and retry.";
   if (detail.includes("media type") || detail.includes("invalid_request") || detail.includes("could not process image"))
     return "The image couldn't be read. Use a clear PNG/JPEG screenshot of the worklist, or add exams manually.";
-  return "Extraction failed — the image may be blurry or low quality. Retake in good light, hold steady, and fill the frame with the worklist (or add exams manually).";
+  return "Extraction failed — the image may be blurry or low quality. Retake in good light, hold steady, and fill the frame with the worklist (or add exams manually)." + ref;
 }
 
 const isPdf = (file) => file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
@@ -240,22 +294,30 @@ const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const FIELD_LABEL = { bench: "Benchmark", base: "Actual (base)", extra: "Extra coverage", pay: "Extra pay ($)", cfte: "cFTE" };
 
 /* ============================== STORAGE ============================== */
+const KEY_LABEL = { nrv_baseline: "reported baseline", nrv_settings: "settings", nrv_explorer: "saved date range" };
+// Returns { value, error } — a read that failed is NEVER indistinguishable from
+// an empty one, because the caller renders `error` (INV-NO-SWALLOW).
 async function loadKey(k, fb) {
+  const what = `Couldn't load your ${KEY_LABEL[k] || k}`;
   try {
     const r = await fetch(`/api/store?key=${encodeURIComponent(k)}`);
-    if (!r.ok) return fb;
+    if (!r.ok) return { value: fb, error: await apiFailure(r, what) };
     const j = await r.json();
-    return j && j.value != null ? j.value : fb;
-  } catch { return fb; }
+    return { value: j && j.value != null ? j.value : fb, error: "" };
+  } catch { return { value: fb, error: networkFailure(what) }; }
 }
+// Returns "" when the write landed, otherwise the sentence to show the user.
 async function saveKey(k, v) {
+  const what = `Couldn't save your ${KEY_LABEL[k] || k}`;
   try {
-    await fetch("/api/store", {
+    const r = await fetch("/api/store", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: k, value: v }),
     });
-  } catch {}
+    if (!r.ok) return await apiFailure(r, what);
+    return "";
+  } catch { return networkFailure(what); }
 }
 
 /* ============================== HELPERS ============================== */
@@ -389,43 +451,62 @@ export default function NeuroRVU() {
   // Tracked-explorer range (Timeline tab) lives here — the Timeline component
   // unmounts on tab switch, so its selection must be lifted + persisted per user.
   const [explorer, setExplorer] = useState({ gran: "week", start: "", end: "" });
+  // Any failed read/write against the API lands here and is rendered as a
+  // banner — a lost save is never silent (INV-NO-SWALLOW).
+  const [syncError, setSyncError] = useState("");
 
   // Exams are the source of truth (dedicated DB table), loaded per Clerk user.
   async function reloadExams() {
     try {
       const r = await fetch("/api/exams");
-      if (r.ok) { const j = await r.json(); setExams(Array.isArray(j.exams) ? j.exams : []); }
-    } catch {}
+      if (!r.ok) { setSyncError(await apiFailure(r, "Couldn't load your exams")); return; }
+      const j = await r.json();
+      setExams(Array.isArray(j.exams) ? j.exams : []);
+      setSyncError("");
+    } catch { setSyncError(networkFailure("Couldn't load your exams")); }
   }
 
   async function reloadExtra() {
     try {
       const [pr, rr] = await Promise.all([fetch("/api/extra-duty"), fetch("/api/extra-duty/rates")]);
-      if (pr.ok) { const j = await pr.json(); setExtraPeriods(Array.isArray(j.periods) ? j.periods : []); }
-      if (rr.ok) { const j = await rr.json(); if (j.rates) setExtraRates(j.rates); }
-    } catch {}
+      if (!pr.ok) { setSyncError(await apiFailure(pr, "Couldn't load your extra-duty shifts")); return; }
+      const j = await pr.json();
+      setExtraPeriods(Array.isArray(j.periods) ? j.periods : []);
+      if (!rr.ok) { setSyncError(await apiFailure(rr, "Couldn't load your extra-duty pay rates")); return; }
+      const jr = await rr.json();
+      if (jr.rates) setExtraRates(jr.rates);
+      setSyncError("");
+    } catch { setSyncError(networkFailure("Couldn't load your extra-duty data")); }
   }
 
   async function saveExtraRates(next) {
     setExtraRates(next);
     try {
-      await fetch("/api/extra-duty/rates", {
+      const r = await fetch("/api/extra-duty/rates", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next),
       });
-    } catch {}
+      if (!r.ok) { setSyncError(await apiFailure(r, "Couldn't save your extra-duty pay rates")); return; }
+      setSyncError("");
+    } catch { setSyncError(networkFailure("Couldn't save your extra-duty pay rates")); }
   }
 
   useEffect(() => {
     (async () => {
       await reloadExams();
       await reloadExtra();
+      const loadErrors = [];
       const bl = await loadKey("nrv_baseline", null);
+      if (bl.error) loadErrors.push(bl.error);
       // Per-user only: load this user's saved baseline, otherwise start EMPTY.
       // No shared seed — a new user's timeline reflects only their own entries.
-      setBaseline(Array.isArray(bl) ? bl : []);
-      setSettings({ ...DEFAULTS, ...(await loadKey("nrv_settings", DEFAULTS)) });
+      setBaseline(Array.isArray(bl.value) ? bl.value : []);
+      const st = await loadKey("nrv_settings", DEFAULTS);
+      if (st.error) loadErrors.push(st.error);
+      setSettings({ ...DEFAULTS, ...(st.value || {}) });
       const ex = await loadKey("nrv_explorer", null);
-      if (ex && typeof ex === "object") setExplorer({ gran: ex.gran === "month" ? "month" : "week", start: ex.start || "", end: ex.end || "" });
+      if (ex.error) loadErrors.push(ex.error);
+      if (ex.value && typeof ex.value === "object") setExplorer({ gran: ex.value.gran === "month" ? "month" : "week", start: ex.value.start || "", end: ex.value.end || "" });
+      if (loadErrors.length) setSyncError((prev) => prev || loadErrors[0]);
       setReady(true);
     })();
   }, []);
@@ -443,9 +524,11 @@ export default function NeuroRVU() {
     }],
   })), [exams]);
 
-  const updateBaseline = (n) => { setBaseline(n); saveKey("nrv_baseline", n); };
-  const updateSettings = (n) => { setSettings(n); saveKey("nrv_settings", n); };
-  const updateExplorer = (n) => { setExplorer(n); saveKey("nrv_explorer", n); };
+  // saveKey resolves to "" on success or a sentence on failure — either way the
+  // banner reflects the true state of the write.
+  const updateBaseline = (n) => { setBaseline(n); saveKey("nrv_baseline", n).then(setSyncError); };
+  const updateSettings = (n) => { setSettings(n); saveKey("nrv_settings", n).then(setSyncError); };
+  const updateExplorer = (n) => { setExplorer(n); saveKey("nrv_explorer", n).then(setSyncError); };
 
   if (!ready) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-6 h-6 animate-spin text-teal-600" /></div>;
 
@@ -470,6 +553,13 @@ export default function NeuroRVU() {
       </header>
 
       <main className="max-w-6xl mx-auto px-5 py-6 pb-28 sm:pb-6">
+        {syncError && (
+          <div role="alert" className="mb-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span className="flex-1">{syncError}</span>
+            <button onClick={() => setSyncError("")} className="text-xs underline shrink-0">Dismiss</button>
+          </div>
+        )}
         {tab === "tracker" && <Tracker log={log} reloadExams={reloadExams} settings={settings} extraRates={extraRates} extraPeriods={extraPeriods} reloadExtra={reloadExtra} />}
         {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} updateSettings={updateSettings} log={log} settings={settings} extraPeriods={extraPeriods} reloadExtra={reloadExtra} explorer={explorer} updateExplorer={updateExplorer} />}
         {tab === "exams" && <ExamsView log={log} settings={settings} />}
@@ -594,6 +684,7 @@ function buildTimeline(baseline, log, settings) {
 function Timeline({ baseline, updateBaseline, updateSettings, log, settings, extraPeriods = [], reloadExtra, explorer, updateExplorer }) {
   const [view, setView] = useState("coverage"); // coverage | institution | reconcile
   const [editing, setEditing] = useState(false);
+  const [delError, setDelError] = useState("");
   const t = useMemo(() => buildTimeline(baseline, log, settings), [baseline, log, settings]);
   // Extra-duty pay is disjoint from the OCR'd baseline `pay` (monthly report) —
   // the consolidated "extra pay" number is their sum, never a double-count.
@@ -716,7 +807,12 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
   const range = useMemo(() => buildRange(log, settings, start, end, gran), [log, settings, start, end, gran]);
   const exRange = useMemo(() => buildExtraDuty(extraPeriods, start, end, gran), [extraPeriods, start, end, gran]);
   async function delPeriod(id) {
-    try { await fetch(`/api/extra-duty?id=${encodeURIComponent(id)}`, { method: "DELETE" }); await reloadExtra?.(); } catch {}
+    try {
+      const r = await fetch(`/api/extra-duty?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!r.ok) { setDelError(await apiFailure(r, "Couldn't delete that shift")); return; }
+      setDelError("");
+      await reloadExtra?.();
+    } catch { setDelError(networkFailure("Couldn't delete that shift")); }
   }
   const preset = (s, e) => updateExplorer({ ...explorer, start: s, end: e });
   const donut = [{ name: "UHealth / UM", value: settings.umYTD, color: C.um }, { name: "Jackson / JHS", value: settings.jhsYTD, color: C.jhs }];
@@ -813,7 +909,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
           </div>
         ) : <Empty msg="No tracked exams in this date range." />}
         <p className="text-[11px] text-slate-400 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />
-          Dashed line = {gran === "week" ? "weekly" : "monthly"} target ({fmt(range.bench, 0)} wRVU{gran === "week" ? ", = monthly ÷ 4.3" : ""}). Weeks start Monday. Buckets use each exam's own date.
+          Dashed line = {gran === "week" ? "weekly" : "monthly"} target ({fmt(range.bench, 0)} wRVU{gran === "week" ? ", = monthly ÷ 4.3" : ""}). Weeks start Monday. Buckets use each exam&apos;s own date.
           {range.stats.best && <> Best {gran === "week" ? "week" : "month"}: <span className="font-medium text-slate-500">{range.stats.best.label}</span> ({fmt(range.stats.best.wrvu, 0)} wRVU).</>}
         </p>
       </div>
@@ -855,7 +951,12 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
             </table>
           </div>
         ) : <Empty msg="No extra-duty shifts in this date range." />}
-        <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />Extra duty is paid separately and never counts toward your wRVU target. Its YTD total is folded into the "Extra pay YTD (all sources)" KPI below.</p>
+        {delError && (
+          <p role="alert" className="mt-3 flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">
+            <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />{delError}
+          </p>
+        )}
+        <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />Extra duty is paid separately and never counts toward your wRVU target. Its YTD total is folded into the &quot;Extra pay YTD (all sources)&quot; KPI below.</p>
       </div>
 
       {/* Official YTD KPIs (from reported baseline) */}
@@ -911,7 +1012,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
           </ResponsiveContainer>
         </div>
         {view === "institution" && <p className="text-[11px] text-amber-600 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />* Monthly UM/JHS bars are a proportional estimate ({fmt(t.umShare * 100, 0)}% / {fmt(t.jhsShare * 100, 0)}%). The source reports the split only as a YTD total — only those totals (UM {fmt(settings.umYTD)} / JHS {fmt(settings.jhsYTD)}) are exact.</p>}
-        {view === "reconcile" && <p className="text-[11px] text-slate-500 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />Capture completeness = tracked ÷ reported. As you log more daily screenshots, the amber bars rise toward the official reported bars — the gap is what your self-tracking hasn't captured yet.</p>}
+        {view === "reconcile" && <p className="text-[11px] text-slate-500 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />Capture completeness = tracked ÷ reported. As you log more daily screenshots, the amber bars rise toward the official reported bars — the gap is what your self-tracking hasn&apos;t captured yet.</p>}
       </div>
 
       {/* Donut + reconcile table */}
@@ -956,7 +1057,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
           )}
           {impPreview && <ImportReview preview={impPreview} syncSettings={syncSettings} setSyncSettings={setSyncSettings} onApply={applyImport} onCancel={cancelImport} settings={settings} />}
           {!impStatus && !impPreview && !impBusy && (
-            <p className="mb-3 text-[11px] text-slate-400 flex items-start gap-1.5"><Upload className="w-3.5 h-3.5 mt-px shrink-0" />Upload a monthly wRVU report (PDF or photo) to auto-fill this table. Re-uploading a newer report keeps your existing months and adds the new ones — you'll be shown any discrepancies before anything changes.</p>
+            <p className="mb-3 text-[11px] text-slate-400 flex items-start gap-1.5"><Upload className="w-3.5 h-3.5 mt-px shrink-0" />Upload a monthly wRVU report (PDF or photo) to auto-fill this table. Re-uploading a newer report keeps your existing months and adds the new ones — you&apos;ll be shown any discrepancies before anything changes.</p>
           )}
           <table className="w-full text-sm">
             <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
@@ -985,7 +1086,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
               <td className="py-2 text-right"></td>{editing && <td></td>}
             </tr></tfoot>
           </table>
-          <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 mt-px shrink-0 text-emerald-500" />"Tracked" shows your daily-log capture vs each reported month. Add or edit your reported months above to reconcile your own data against benchmark.</p>
+          <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 mt-px shrink-0 text-emerald-500" />&quot;Tracked&quot; shows your daily-log capture vs each reported month. Add or edit your reported months above to reconcile your own data against benchmark.</p>
         </div>
       </div>
     </div>
@@ -1031,7 +1132,7 @@ function ImportReview({ preview, syncSettings, setSyncSettings, onApply, onCance
               </div>
             ))}
           </div>
-          <p className="text-[11px] text-amber-600 mt-1">The newer report's values will replace these on import.</p>
+          <p className="text-[11px] text-amber-600 mt-1">The newer report&apos;s values will replace these on import.</p>
         </div>
       )}
 
@@ -1041,7 +1142,7 @@ function ImportReview({ preview, syncSettings, setSyncSettings, onApply, onCance
       {!!willSync.length && (
         <label className="flex items-start gap-2 text-xs text-slate-600 mb-3 cursor-pointer">
           <input type="checkbox" checked={syncSettings} onChange={e => setSyncSettings(e.target.checked)} className="mt-0.5" />
-          <span>Also update my institution split &amp; benchmark from this report's totals: <span className="font-mono text-slate-500">{willSync.join(" · ")}</span></span>
+          <span>Also update my institution split &amp; benchmark from this report&apos;s totals: <span className="font-mono text-slate-500">{willSync.join(" · ")}</span></span>
         </label>
       )}
 
@@ -1130,11 +1231,11 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
         source: draft ? "screenshot" : "manual",
       };
       const r = await fetch("/api/extra-duty", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      if (!r.ok) { setStatus("Save failed — please try again."); return; }
+      if (!r.ok) { setStatus(await apiFailure(r, "Couldn't save that shift")); return; }
       setDraft(null); setExCounts({ mri: 0, ct: 0, xr: 0, other: 0 }); setExExams(0); setExAmount(""); setExLabel("");
       await reloadExtra?.();
       setStatus(`Logged extra-duty ${payModel === "ppc" ? "pay-per-click" : "per-diem"} shift — $${fmt(exAmountFinal)} on ${manualDate}.`);
-    } catch { setStatus("Save failed — please try again."); }
+    } catch { setStatus(networkFailure("Couldn't save that shift")); }
     finally { setBusy(false); }
   }
 
@@ -1247,12 +1348,12 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
         })),
       };
       const r = await fetch("/api/exams", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!r.ok) { setStatus("Save failed — please try again."); return; }
+      if (!r.ok) { setStatus(await apiFailure(r, "Couldn't save those exams")); return; }
       const left = draft.items.filter(i => i.needsPrice).length;
       setDraft(null);
       await reloadExams();
       setStatus(left ? `Saved. ${left} exam(s) stored at 0 wRVU — assign codes to count their value.` : `Saved ${payload.exams.length} exams to your database.`);
-    } catch { setStatus("Save failed — please try again."); }
+    } catch { setStatus(networkFailure("Couldn't save those exams")); }
     finally { setBusy(false); }
   }
 
@@ -1427,8 +1528,14 @@ function UploadsView({ reloadExams }) {
 
   async function load() {
     setLoading(true);
-    try { const r = await fetch("/api/exams?batches=1"); const j = await r.json(); setBatches(Array.isArray(j.batches) ? j.batches : []); }
-    catch {} finally { setLoading(false); }
+    try {
+      const r = await fetch("/api/exams?batches=1");
+      if (!r.ok) { setStatus(await apiFailure(r, "Couldn't load your uploads")); return; }
+      const j = await r.json();
+      setBatches(Array.isArray(j.batches) ? j.batches : []);
+      setStatus("");
+    } catch { setStatus(networkFailure("Couldn't load your uploads")); }
+    finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
 
@@ -1436,10 +1543,12 @@ function UploadsView({ reloadExams }) {
     setBusy(true); setStatus("");
     try {
       const r = await fetch(`/api/exams?${params}`, { method: "DELETE" });
+      if (!r.ok) { setStatus(await apiFailure(r, "Delete failed")); return; }
       const j = await r.json();
-      if (r.ok) { setStatus(`Deleted ${j.deleted ?? 0} exam${j.deleted === 1 ? "" : "s"}${label ? ` · ${label}` : ""}.`); await load(); await reloadExams?.(); }
-      else setStatus(j.error || "Delete failed.");
-    } catch { setStatus("Delete failed."); }
+      setStatus(`Deleted ${j.deleted ?? 0} exam${j.deleted === 1 ? "" : "s"}${label ? ` · ${label}` : ""}.`);
+      await load();
+      await reloadExams?.();
+    } catch { setStatus(networkFailure("Delete failed")); }
     finally { setBusy(false); setConfirm(null); }
   }
 

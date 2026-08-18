@@ -8,9 +8,14 @@
 // because auth.protect()'s built-in redirect can't resolve a sign-in URL on a
 // Clerk development instance and throws (MIDDLEWARE_INVOCATION_FAILED). This is
 // deterministic: signed-out users go to /sign-in; signed-out API calls get 401.
+//
+// The 401 uses the same envelope as every other failure — one shape, always a
+// correlation id, and the same id in the log line.
 
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { CORRELATION_HEADER, errorPayload, newCorrelationId } from "@/lib/http/errors";
+import { logServerError } from "@/lib/observability/logger";
 
 const isPublicRoute = createRouteMatcher([
   "/", // landing page
@@ -25,7 +30,18 @@ export default clerkMiddleware(async (auth, req) => {
   const { userId } = await auth();
   if (!userId) {
     if (req.nextUrl.pathname.startsWith("/api")) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      const correlationId = newCorrelationId();
+      logServerError({
+        route: `${req.method} ${req.nextUrl.pathname}`,
+        correlationId,
+        code: "unauthorized",
+        status: 401,
+        message: "no signed-in Clerk session",
+      });
+      return NextResponse.json(errorPayload("unauthorized", correlationId), {
+        status: 401,
+        headers: { [CORRELATION_HEADER]: correlationId },
+      });
     }
     const signInUrl = new URL("/sign-in", req.url);
     signInUrl.searchParams.set("redirect_url", req.nextUrl.pathname);
