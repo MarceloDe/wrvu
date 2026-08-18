@@ -199,18 +199,22 @@
       ]
     },
     "N25x-examdate-precision": {
-      "status": "ready",
+      "status": "pass",
       "phase": "C",
-      "priority": "major",
-      "finding": "CloudSyncService.swift:177 sends examDate at full ISO8601 second precision. Under Safe Harbor any date finer than the year is an identifier, so the cloud store is a limited data set rather than de-identified data. Truncating to DAY in the sync payload (keeping second precision on device) is a small change with real compliance value and should not wait for Phase C.",
-      "from": "N21"
+      "fixed": "neurorvu-ios bf53321",
+      "what": "examDate and bundleDate now reach the cloud at DAY precision. Device keeps the full timestamp.",
+      "subtlety": "Pushed as local midnight WITH the local UTC offset, not a bare date: exam_date is timestamptz, so a bare date is read as UTC midnight and Analytics.localDay() in Eastern would return the PREVIOUS day \u2014 shifting every exam a day earlier and breaking the day-based sync fingerprint. Two tests cover the round trip, one across all 24 hours.",
+      "verified": "58/58 on pinned iOS 26.5"
     },
     "N25y-redact-names": {
-      "status": "ready",
+      "status": "pass",
       "phase": "C",
-      "priority": "major",
-      "finding": "Redaction.redact() covers labelled MRN/DOB/SSN, SSN-shaped, date-shaped and 5+ digit runs \u2014 roughly 4 of the Safe Harbor 18. NAMES are not redacted at all, and a name is the identifier a worklist actually contains. Mitigated but not solved by the escalation path's fragment caps, consent sheet and the edge API's own dob|mrn|ssn rejection.",
-      "from": "N21"
+      "fixed": "neurorvu-ios bf53321",
+      "what": "Names are redacted. Added labelled-name, comma-name, email, URL and phone patterns, plus a clinical-vocabulary ALLOWLIST of 1,020 tokens.",
+      "why_allowlist": "Patterns only catch shapes you anticipated. An allowlist inverts it: an alphabetic token survives only if it is clinical vocabulary, so a patient name is dropped whether or not any dictionary contains it. Tested against Nagornaya, Saigal, Oyelese, Kwiatkowski, Kowalczyk, Przybylski. Fails CLOSED.",
+      "measured": "First attempt over-redacted ORBITS, VENOGRAM, BRACHIAL PLEXUS, THORACOLUMBAR, STROKE, DTI \u2014 CMS descriptors and hospital worklists use different wording. Curated supplement closed it: 0 false positives across 206 real golden-worklist tokens, pinned by a regression test.",
+      "safe_harbor_now": "~4 of 18 identifiers before; now names, dates, SSN, MRN/accession, email, phone and URL. Remaining gaps are the rarer categories (vehicle, device, biometric, IP, 90+ age bucketing) \u2014 none of which a worklist carries.",
+      "verified": "58/58 on pinned iOS 26.5"
     },
     "N01-repo-and-typescript": {
       "status": "ready",
