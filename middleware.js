@@ -1,5 +1,8 @@
 // Clerk auth gate. Everything is protected EXCEPT the public marketing landing
-// page, the sign-in/sign-up flows, and a couple of token-gated/public endpoints.
+// page, the sign-in/sign-up flows, and the unauthenticated health check.
+//
+// There are no token-gated public endpoints. Operator actions against Clerk run
+// locally through scripts/ops/clerk-admin.mjs, never through a deployed route.
 //
 // We do an explicit auth() check + manual redirect instead of auth.protect(),
 // because auth.protect()'s built-in redirect can't resolve a sign-in URL on a
@@ -14,9 +17,6 @@ const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/health",
-  "/api/setup", // token-gated DB setup (checks its own x-setup-token)
-  "/api/setup-clerk", // token-gated Clerk restriction config (checks its own x-setup-token)
-  "/api/ocr-test", // token-gated OCR prompt test (checks its own x-setup-token)
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
