@@ -34,12 +34,22 @@
       ]
     },
     "N00b-rotate-credentials": {
-      "status": "ready",
+      "status": "partial",
       "depends_on": [
         "N00a-remove-token-gated-routes"
       ],
       "priority": 2,
-      "warning": "signs out every colleague; warn them first"
+      "done": [
+        "SETUP_TOKEN deleted from Vercel Production and Preview; 0 entries remain",
+        "verified unreferenced in shipped code on origin/main before deletion"
+      ],
+      "outstanding": [
+        "CLERK_SECRET_KEY rotation",
+        "session revocation",
+        "user roster review"
+      ],
+      "reassessment_2026_08_18": "CLERK_SECRET_KEY was never DISCLOSED. The deleted route used it server-side in an Authorization header to api.clerk.com and never returned it; ?inspect=1 returned restrictions/invitations/allowlist only. An attacker had the key's CAPABILITIES through a proxy, not the key. So rotation is defence-in-depth, not incident response. The roster review and session revocation are the checks that would actually reveal a compromise, and they are now the priority.",
+      "blocked_on": "clerk-coffee-notebook is shared with brainstywebsitevercel, so an installation-level rotation affects both projects"
     },
     "N00c-pwa-lock-llm-proxy": {
       "status": "blocked_external",

@@ -196,3 +196,34 @@ founder rule, and it is why D12 and D14 were revised again above.
    Never claim primary-source verification in the UI until it is live.
 5. **Institutional media policy** — photographing a worklist may violate employer IT
    policy independent of HIPAA. Onboarding must surface and require acknowledgement.
+
+### Correction — Vercel will not export integration secrets, at any CLI version (2026-08-18)
+
+`vercel env pull` writes the literal string **`[SENSITIVE]`** in place of every
+integration-managed secret — `DATABASE_URL`, `CLERK_SECRET_KEY`, `ANTHROPIC_API_KEY`, every
+Postgres var. Verified on CLI 54.14.2 *and* 59.1.4, with **Allowed Environments already set
+to "All environments — secrets are readable from the dashboard and CLI."** Only Vercel's own
+build/runtime vars (`VERCEL_*`, `TURBO_*`, `NX_DAEMON`) export real values.
+
+**Three consequences:**
+
+1. **The agent-credential plan proposed on 2026-08-17 cannot work.** "Pull `.env.local` and
+   grant a read permission" is impossible on this project. Any node needing a live database,
+   a real Clerk session, or a preview deploy stays `blocked_external` until credentials
+   arrive by a different route.
+2. **`vercel env pull` is not a usable backup.** A rollback artifact taken before a risky
+   change contains nothing restorable. This was discovered *before* the planned Neon
+   disconnect/reconnect for preview branching — which was therefore **not performed**, since
+   a failed reconnect would have had no local restore path.
+3. **`D20`'s "real Neon branch per verification run" is currently unimplementable.** There is
+   no second database and no way to obtain a connection string programmatically.
+
+**The recommended route is a separate Neon project, not the Vercel-managed one.** A free
+project created directly in a personal Neon account yields a connection string the operator
+can hand over once, holds only synthetic data, is never wired to production, and sidesteps
+both the secret opacity and the HIPAA-plan question entirely. The Vercel-managed
+`neon-almond-leaf` stays production-only.
+
+**Blocked prerequisite:** the Neon account attached to this Vercel installation has never
+been email-verified — SSO lands on "You need to verify your email address to activate your
+account." The console is unreachable until the operator clears that.
