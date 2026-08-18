@@ -1,0 +1,30 @@
+{
+  "note": "SYNTHETIC PHI fixture (D25a). Invented names and MRNs, byte-shaped like a real worklist. No real patient data may ever be used to verify this node.",
+  "layout": {
+    "width": 1400,
+    "height": 900,
+    "font": "20px monospace",
+    "headerY": 50,
+    "firstRowY": 100,
+    "rowStep": 60,
+    "columns": { "name": 24, "mrn": 360, "site": 560, "procedure": 760, "date": 1180 }
+  },
+  "regions": {
+    "name": { "x": 0.01, "y": 0.03, "w": 0.235, "h": 0.94 },
+    "mrn": { "x": 0.25, "y": 0.03, "w": 0.13, "h": 0.94 }
+  },
+  "rows": [
+    { "name": "QUELLINGTON, ZARA", "mrn": "MRN 88144021", "site": "UM SYLVESTER", "procedure": "MRI BRAIN W WO", "date": "2026-08-03" },
+    { "name": "VOSKRIDGE, MARLON", "mrn": "MRN 70225518", "site": "UM BASCOM", "procedure": "CT HEAD WO", "date": "2026-08-03" },
+    { "name": "BRAMBLETOFT, INES", "mrn": "MRN 61930447", "site": "UM SYLVESTER", "procedure": "MRA HEAD WO", "date": "2026-08-04" },
+    { "name": "DELACROIX, THEO", "mrn": "MRN 55018872", "site": "UM HOSPITAL", "procedure": "CTA NECK W", "date": "2026-08-04" },
+    { "name": "OKONKWO, ADAEZE", "mrn": "MRN 43377109", "site": "UM SYLVESTER", "procedure": "MRI CSPINE WO", "date": "2026-08-05" },
+    { "name": "STRANDBERG, LUCA", "mrn": "MRN 39602284", "site": "UM BASCOM", "procedure": "CT SINUS WO", "date": "2026-08-05" },
+    { "name": "MARCHETTI, ROSA", "mrn": "MRN 28455963", "site": "UM HOSPITAL", "procedure": "MRI ORBIT W WO", "date": "2026-08-06" },
+    { "name": "ABERNATHY, KWAME", "mrn": "MRN 17740335", "site": "UM SYLVESTER", "procedure": "CT TEMPORAL WO", "date": "2026-08-06" },
+    { "name": "PELLINGTON, ASTRID", "mrn": "MRN 90218476", "site": "UM HOSPITAL", "procedure": "MRI LSPINE WO", "date": "2026-08-07" },
+    { "name": "TAKAHIRO, NENE", "mrn": "MRN 84663012", "site": "UM BASCOM", "procedure": "CT NECK W", "date": "2026-08-07" },
+    { "name": "VANTERPOOL, ODIN", "mrn": "MRN 76109538", "site": "UM SYLVESTER", "procedure": "MRA NECK WO", "date": "2026-08-10" },
+    { "name": "ESCALANTE, MIRA", "mrn": "MRN 65284790", "site": "UM HOSPITAL", "procedure": "MRI BRAIN WO", "date": "2026-08-10" }
+  ]
+}

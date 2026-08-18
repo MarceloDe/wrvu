@@ -10,8 +10,15 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine, Cell, PieChart, Pie
 } from "recharts";
-import { extractionSystemPrompt, extractionUserText } from "../lib/ocr-prompt";
-import { timelineSystemPrompt, timelineUserText } from "../lib/timeline-prompt";
+// N00c/INV-SERVER-PROMPTS — prompts are NOT imported here any more. The system
+// prompt, the tool set and the token ceiling are server-owned and reachable only
+// by naming a template id through /api/claude.
+import { assertApprovedAttachments } from "../lib/redact/imageRedactor";
+import {
+  REDACTION_SURFACES, buildDocumentAttachment, buildRedactedImageBlock, buildRedactionProfile,
+  imageGeometry, isPdfFile, profileBlockMessage, profileStatus, redactionProfileKey,
+} from "../lib/redact/captureRedaction";
+import RedactionTagger from "./RedactionTagger";
 
 /* ============================================================================
    NEURORADIOLOGY CPT REFERENCE — CMS 2026 professional-component work RVU
@@ -114,78 +121,119 @@ function migrateLog(raw) {
 const DEFAULTS = { ratePerWrvu: 78, cFTE: 1.0, monthlyBenchmark: 578, privateMult: 1.6, umYTD: 0, jhsYTD: 0 };
 
 /* ============================== API ============================== */
-async function callClaude(messages, { system, tools, maxTokens = 4000 } = {}) {
+// N00c — the client names a TEMPLATE and passes typed params plus attachments.
+// It cannot send a system prompt, a tool set or a token budget: those are
+// resolved server-side from lib/prompts/registry.js (INV-SERVER-PROMPTS).
+//
+// `attachments` are the content-block OBJECTS the redaction path produced, never
+// flattened to strings — that is what keeps the WeakSet provenance registry able
+// to recognise them by identity at this boundary (N00f/D8).
+async function callClaude(template, { params = {}, attachments = [] } = {}) {
+  // N00f/D8 + N00c — last gate before the network. Every attachment must be
+  // something lib/redact produced; an unrecognised one is refused, not sent.
+  assertApprovedAttachments(attachments);
   // Calls our own server route, which holds the Anthropic key (never exposed to the browser).
   const res = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, system, tools, maxTokens }),
+    body: JSON.stringify({ template, params, attachments }),
   });
-  const data = await res.json().catch(() => ({}));
+  let data = {};
+  let readable = true;
+  try { data = await res.json(); } catch { readable = false; }
   if (!res.ok) {
-    // Keep the status + Anthropic's message so callers can give specific feedback.
+    // The server sends a generic code + correlation id — never vendor text.
+    // ocrErrorMessage() turns the code into the specific guidance below.
     const err = new Error(`API ${res.status}`);
     err.status = res.status;
-    err.detail = String(data?.error?.message || data?.error || "");
+    err.code = data?.error?.code || (readable ? "" : "invalid_response");
+    err.correlationId = data?.error?.correlationId || res.headers.get("x-correlation-id") || "";
+    throw err;
+  }
+  if (!readable) {
+    const err = new Error("API response was not JSON");
+    err.status = res.status;
+    err.code = "invalid_response";
     throw err;
   }
   return data;
 }
-const textOf = (d) => (d.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
-function parseJSON(raw) {
-  const clean = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
-  const s = clean.indexOf("["), e = clean.lastIndexOf("]"), so = clean.indexOf("{"), eo = clean.lastIndexOf("}");
-  let slice = clean;
-  if (s !== -1 && e !== -1) slice = clean.slice(s, e + 1); else if (so !== -1 && eo !== -1) slice = clean.slice(so, eo + 1);
-  return JSON.parse(slice);
-}
-const toBase64 = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(file); });
 
-// The vision API only accepts JPEG/PNG/GIF/WebP and rejects oversized images.
-// Phone photos are often HEIC/HEIF or 12MP+ files that fail silently, so we
-// downscale to a sane edge and re-encode to JPEG before upload. Falls back to
-// the raw file if the browser can't decode it (e.g. HEIC on desktop Chrome).
-const MAX_EDGE = 1568;       // model resizes above this anyway; shrink the payload here
-const SUPPORTED = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-async function prepareImage(file) {
+/* ---------------------------- failure messages ----------------------------
+   The API never tells the browser what went wrong internally — it sends
+   { error: { code, correlationId } }. These two helpers turn that into a
+   sentence the UI renders, keeping the correlation id so a user can quote it. */
+async function apiFailure(res, what) {
+  let code = "";
+  let ref = res.headers.get("x-correlation-id") || "";
   try {
-    const dataUrl = await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result);
-      r.onerror = () => reject(new Error("read-failed"));
-      r.readAsDataURL(file);
-    });
-    const img = await new Promise((resolve, reject) => {
-      const im = new Image();
-      im.onload = () => resolve(im);
-      im.onerror = () => reject(new Error("decode-failed"));
-      im.src = dataUrl;
-    });
-    const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
-    const w = Math.max(1, Math.round(img.width * scale));
-    const h = Math.max(1, Math.round(img.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = w; canvas.height = h;
-    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-    const jpeg = canvas.toDataURL("image/jpeg", 0.85);
-    return { type: "image", source: { type: "base64", media_type: "image/jpeg", data: jpeg.split(",")[1] } };
-  } catch (e) {
-    // Couldn't decode (unsupported format like HEIC on this browser). If the raw
-    // type isn't one the API accepts, signal an unsupported-format error so the
-    // user gets actionable guidance instead of a generic failure.
-    if (!SUPPORTED.includes(file.type)) {
-      const err = new Error("unsupported-format");
-      err.code = "unsupported-format";
-      throw err;
-    }
-    return { type: "image", source: { type: "base64", media_type: file.type || "image/png", data: await toBase64(file) } };
-  }
+    const body = await res.json();
+    code = body?.error?.code || "";
+    ref = body?.error?.correlationId || ref;
+  } catch { code = code || ""; }
+  const reason =
+    res.status === 401 || code === "unauthorized" ? "your session expired — sign in again"
+    : code === "storage_unavailable" ? "the database could not be reached"
+    : res.status >= 500 ? "the server had a problem"
+    : "the request was rejected";
+  return `${what} — ${reason}.${ref ? ` (ref ${ref})` : ""}`;
 }
+function networkFailure(what) {
+  return `${what} — the server is unreachable. Check your connection and try again.`;
+}
+const textOf = (d) => (d.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
+
+// N00f/D8 — images are no longer prepared for upload here. Every picked image
+// goes through lib/redact/captureRedaction.buildRedactedImageBlock, which
+// downscales, destroys the profiled regions and encodes the masked pixels. An
+// image the browser cannot decode is BLOCKED, never sent raw as a fallback.
 
 // Turn any OCR failure into a specific, actionable message for the user.
 function ocrErrorMessage(err) {
   const status = err?.status;
+  const code = err?.code;
   const detail = String(err?.detail || err?.message || "").toLowerCase();
+  // N00f/D8 first: these are CLIENT-side blocks that fire before anything is sent,
+  // so they can never be confused with an upstream failure.
+  // N00f/D8 — redaction refusals are surfaced verbatim: the upload was blocked
+  // on purpose and the user has to know why (INV-NO-SWALLOW).
+  if (err?.code === "redaction-profile-required" || err?.code === "profile-incomplete" || err?.code === "profile-not-geometry" || err?.code === "profile-invalid")
+    return err.message;
+  if (err?.code === "unredacted-image")
+    return "Upload blocked: that image was not redacted. Nothing was sent. Re-mark the patient-name and MRN columns and try again.";
+  if (err?.code === "unapproved-attachment")
+    return "Upload blocked: that attachment did not come from this device's redaction path. Nothing was sent. Pick the file again with the uploader.";
+  if (err?.code === "image-undecodable" || err?.code === "canvas-unavailable")
+    return "That image couldn't be processed on this device, so it can't be redacted — and an unredacted image is never uploaded. Try a PNG/JPEG screenshot.";
+  // N00d: server-classified upstream failures, each carrying a correlation id.
+  const ref = err?.correlationId ? ` (ref ${err.correlationId})` : "";
+  // The server classifies the upstream failure into one of these codes; the
+  // wording below is the same guidance this function has always given.
+  if (code === "upstream_payload_too_large")
+    return "That image is too large. Crop tightly to the worklist, or upload a screenshot instead of a full-resolution photo." + ref;
+  if (code === "upstream_rate_limited")
+    return "Too many requests right now — wait a few seconds and try again." + ref;
+  if (code === "upstream_overloaded")
+    return "The AI service is momentarily busy — please retry in a few seconds." + ref;
+  if (code === "upstream_timeout")
+    return "That took too long — the photo may be too large or complex. Crop to just the worklist and retry." + ref;
+  if (code === "upstream_invalid_image")
+    return "The image couldn't be read. Use a clear PNG/JPEG screenshot of the worklist, or add exams manually." + ref;
+  if (code === "unauthorized")
+    return "Your session expired — sign in again and re-upload." + ref;
+  if (code === "config_missing")
+    return "Extraction is not configured on the server — tell the administrator." + ref;
+  // N00c — the proxy's own limits. Both are OUR refusals, not the vendor's.
+  if (code === "rate_limited")
+    return "Too many uploads in a row — wait a few seconds and try again." + ref;
+  if (code === "daily_cap_reached")
+    return "You've reached today's AI usage limit. It resets at midnight UTC — add exams manually until then." + ref;
+  if (code === "too_many_attachments")
+    return "Too many files at once — upload up to 8 screenshots per batch." + ref;
+  if (code === "attachment_too_large")
+    return "That file is too large. Crop tightly to the worklist, or upload a screenshot instead of a full-resolution photo." + ref;
+  if (code === "unsupported_media_type")
+    return "That file type can't be read. Upload a PNG/JPEG screenshot, or a PDF for a monthly report." + ref;
   if (err?.code === "unsupported-format")
     return "That photo format isn't supported. On iPhone, take a screenshot of the worklist instead of a photo, or set Settings → Camera → Formats → “Most Compatible” (JPEG). PNG/JPEG work best.";
   if (status === 401 || status === 403)
@@ -200,17 +248,18 @@ function ocrErrorMessage(err) {
     return "That took too long — the photo may be too large or complex. Crop to just the worklist and retry.";
   if (detail.includes("media type") || detail.includes("invalid_request") || detail.includes("could not process image"))
     return "The image couldn't be read. Use a clear PNG/JPEG screenshot of the worklist, or add exams manually.";
-  return "Extraction failed — the image may be blurry or low quality. Retake in good light, hold steady, and fill the frame with the worklist (or add exams manually).";
+  return "Extraction failed — the image may be blurry or low quality. Retake in good light, hold steady, and fill the frame with the worklist (or add exams manually)." + ref;
 }
 
-// Build the Anthropic content block for a monthly-report upload. PDFs go through
-// as a `document` block (the /api/claude proxy forwards them untouched); images
-// reuse prepareImage (downscale + JPEG). Used by the Timeline import.
-async function prepareDoc(file) {
-  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name || "")) {
-    return { type: "document", source: { type: "base64", media_type: "application/pdf", data: await toBase64(file) } };
-  }
-  return prepareImage(file);
+// Build the attachment for a monthly-report upload. Neither branch builds a
+// content block here: a PDF goes through buildDocumentAttachment (the only
+// producer of a non-image attachment) and an IMAGE goes through
+// buildRedactedImageBlock (N00f/D8), so this surface needs a redaction profile.
+// Both producers register what they return, which is how callClaude's gate
+// recognises it. Used by the Timeline import.
+async function prepareDoc(file, profile) {
+  if (isPdfFile(file)) return buildDocumentAttachment(file);
+  return buildRedactedImageBlock(file, profile);
 }
 
 // Merge OCR'd monthly rows into the user's existing baseline (the per-user
@@ -256,22 +305,30 @@ const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const FIELD_LABEL = { bench: "Benchmark", base: "Actual (base)", extra: "Extra coverage", pay: "Extra pay ($)", cfte: "cFTE" };
 
 /* ============================== STORAGE ============================== */
+const KEY_LABEL = { nrv_baseline: "reported baseline", nrv_settings: "settings", nrv_explorer: "saved date range" };
+// Returns { value, error } — a read that failed is NEVER indistinguishable from
+// an empty one, because the caller renders `error` (INV-NO-SWALLOW).
 async function loadKey(k, fb) {
+  const what = `Couldn't load your ${KEY_LABEL[k] || k}`;
   try {
     const r = await fetch(`/api/store?key=${encodeURIComponent(k)}`);
-    if (!r.ok) return fb;
+    if (!r.ok) return { value: fb, error: await apiFailure(r, what) };
     const j = await r.json();
-    return j && j.value != null ? j.value : fb;
-  } catch { return fb; }
+    return { value: j && j.value != null ? j.value : fb, error: "" };
+  } catch { return { value: fb, error: networkFailure(what) }; }
 }
+// Returns "" when the write landed, otherwise the sentence to show the user.
 async function saveKey(k, v) {
+  const what = `Couldn't save your ${KEY_LABEL[k] || k}`;
   try {
-    await fetch("/api/store", {
+    const r = await fetch("/api/store", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: k, value: v }),
     });
-  } catch {}
+    if (!r.ok) return await apiFailure(r, what);
+    return "";
+  } catch { return networkFailure(what); }
 }
 
 /* ============================== HELPERS ============================== */
@@ -405,43 +462,62 @@ export default function NeuroRVU() {
   // Tracked-explorer range (Timeline tab) lives here — the Timeline component
   // unmounts on tab switch, so its selection must be lifted + persisted per user.
   const [explorer, setExplorer] = useState({ gran: "week", start: "", end: "" });
+  // Any failed read/write against the API lands here and is rendered as a
+  // banner — a lost save is never silent (INV-NO-SWALLOW).
+  const [syncError, setSyncError] = useState("");
 
   // Exams are the source of truth (dedicated DB table), loaded per Clerk user.
   async function reloadExams() {
     try {
       const r = await fetch("/api/exams");
-      if (r.ok) { const j = await r.json(); setExams(Array.isArray(j.exams) ? j.exams : []); }
-    } catch {}
+      if (!r.ok) { setSyncError(await apiFailure(r, "Couldn't load your exams")); return; }
+      const j = await r.json();
+      setExams(Array.isArray(j.exams) ? j.exams : []);
+      setSyncError("");
+    } catch { setSyncError(networkFailure("Couldn't load your exams")); }
   }
 
   async function reloadExtra() {
     try {
       const [pr, rr] = await Promise.all([fetch("/api/extra-duty"), fetch("/api/extra-duty/rates")]);
-      if (pr.ok) { const j = await pr.json(); setExtraPeriods(Array.isArray(j.periods) ? j.periods : []); }
-      if (rr.ok) { const j = await rr.json(); if (j.rates) setExtraRates(j.rates); }
-    } catch {}
+      if (!pr.ok) { setSyncError(await apiFailure(pr, "Couldn't load your extra-duty shifts")); return; }
+      const j = await pr.json();
+      setExtraPeriods(Array.isArray(j.periods) ? j.periods : []);
+      if (!rr.ok) { setSyncError(await apiFailure(rr, "Couldn't load your extra-duty pay rates")); return; }
+      const jr = await rr.json();
+      if (jr.rates) setExtraRates(jr.rates);
+      setSyncError("");
+    } catch { setSyncError(networkFailure("Couldn't load your extra-duty data")); }
   }
 
   async function saveExtraRates(next) {
     setExtraRates(next);
     try {
-      await fetch("/api/extra-duty/rates", {
+      const r = await fetch("/api/extra-duty/rates", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next),
       });
-    } catch {}
+      if (!r.ok) { setSyncError(await apiFailure(r, "Couldn't save your extra-duty pay rates")); return; }
+      setSyncError("");
+    } catch { setSyncError(networkFailure("Couldn't save your extra-duty pay rates")); }
   }
 
   useEffect(() => {
     (async () => {
       await reloadExams();
       await reloadExtra();
+      const loadErrors = [];
       const bl = await loadKey("nrv_baseline", null);
+      if (bl.error) loadErrors.push(bl.error);
       // Per-user only: load this user's saved baseline, otherwise start EMPTY.
       // No shared seed — a new user's timeline reflects only their own entries.
-      setBaseline(Array.isArray(bl) ? bl : []);
-      setSettings({ ...DEFAULTS, ...(await loadKey("nrv_settings", DEFAULTS)) });
+      setBaseline(Array.isArray(bl.value) ? bl.value : []);
+      const st = await loadKey("nrv_settings", DEFAULTS);
+      if (st.error) loadErrors.push(st.error);
+      setSettings({ ...DEFAULTS, ...(st.value || {}) });
       const ex = await loadKey("nrv_explorer", null);
-      if (ex && typeof ex === "object") setExplorer({ gran: ex.gran === "month" ? "month" : "week", start: ex.start || "", end: ex.end || "" });
+      if (ex.error) loadErrors.push(ex.error);
+      if (ex.value && typeof ex.value === "object") setExplorer({ gran: ex.value.gran === "month" ? "month" : "week", start: ex.value.start || "", end: ex.value.end || "" });
+      if (loadErrors.length) setSyncError((prev) => prev || loadErrors[0]);
       setReady(true);
     })();
   }, []);
@@ -459,9 +535,11 @@ export default function NeuroRVU() {
     }],
   })), [exams]);
 
-  const updateBaseline = (n) => { setBaseline(n); saveKey("nrv_baseline", n); };
-  const updateSettings = (n) => { setSettings(n); saveKey("nrv_settings", n); };
-  const updateExplorer = (n) => { setExplorer(n); saveKey("nrv_explorer", n); };
+  // saveKey resolves to "" on success or a sentence on failure — either way the
+  // banner reflects the true state of the write.
+  const updateBaseline = (n) => { setBaseline(n); saveKey("nrv_baseline", n).then(setSyncError); };
+  const updateSettings = (n) => { setSettings(n); saveKey("nrv_settings", n).then(setSyncError); };
+  const updateExplorer = (n) => { setExplorer(n); saveKey("nrv_explorer", n).then(setSyncError); };
 
   if (!ready) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-6 h-6 animate-spin text-teal-600" /></div>;
 
@@ -486,6 +564,13 @@ export default function NeuroRVU() {
       </header>
 
       <main className="max-w-6xl mx-auto px-5 py-6 pb-28 sm:pb-6">
+        {syncError && (
+          <div role="alert" className="mb-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span className="flex-1">{syncError}</span>
+            <button onClick={() => setSyncError("")} className="text-xs underline shrink-0">Dismiss</button>
+          </div>
+        )}
         {tab === "tracker" && <Tracker log={log} reloadExams={reloadExams} settings={settings} extraRates={extraRates} extraPeriods={extraPeriods} reloadExtra={reloadExtra} />}
         {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} updateSettings={updateSettings} log={log} settings={settings} extraPeriods={extraPeriods} reloadExtra={reloadExtra} explorer={explorer} updateExplorer={updateExplorer} />}
         {tab === "exams" && <ExamsView log={log} settings={settings} />}
@@ -610,6 +695,7 @@ function buildTimeline(baseline, log, settings) {
 function Timeline({ baseline, updateBaseline, updateSettings, log, settings, extraPeriods = [], reloadExtra, explorer, updateExplorer }) {
   const [view, setView] = useState("coverage"); // coverage | institution | reconcile
   const [editing, setEditing] = useState(false);
+  const [delError, setDelError] = useState("");
   const t = useMemo(() => buildTimeline(baseline, log, settings), [baseline, log, settings]);
   // Extra-duty pay is disjoint from the OCR'd baseline `pay` (monthly report) —
   // the consolidated "extra pay" number is their sum, never a double-count.
@@ -623,14 +709,59 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
   const [impStatus, setImpStatus] = useState("");
   const [impPreview, setImpPreview] = useState(null); // { plan, totals, period, syncSettings }
   const [syncSettings, setSyncSettings] = useState(true);
+  // N00f/D8 — a PHOTO of a report is an image reaching /api/claude, so it needs
+  // its own redaction profile for (this user, this institution). PDFs are sent
+  // as document blocks and are out of this node's scope.
+  const [impInst, setImpInst] = useState("UM");
+  const [reportProfile, setReportProfile] = useState(null);
+  const [impTagger, setImpTagger] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const stored = await loadKey(redactionProfileKey(REDACTION_SURFACES.REPORT, impInst), null);
+      if (!cancelled) setReportProfile(stored && typeof stored === "object" ? stored : null);
+    })();
+    return () => { cancelled = true; };
+  }, [impInst]);
 
   async function handleImport(e) {
     const file = (e.target.files || [])[0];
+    if (importRef.current) importRef.current.value = "";
     if (!file) return;
+    await runImport(file, reportProfile);
+  }
+
+  async function saveReportRedactionProfile(regions, meta) {
+    const pending = impTagger;
+    try {
+      const profile = buildRedactionProfile({
+        surface: REDACTION_SURFACES.REPORT, institution: impInst, regions, aspect: meta.aspect,
+      });
+      setReportProfile(profile);
+      setImpTagger(null);
+      await saveKey(redactionProfileKey(REDACTION_SURFACES.REPORT, impInst), profile);
+      if (pending?.file) await runImport(pending.file, profile);
+    } catch (err) {
+      console.error("[redaction] report profile save failed:", { code: err?.code, message: err?.message });
+      setImpStatus(ocrErrorMessage(err));
+    }
+  }
+
+  async function runImport(file, profile) {
     setImpBusy(true); setImpPreview(null); setImpStatus(`Reading ${file.name || "report"}…`);
     try {
-      const doc = await prepareDoc(file);
-      const data = await callClaude([{ role: "user", content: [doc, { type: "text", text: timelineUserText }] }], { system: timelineSystemPrompt(), maxTokens: 4000 });
+      let doc;
+      try {
+        doc = await prepareDoc(file, profile);
+      } catch (err) {
+        if (err?.code === "redaction-profile-required") {
+          setImpStatus(err.message);
+          setImpTagger({ file, reasonMessage: err.message });
+          return;
+        }
+        throw err;
+      }
+      const data = await callClaude("timeline", { attachments: [doc] });
       const raw = textOf(data).replace(/```json/gi, "").replace(/```/g, "").trim();
       const so = raw.indexOf("{"), eo = raw.lastIndexOf("}");
       const parsed = JSON.parse(so !== -1 ? raw.slice(so, eo + 1) : raw);
@@ -650,7 +781,6 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
       setImpStatus(ocrErrorMessage(err));
     } finally {
       setImpBusy(false);
-      if (importRef.current) importRef.current.value = "";
     }
   }
 
@@ -688,7 +818,12 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
   const range = useMemo(() => buildRange(log, settings, start, end, gran), [log, settings, start, end, gran]);
   const exRange = useMemo(() => buildExtraDuty(extraPeriods, start, end, gran), [extraPeriods, start, end, gran]);
   async function delPeriod(id) {
-    try { await fetch(`/api/extra-duty?id=${encodeURIComponent(id)}`, { method: "DELETE" }); await reloadExtra?.(); } catch {}
+    try {
+      const r = await fetch(`/api/extra-duty?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!r.ok) { setDelError(await apiFailure(r, "Couldn't delete that shift")); return; }
+      setDelError("");
+      await reloadExtra?.();
+    } catch { setDelError(networkFailure("Couldn't delete that shift")); }
   }
   const preset = (s, e) => updateExplorer({ ...explorer, start: s, end: e });
   const donut = [{ name: "UHealth / UM", value: settings.umYTD, color: C.um }, { name: "Jackson / JHS", value: settings.jhsYTD, color: C.jhs }];
@@ -711,6 +846,17 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
 
   return (
     <div className="space-y-5">
+      {impTagger && (
+        <RedactionTagger
+          file={impTagger.file}
+          institution={impInst}
+          institutions={["UM", "JHS", "Other"]}
+          onInstitutionChange={setImpInst}
+          reasonMessage={impTagger.reasonMessage}
+          onCancel={() => { setImpTagger(null); setImpStatus("Import cancelled — nothing was sent."); }}
+          onSave={saveReportRedactionProfile}
+        />
+      )}
       {/* ===== Tracked explorer: pick a date range + weekly/monthly ===== */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
@@ -774,7 +920,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
           </div>
         ) : <Empty msg="No tracked exams in this date range." />}
         <p className="text-[11px] text-slate-400 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />
-          Dashed line = {gran === "week" ? "weekly" : "monthly"} target ({fmt(range.bench, 0)} wRVU{gran === "week" ? ", = monthly ÷ 4.3" : ""}). Weeks start Monday. Buckets use each exam's own date.
+          Dashed line = {gran === "week" ? "weekly" : "monthly"} target ({fmt(range.bench, 0)} wRVU{gran === "week" ? ", = monthly ÷ 4.3" : ""}). Weeks start Monday. Buckets use each exam&apos;s own date.
           {range.stats.best && <> Best {gran === "week" ? "week" : "month"}: <span className="font-medium text-slate-500">{range.stats.best.label}</span> ({fmt(range.stats.best.wrvu, 0)} wRVU).</>}
         </p>
       </div>
@@ -816,7 +962,12 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
             </table>
           </div>
         ) : <Empty msg="No extra-duty shifts in this date range." />}
-        <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />Extra duty is paid separately and never counts toward your wRVU target. Its YTD total is folded into the "Extra pay YTD (all sources)" KPI below.</p>
+        {delError && (
+          <p role="alert" className="mt-3 flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">
+            <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />{delError}
+          </p>
+        )}
+        <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />Extra duty is paid separately and never counts toward your wRVU target. Its YTD total is folded into the &quot;Extra pay YTD (all sources)&quot; KPI below.</p>
       </div>
 
       {/* Official YTD KPIs (from reported baseline) */}
@@ -872,7 +1023,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
           </ResponsiveContainer>
         </div>
         {view === "institution" && <p className="text-[11px] text-amber-600 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />* Monthly UM/JHS bars are a proportional estimate ({fmt(t.umShare * 100, 0)}% / {fmt(t.jhsShare * 100, 0)}%). The source reports the split only as a YTD total — only those totals (UM {fmt(settings.umYTD)} / JHS {fmt(settings.jhsYTD)}) are exact.</p>}
-        {view === "reconcile" && <p className="text-[11px] text-slate-500 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />Capture completeness = tracked ÷ reported. As you log more daily screenshots, the amber bars rise toward the official reported bars — the gap is what your self-tracking hasn't captured yet.</p>}
+        {view === "reconcile" && <p className="text-[11px] text-slate-500 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />Capture completeness = tracked ÷ reported. As you log more daily screenshots, the amber bars rise toward the official reported bars — the gap is what your self-tracking hasn&apos;t captured yet.</p>}
       </div>
 
       {/* Donut + reconcile table */}
@@ -917,7 +1068,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
           )}
           {impPreview && <ImportReview preview={impPreview} syncSettings={syncSettings} setSyncSettings={setSyncSettings} onApply={applyImport} onCancel={cancelImport} settings={settings} />}
           {!impStatus && !impPreview && !impBusy && (
-            <p className="mb-3 text-[11px] text-slate-400 flex items-start gap-1.5"><Upload className="w-3.5 h-3.5 mt-px shrink-0" />Upload a monthly wRVU report (PDF or photo) to auto-fill this table. Re-uploading a newer report keeps your existing months and adds the new ones — you'll be shown any discrepancies before anything changes.</p>
+            <p className="mb-3 text-[11px] text-slate-400 flex items-start gap-1.5"><Upload className="w-3.5 h-3.5 mt-px shrink-0" />Upload a monthly wRVU report (PDF or photo) to auto-fill this table. Re-uploading a newer report keeps your existing months and adds the new ones — you&apos;ll be shown any discrepancies before anything changes.</p>
           )}
           <table className="w-full text-sm">
             <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
@@ -946,7 +1097,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
               <td className="py-2 text-right"></td>{editing && <td></td>}
             </tr></tfoot>
           </table>
-          <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 mt-px shrink-0 text-emerald-500" />"Tracked" shows your daily-log capture vs each reported month. Add or edit your reported months above to reconcile your own data against benchmark.</p>
+          <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 mt-px shrink-0 text-emerald-500" />&quot;Tracked&quot; shows your daily-log capture vs each reported month. Add or edit your reported months above to reconcile your own data against benchmark.</p>
         </div>
       </div>
     </div>
@@ -992,7 +1143,7 @@ function ImportReview({ preview, syncSettings, setSyncSettings, onApply, onCance
               </div>
             ))}
           </div>
-          <p className="text-[11px] text-amber-600 mt-1">The newer report's values will replace these on import.</p>
+          <p className="text-[11px] text-amber-600 mt-1">The newer report&apos;s values will replace these on import.</p>
         </div>
       )}
 
@@ -1002,7 +1153,7 @@ function ImportReview({ preview, syncSettings, setSyncSettings, onApply, onCance
       {!!willSync.length && (
         <label className="flex items-start gap-2 text-xs text-slate-600 mb-3 cursor-pointer">
           <input type="checkbox" checked={syncSettings} onChange={e => setSyncSettings(e.target.checked)} className="mt-0.5" />
-          <span>Also update my institution split &amp; benchmark from this report's totals: <span className="font-mono text-slate-500">{willSync.join(" · ")}</span></span>
+          <span>Also update my institution split &amp; benchmark from this report&apos;s totals: <span className="font-mono text-slate-500">{willSync.join(" · ")}</span></span>
         </label>
       )}
 
@@ -1028,6 +1179,18 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
   const [manualDate, setManualDate] = useState(localDay());
   const [curInst, setCurInst] = useState("UM");
   const fileRef = useRef();
+  // N00f/D8 — redaction profile for (this user, curInst). Loaded per institution;
+  // `tagger` holds the upload that is BLOCKED until the columns are marked.
+  const [redactionProfile, setRedactionProfile] = useState(null);
+  const [tagger, setTagger] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const stored = await loadKey(redactionProfileKey(REDACTION_SURFACES.WORKLIST, curInst), null);
+      if (!cancelled) setRedactionProfile(stored && typeof stored === "object" ? stored : null);
+    })();
+    return () => { cancelled = true; };
+  }, [curInst]);
 
   // Extra-duty tagging: 'regular' = today's flow (counts toward wRVU target);
   // 'extra' = log a paid shift (per-diem or PPC) into extra_duty_periods instead.
@@ -1079,21 +1242,40 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
         source: draft ? "screenshot" : "manual",
       };
       const r = await fetch("/api/extra-duty", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      if (!r.ok) { setStatus("Save failed — please try again."); return; }
+      if (!r.ok) { setStatus(await apiFailure(r, "Couldn't save that shift")); return; }
       setDraft(null); setExCounts({ mri: 0, ct: 0, xr: 0, other: 0 }); setExExams(0); setExAmount(""); setExLabel("");
       await reloadExtra?.();
       setStatus(`Logged extra-duty ${payModel === "ppc" ? "pay-per-click" : "per-diem"} shift — $${fmt(exAmountFinal)} on ${manualDate}.`);
-    } catch { setStatus("Save failed — please try again."); }
+    } catch { setStatus(networkFailure("Couldn't save that shift")); }
     finally { setBusy(false); }
   }
 
   async function handleFiles(e) {
     const files = Array.from(e.target.files || []);
+    if (fileRef.current) fileRef.current.value = "";
     if (!files.length) return;
+    await extractFromScreenshots(files, redactionProfile);
+  }
+
+  // N00f/D8 — the ONLY screenshot upload path. A missing or stale redaction
+  // profile for this institution blocks the upload and re-prompts the tagger;
+  // it never degrades into sending the original.
+  async function extractFromScreenshots(files, profile) {
     setBusy(true); setStatus(`Reading ${files.length} screenshot${files.length > 1 ? "s" : ""}…`);
     try {
-      const imgs = await Promise.all(files.map(prepareImage));
-      const data = await callClaude([{ role: "user", content: [...imgs, { type: "text", text: extractionUserText }] }], { system: extractionSystemPrompt(), maxTokens: 8000 });
+      let imgs;
+      try {
+        imgs = [];
+        for (const file of files) imgs.push(await buildRedactedImageBlock(file, profile));
+      } catch (err) {
+        if (err?.code === "redaction-profile-required") {
+          setStatus(err.message);
+          setTagger({ files, file: files[0], reasonMessage: err.message });
+          return;
+        }
+        throw err;
+      }
+      const data = await callClaude("ocr", { attachments: imgs });
       // Response is an object: {valid:true, exams:[...]} OR {valid:false, reason:"..."}
       const rawText = textOf(data).replace(/```json/gi, "").replace(/```/g, "").trim();
       const so = rawText.indexOf("{"), eo = rawText.lastIndexOf("}");
@@ -1131,7 +1313,25 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
       console.error("[OCR] extraction failed:", { status: err?.status, code: err?.code, detail: err?.detail, message: err?.message });
       setStatus(ocrErrorMessage(err));
     }
-    finally { setBusy(false); if (fileRef.current) fileRef.current.value = ""; }
+    finally { setBusy(false); }
+  }
+
+  // Persist the tagged geometry for (this user, this institution) and resume the
+  // upload that was blocked. Nothing left the device before this point.
+  async function saveRedactionProfile(regions, meta) {
+    const pending = tagger;
+    try {
+      const profile = buildRedactionProfile({
+        surface: REDACTION_SURFACES.WORKLIST, institution: curInst, regions, aspect: meta.aspect,
+      });
+      setRedactionProfile(profile);
+      setTagger(null);
+      await saveKey(redactionProfileKey(REDACTION_SURFACES.WORKLIST, curInst), profile);
+      if (pending?.files?.length) await extractFromScreenshots(pending.files, profile);
+    } catch (err) {
+      console.error("[redaction] profile save failed:", { code: err?.code, message: err?.message });
+      setStatus(ocrErrorMessage(err));
+    }
   }
 
   function addManual(code) {
@@ -1159,12 +1359,12 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
         })),
       };
       const r = await fetch("/api/exams", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!r.ok) { setStatus("Save failed — please try again."); return; }
+      if (!r.ok) { setStatus(await apiFailure(r, "Couldn't save those exams")); return; }
       const left = draft.items.filter(i => i.needsPrice).length;
       setDraft(null);
       await reloadExams();
       setStatus(left ? `Saved. ${left} exam(s) stored at 0 wRVU — assign codes to count their value.` : `Saved ${payload.exams.length} exams to your database.`);
-    } catch { setStatus("Save failed — please try again."); }
+    } catch { setStatus(networkFailure("Couldn't save those exams")); }
     finally { setBusy(false); }
   }
 
@@ -1172,6 +1372,15 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
 
   return (
     <div className="space-y-6">
+      {tagger && (
+        <RedactionTagger
+          file={tagger.file}
+          institution={curInst}
+          reasonMessage={tagger.reasonMessage}
+          onCancel={() => { setTagger(null); setStatus("Upload cancelled — nothing was sent."); }}
+          onSave={saveRedactionProfile}
+        />
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Kpi icon={Calendar} label="Tracked this month" value={fmt(a.thisMonth.actual, 0)} sub={`vs ${fmt(a.thisMonth.bench, 0)} target`} delta={a.thisMonth.variancePct} />
         <Kpi icon={TrendingUp} label="Tracked YTD" value={fmt(a.ytd.actual, 0)} sub={`${fmt(a.ytd.studies, 0)} studies logged`} />
@@ -1330,8 +1539,14 @@ function UploadsView({ reloadExams }) {
 
   async function load() {
     setLoading(true);
-    try { const r = await fetch("/api/exams?batches=1"); const j = await r.json(); setBatches(Array.isArray(j.batches) ? j.batches : []); }
-    catch {} finally { setLoading(false); }
+    try {
+      const r = await fetch("/api/exams?batches=1");
+      if (!r.ok) { setStatus(await apiFailure(r, "Couldn't load your uploads")); return; }
+      const j = await r.json();
+      setBatches(Array.isArray(j.batches) ? j.batches : []);
+      setStatus("");
+    } catch { setStatus(networkFailure("Couldn't load your uploads")); }
+    finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
 
@@ -1339,10 +1554,12 @@ function UploadsView({ reloadExams }) {
     setBusy(true); setStatus("");
     try {
       const r = await fetch(`/api/exams?${params}`, { method: "DELETE" });
+      if (!r.ok) { setStatus(await apiFailure(r, "Delete failed")); return; }
       const j = await r.json();
-      if (r.ok) { setStatus(`Deleted ${j.deleted ?? 0} exam${j.deleted === 1 ? "" : "s"}${label ? ` · ${label}` : ""}.`); await load(); await reloadExams?.(); }
-      else setStatus(j.error || "Delete failed.");
-    } catch { setStatus("Delete failed."); }
+      setStatus(`Deleted ${j.deleted ?? 0} exam${j.deleted === 1 ? "" : "s"}${label ? ` · ${label}` : ""}.`);
+      await load();
+      await reloadExams?.();
+    } catch { setStatus(networkFailure("Delete failed")); }
     finally { setBusy(false); setConfirm(null); }
   }
 
@@ -1531,17 +1748,16 @@ function ExamsView({ log, settings }) {
 }
 
 /* ============================================================================ CODES REFERENCE ============================================================================ */
+// N00c/D8 — the per-code "live value" lookup is gone. It issued an ad-hoc,
+// geographically hardcoded search-tool call on every click: a client-supplied
+// prompt AND a client-supplied tool, uncached, unvalidated and billed against the
+// shared organisational key. Under INV-SERVER-PROMPTS no template may declare a
+// search tool, so the feature has no server-owned form. The static wRVU table
+// below is the authoritative figure.
 function Reference({ settings }) {
-  const [q, setQ] = useState(""); const [mod, setMod] = useState("ALL"); const [live, setLive] = useState({});
+  const [q, setQ] = useState(""); const [mod, setMod] = useState("ALL");
   const mods = ["ALL", "CT", "CTA", "MRI", "MRA", "Add-on"];
   const rows = useMemo(() => { const t = q.toLowerCase(); return CODES.filter(c => (mod === "ALL" || c.mod === mod) && (!t || c.cpt.includes(t) || c.desc.toLowerCase().includes(t) || c.region.toLowerCase().includes(t))); }, [q, mod]);
-  async function lookup(c) {
-    setLive(s => ({ ...s, [c.cpt]: { loading: true } }));
-    try {
-      const data = await callClaude([{ role: "user", content: `For CPT ${c.cpt} (${c.desc} ${c.con}), give CURRENT 2026 values: (1) work RVU, (2) Florida Medicare professional-component (mod 26) payment USD, (3) typical commercial/private professional-component payment USD at a Florida academic center (e.g., University of Miami / Jackson). Use web search. Respond ONLY JSON: {"wrvu":0,"medicare_fl":0,"private":0,"note":"short"}` }], { tools: [{ type: "web_search_20250305", name: "web_search" }], maxTokens: 1500 });
-      setLive(s => ({ ...s, [c.cpt]: { loading: false, data: parseJSON(textOf(data)) } }));
-    } catch { setLive(s => ({ ...s, [c.cpt]: { loading: false, error: true } })); }
-  }
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-2xl border border-slate-200 p-4">
@@ -1554,30 +1770,24 @@ function Reference({ settings }) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-200 bg-slate-50/60">
-              <th className="py-2.5 px-4 font-medium">CPT</th><th className="py-2.5 px-2 font-medium">Exam</th><th className="py-2.5 px-2 font-medium">Con.</th><th className="py-2.5 px-2 font-medium text-right">wRVU</th><th className="py-2.5 px-2 font-medium text-right">Comp $</th><th className="py-2.5 px-2 font-medium text-right">Live value</th>
+              <th className="py-2.5 px-4 font-medium">CPT</th><th className="py-2.5 px-2 font-medium">Exam</th><th className="py-2.5 px-2 font-medium">Con.</th><th className="py-2.5 px-2 font-medium text-right">wRVU</th><th className="py-2.5 px-2 font-medium text-right">Comp $</th>
             </tr></thead>
             <tbody>
-              {rows.map(c => { const L = live[c.cpt]; return (
+              {rows.map(c => (
                 <tr key={c.cpt} className="border-b border-slate-50 hover:bg-slate-50/60">
                   <td className="py-2 px-4 font-mono text-xs"><span className="font-semibold">{c.cpt}</span>{c.flag && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-600 align-middle">{c.flag}</span>}</td>
                   <td className="py-2 px-2"><span className="inline-flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full" style={{ background: MOD_COLORS[c.mod] || "#94a3b8" }} />{c.desc}</span></td>
                   <td className="py-2 px-2 font-mono text-xs text-slate-500">{c.con}</td>
                   <td className="py-2 px-2 text-right font-mono font-semibold">{c.wrvu.toFixed(2)}{c.est && <span className="text-amber-500 text-[10px] ml-1">est.</span>}</td>
                   <td className="py-2 px-2 text-right font-mono text-slate-600">${fmt(c.wrvu * settings.ratePerWrvu, 0)}</td>
-                  <td className="py-2 px-2 text-right">
-                    {L?.loading ? <Loader2 className="w-4 h-4 animate-spin text-teal-600 inline" />
-                      : L?.data ? <div className="text-[11px] font-mono leading-tight text-right"><div className="text-emerald-600">wRVU {L.data.wrvu ?? "—"}</div><div className="text-slate-500">FL Mcr ${L.data.medicare_fl ?? "—"}</div><div className="text-indigo-600">Priv ${L.data.private ?? "—"}</div></div>
-                      : L?.error ? <button onClick={() => lookup(c)} className="text-[11px] text-red-400 hover:text-red-600">retry</button>
-                      : <button onClick={() => lookup(c)} className="text-[11px] font-medium text-teal-600 hover:text-teal-700 flex items-center gap-1 ml-auto"><Sparkles className="w-3 h-3" />lookup</button>}
-                  </td>
                 </tr>
-              ); })}
+              ))}
             </tbody>
           </table>
         </div>
         {!rows.length && <div className="py-10 text-center text-sm text-slate-400">No codes match.</div>}
       </div>
-      <p className="text-[11px] text-slate-400 px-1"><span className="text-teal-600 font-medium">Live value</span> queries current Florida Medicare + private/UM-style commercial rates via web search. Static Comp $ = wRVU × your ${settings.ratePerWrvu}/wRVU rate.</p>
+      <p className="text-[11px] text-slate-400 px-1">Comp $ = wRVU × your ${settings.ratePerWrvu}/wRVU rate.</p>
     </div>
   );
 }

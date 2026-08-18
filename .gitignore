@@ -8,3 +8,6 @@ out
 .env*
 .codegraph/
 .claude/worktrees/
+# TypeScript build output (lib/redact/imageRedactor.ts put the app in TS mode)
+*.tsbuildinfo
+next-env.d.ts
