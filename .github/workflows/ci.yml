@@ -1,0 +1,53 @@
+# N03 — the checks every PR must pass.
+#
+# ONE job, key `checks`, with NO job-level `name:` and NO `strategy.matrix`.
+# Both would rename the required status-check context (which is the job's DISPLAY
+# name), leaving branch protection requiring a context that never reports and main
+# permanently unmergeable.
+#
+# iOS is deliberately absent. N20y established that rotatedFixtureStillParses fails
+# on the iOS 27 runtime and passes 52/52 on 26.5 — a Vision regression, not a code
+# defect. A macOS runner is a follow-up and MUST invoke neurorvu-ios/scripts/test-ios.sh
+# rather than spelling out its own destination, or the pin stops being a pin.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: npm ci
+        run: npm ci
+      - name: install chromium
+        run: npx playwright install --with-deps chromium
+      - name: npm run lint
+        run: npm run lint
+      - name: npx tsc --noEmit
+        run: npx tsc --noEmit
+      - name: npm run test:redaction
+        run: npm run test:redaction
+      - name: npm run test:forged-attachment
+        run: npm run test:forged-attachment
+      - name: npm run test:error-envelope
+        run: npm run test:error-envelope
+      - name: npm run test:route-contracts
+        run: npm run test:route-contracts
+      - name: npm run test:llm-proxy-contract
+        run: npm run test:llm-proxy-contract
+      - name: next build
+        # A syntactically valid but unreachable URL. The build only needs the driver to
+        # construct without throwing at import; it never opens a connection. Using a real
+        # database here would put production credentials in CI for no benefit.
+        env:
+          DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
+          DATABASE_URL_UNPOOLED: postgres://ci:ci@127.0.0.1:5432/ci
+        run: npx next build
+      - name: invariant checks are executable
+        run: node scripts/verify/checks-are-executable.mjs
