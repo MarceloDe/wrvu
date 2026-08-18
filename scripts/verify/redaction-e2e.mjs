@@ -132,8 +132,14 @@ async function main() {
     });
     if (!harness.state.claudeRequests.length) throw new Error("no outbound /api/claude request was captured");
 
+    // N00c: the wire is { template, params, attachments }. The prompt is no
+    // longer in the body at all — it is resolved server-side from the registry.
     const outbound = JSON.parse(harness.state.claudeRequests[0].raw);
-    const blocks = (outbound.messages || []).flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    const blocks = Array.isArray(outbound.attachments) ? outbound.attachments : [];
+    check("the outbound body names a server template and carries no prompt", outbound.template === "ocr" && !("system" in outbound) && !("messages" in outbound), {
+      keys: Object.keys(outbound).sort().join(","),
+      template: outbound.template,
+    });
     const imageBlocks = blocks.filter((b) => b && b.type === "image");
     check("the outbound body carries exactly one image block", imageBlocks.length === 1, { imageBlocks: imageBlocks.length });
     const outboundBase64 = imageBlocks[0]?.source?.data || "";
@@ -279,13 +285,10 @@ async function main() {
        recovered identifier lands in this log and phi-log-scan fails on it. */
     for (const write of harness.state.storeWrites) log(`store-write ${write.key} ${write.raw}`);
     const sanitized = JSON.parse(harness.state.claudeRequests[0].raw);
-    for (const message of sanitized.messages || []) {
-      if (!Array.isArray(message.content)) continue;
-      for (const block of message.content) {
-        if (block?.source?.data) {
-          const bytes = Buffer.from(block.source.data, "base64");
-          block.source.data = `sha256:${createHash("sha256").update(bytes).digest("hex")} (${bytes.length} bytes elided)`;
-        }
+    for (const block of sanitized.attachments || []) {
+      if (block?.source?.data) {
+        const bytes = Buffer.from(block.source.data, "base64");
+        block.source.data = `sha256:${createHash("sha256").update(bytes).digest("hex")} (${bytes.length} bytes elided)`;
       }
     }
     log(`outbound-body ${JSON.stringify(sanitized)}`);
@@ -293,12 +296,12 @@ async function main() {
     log(`outbound-image-ocr searched=${analysis.outboundPhi.length} recovered=${analysis.outboundPhi.filter((h) => h.found).length} top-score=${Math.max(...analysis.outboundPhi.map((h) => h.score))}`);
     log(`outbound-image-ocr non-phi-readable ${JSON.stringify(analysis.outboundNonPhi.filter((h) => h.found).map((h) => h.text))}`);
 
-    /* ---- 7. the network-boundary guard refuses a hand-built image block ---- */
+    /* ---- 7. the network-boundary guard refuses a hand-built attachment ---- */
     const guard = await page.evaluate(() => {
       const R = window.__redact;
-      const forged = [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }] }];
+      const forged = [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }];
       try {
-        R.assertNoUnredactedImages(forged);
+        R.assertApprovedAttachments(forged);
         return { threw: false };
       } catch (err) {
         return { threw: true, code: err.code, message: err.message };
@@ -318,7 +321,7 @@ async function main() {
       mediaType: outboundMedia,
       bytes: Buffer.from(outboundBase64, "base64").length,
       imageBlocks: imageBlocks.length,
-      textBlocks: blocks.filter((b) => b && b.type === "text").length,
+      template: outbound.template,
     };
 
     /* ---- evidence ---- */

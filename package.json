@@ -11,6 +11,8 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "node --env-file=.env.local scripts/seed.mjs",
     "test:redaction": "node scripts/test/redaction.test.mjs",
+    "test:forged-attachment": "node scripts/test/forged-attachment.test.mjs",
+    "test:llm-proxy-contract": "node scripts/test/llm-proxy-contract.mjs",
     "verify:redaction": "node scripts/test/redaction.test.mjs && node scripts/verify/redaction-e2e.mjs && node scripts/verify/no-unredacted-path.mjs && node scripts/verify/phi-log-scan.mjs --stream captured-session.log",
     "test:error-envelope": "node --test tests/error-envelope.test.ts",
     "test:route-contracts": "node --test tests/route-contracts.test.mjs"
