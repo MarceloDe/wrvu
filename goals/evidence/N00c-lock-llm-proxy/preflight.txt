@@ -1,0 +1,157 @@
+N00c-lock-llm-proxy — Builder preflight, verbatim
+Run 2026-08-18 from /Users/mfelix/projects/wruvs/.claude/worktrees/wf_24439eb9-cbc-3
+STATUS: BLOCKED. No production code was written. Nothing was self-certified.
+
+=========================================================================
+0. CONTEXT QUERY (node context_query, run verbatim)
+=========================================================================
+$ codegraph explore "api/claude route messages system tools maxTokens anthropic proxy web_search ocrPrompt timelineSystemPrompt"
+✗ Explore failed: disk I/O error
+
+$ codegraph status
+✗ Failed to get status: disk I/O error
+
+  The codegraph CLI is wedged (v1.5.0, .codegraph/codegraph.db present).
+  The same query succeeded through the codegraph MCP server, so the working
+  set WAS loaded — recorded here only because the CLI form of the command
+  in the node YAML does not currently run.
+
+=========================================================================
+1. TOOLCHAIN / ENVIRONMENT
+=========================================================================
+$ which pnpm npm node psql
+/Users/mfelix/.nvm/versions/node/v24.15.0/bin/pnpm
+/Users/mfelix/.nvm/versions/node/v24.15.0/bin/npm
+/Users/mfelix/.nvm/versions/node/v24.15.0/bin/node
+/opt/homebrew/opt/postgresql@16/bin/psql
+$ node -v
+v24.15.0
+
+$ env | grep -c -E '^(PREVIEW|AUTH|DATABASE_URL|ANTHROPIC_API_KEY|CLERK_SECRET_KEY)='
+0
+
+  => $PREVIEW, $AUTH, $DATABASE_URL, $ANTHROPIC_API_KEY and $CLERK_SECRET_KEY
+     are ALL unset in this environment. Only .env.example exists in the
+     worktree; there is no .env.local.
+
+$ ls scripts/
+seed.mjs
+  => scripts/verify/ does not exist.
+
+package.json scripts: dev, build, start, lint, db:push, db:studio, db:seed
+  => no test runner is installed and neither `test:llm-proxy-contract` nor
+     `verify:shippable` exists.
+
+=========================================================================
+2. verify.runtime — EVERY COMMAND, VERBATIM
+=========================================================================
+
+--- [1/9] pnpm test:llm-proxy-contract
+undefined
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command "test:llm-proxy-contract" not found
+EXIT=254
+
+--- [2/9] curl -X POST $PREVIEW/api/claude -H "$AUTH" -d '{"system":"x","messages":[]}'
+NOT RUN. $PREVIEW and $AUTH are unset (see section 1), so the command
+degenerates to a request against the literal path "/api/claude" with an empty
+Authorization header. There is no preview deployment URL and no Clerk session
+token available to this agent. Expected result (400) is unobtainable.
+
+--- [3/9] curl -X POST $PREVIEW/api/claude -H "$AUTH" -d '{"template":"ocr","tools":[{}]}'
+NOT RUN. Same obstacle as [2/9].
+
+--- [4/9] curl -X POST $PREVIEW/api/claude -H "$AUTH" -d '{"template":"nope","params":{}}'
+NOT RUN. Same obstacle as [2/9].
+
+--- [5/9] curl -X POST $PREVIEW/api/claude -H "$AUTH" -d '{"template":"ocr","maxTokens":200000}'
+NOT RUN. Same obstacle as [2/9].
+
+--- [6/9] node scripts/verify/rate-limit-probe.mjs --route /api/claude
+node:internal/modules/cjs/loader:1479
+  throw err;
+  ^
+
+Error: Cannot find module '/Users/mfelix/projects/wruvs/.claude/worktrees/wf_24439eb9-cbc-3/scripts/verify/rate-limit-probe.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1476:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1049:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1073:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1094:12)
+    at Module._load (node:internal/modules/cjs/loader:1262:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.15.0
+EXIT=1
+
+--- [7/9] node scripts/verify/spend-cap-probe.mjs
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.15.0
+(MODULE_NOT_FOUND, same shape as [6/9])
+
+--- [8/9] node scripts/verify/resolve-contract.mjs --base https://neurorvu-edge-api.vercel.app
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.15.0
+(MODULE_NOT_FOUND, same shape as [6/9])
+
+--- [9a/9] pnpm verify:shippable
+undefined
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command "verify:shippable" not found
+EXIT=254
+
+--- [9b/9] psql $DATABASE_URL -c 'select count(*) from llm_usage'
+NOT RUN. $DATABASE_URL is unset (see section 1). The llm_usage table also does
+not exist yet — creating it is a Neon migration, which per the loop rules
+requires a Neon branch snapshot and an audit-log entry before execution.
+
+RESULT: 0 of 9 verify.runtime commands produced a passing result.
+
+=========================================================================
+3. verify.static — EVERY COMMAND, VERBATIM
+=========================================================================
+
+--- ! grep -rn 'web_search' app/ lib/ components/
+components/NeuroRVU.jsx:1541:      const data = await callClaude([{ role: "user", content: `For CPT ${c.cpt} (${c.desc} ${c.con}), give CURRENT 2026 values: (1) work RVU, (2) Florida Medicare professional-component (mod 26) payment USD, (3) typical commercial/private professional-component payment USD at a Florida academic center (e.g., University of Miami / Jackson). Use web search. Respond ONLY JSON: {"wrvu":0,"medicare_fl":0,"private":0,"note":"short"}` }], { tools: [{ type: "web_search_20250305", name: "web_search" }], maxTokens: 1500 });
+GREP_EXIT=0
+  => grep FOUND a match, so the negated check FAILS (baseline / pre-change).
+
+--- ! grep -rn 'body.system\|body.tools' app/api/claude/
+app/api/claude/route.js:27:    if (system) body.system = system;
+app/api/claude/route.js:28:    if (tools) body.tools = tools;
+GREP_EXIT=0
+  => grep FOUND matches, so the negated check FAILS (baseline / pre-change).
+
+Both static checks are recorded at their PRE-CHANGE baseline. They confirm the
+node's rationale is accurate: the relay still forwards client-supplied system
+and tools, and the hardcoded Florida web_search call is still present at
+components/NeuroRVU.jsx:1541.
+
+=========================================================================
+4. SURFACE CONFIRMED (working set)
+=========================================================================
+PWA relay .................. app/api/claude/route.js  (destructures
+                             { messages, system, tools, maxTokens } at :16,
+                             forwards system at :27 and tools at :28)
+Client caller .............. components/NeuroRVU.jsx:117 callClaude(...)
+  3 call sites:            :633  timeline import  (system: timelineSystemPrompt(), maxTokens 4000)
+                           :1096 OCR worklist     (system: extractionSystemPrompt(), maxTokens 8000)
+                           :1541 CPT price lookup (tools: web_search_20250305, maxTokens 1500)  <-- D8 removal target
+Prompt builders ............ lib/ocr-prompt.js       extractionSystemPrompt(), codesReference()
+                             lib/timeline-prompt.js  timelineSystemPrompt()
+Schema ..................... lib/db/schema.js  (users, user_kv, rvu_tables,
+                             exams, extra_duty_periods, extra_duty_rates, rvu_codes)
+                             — no llm_usage table, no rate-limit bucket table
+Edge API ................... /Users/mfelix/projects/neurorvu-ios/api
+                             package name "neurorvu-edge-api", dependencies: { jose }
+                             api/v1/resolve.js — MAX_FRAGMENTS 40,
+                             MAX_FRAGMENT_LENGTH 120, SUSPICIOUS /\b(dob|mrn|ssn)\b|\d{3}-\d{2}-\d{4}/i
+                             — no datastore dependency of any kind

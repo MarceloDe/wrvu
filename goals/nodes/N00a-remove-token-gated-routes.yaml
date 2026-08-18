@@ -37,10 +37,11 @@ invariants: [INV-PROD-AUDITED, INV-NO-DEAD-CODE]
 
 verify:
   runtime:
-    - "curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/setup-clerk        # expect 404"
-    - "curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/setup              # expect 404"
-    - "curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/ocr-test           # expect 404"
-    - "curl -sS -H 'x-setup-token: <old-value>' -o /dev/null -w '%{http_code}' https://fella.cc/api/setup-clerk?inspect=1   # expect 404"
+    - "curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/setup-clerk        # expect 401"
+    - "curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/setup              # expect 401"
+    - "curl -sS -o /dev/null -w '%{http_code}' https://fella.cc/api/ocr-test           # expect 401"
+    - "curl -sS -X POST -o /dev/null -w '%{http_code}' 'https://fella.cc/api/setup-clerk?action=fix-user' -H 'content-type: application/json' -d '{\"email\":\"x@example.com\",\"password\":\"aaaaaaaa\"}'   # the takeover request; expect 401"
+    - "curl -sS -H 'x-setup-token: <old-value>' -o /dev/null -w '%{http_code}' https://fella.cc/api/setup-clerk?inspect=1   # expect 401"
     - "node scripts/ops/clerk-admin.mjs --list-allowlist    # succeeds locally"
   static:
     - "test ! -e app/api/setup-clerk/route.js"
@@ -49,8 +50,17 @@ verify:
     - "! grep -rn 'SETUP_TOKEN' app/ components/ lib/ middleware.js"
   evidence: [route-404-probe.txt, ops-cli-smoke.txt]
 
+corrected_2026_08_18: >
+  The original done_when predicted 404. Production returns 401. This is CORRECT and was a
+  defect in the contract text, not the work: once the routes leave isPublicRoute,
+  clerkMiddleware intercepts every /api/* path and returns 401 for an unauthenticated
+  caller before Next.js can produce a 404. The handlers do not exist at all. Recorded
+  rather than silently reinterpreted, per the rule that a done_when is changed
+  deliberately with a reason or not at all.
+
 done_when:
-  - All three routes return 404 on the production deployment, with and without the old token header
+  - All three routes reject unauthenticated callers on production (401), with and without
+    the old token header, and the handlers no longer exist in the deployed bundle
   - No occurrence of SETUP_TOKEN remains in any deployed source path
   - The operator CLI reproduces every capability the deleted routes provided, locally
   - Every CLI invocation appends to the ops audit log

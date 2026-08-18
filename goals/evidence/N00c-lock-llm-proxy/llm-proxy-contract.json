@@ -1,0 +1,77 @@
+{
+  "node": "N00c-lock-llm-proxy",
+  "artifact": "llm-proxy-contract.json",
+  "status": "NOT_PRODUCED",
+  "reason": "verify.runtime[1] `pnpm test:llm-proxy-contract` does not exist and no test runner is installed in this project. No contract suite was run, so no results are reported. This file is a blocked record, NOT a passing result.",
+  "command": "pnpm test:llm-proxy-contract",
+  "verbatim_output": "undefined\n ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command \"test:llm-proxy-contract\" not found\nEXIT=254",
+  "package_json_scripts_present": [
+    "dev",
+    "build",
+    "start",
+    "lint",
+    "db:push",
+    "db:studio",
+    "db:seed"
+  ],
+  "devDependencies_present": [
+    "autoprefixer",
+    "drizzle-kit",
+    "postcss",
+    "tailwindcss"
+  ],
+  "contracts_evaluated": [
+    {
+      "contract": "app/api/claude/route.ts accepts only { template, params, images? }",
+      "result": "NOT_IMPLEMENTED",
+      "current_state": "app/api/claude/route.js:16 destructures { messages, system, tools, maxTokens } from the client body"
+    },
+    {
+      "contract": "lib/prompts/registry.ts exports PROMPT_TEMPLATES",
+      "result": "NOT_IMPLEMENTED",
+      "blocker": "AMBIGUOUS — contract specifies TypeScript paths (.ts) but this project is plain JavaScript: no `typescript` dependency, no `@types/*`, no tsconfig.json, and a jsconfig.json instead. Resolving this requires either adopting the TS toolchain (build-config change beyond the stated contracts, i.e. drift) or implementing as .js (violates the literal contract path). Needs an explicit ruling."
+    },
+    {
+      "contract": "request supplying system, tools or maxTokens is rejected with 400",
+      "result": "NOT_IMPLEMENTED"
+    },
+    {
+      "contract": "unknown template id rejected with 400, does not reach Anthropic",
+      "result": "NOT_IMPLEMENTED"
+    },
+    {
+      "contract": "per-user rate limiting, token bucket, persisted, not in-memory",
+      "result": "NOT_IMPLEMENTED",
+      "blocker": "Requires an additive Neon migration. $DATABASE_URL is unset and a Neon branch snapshot (required before any production migration) cannot be taken without credentials."
+    },
+    {
+      "contract": "per-user daily spend cap returning 429 with a correlation id",
+      "result": "NOT_IMPLEMENTED",
+      "blocker": "Same persistence blocker as the rate limit."
+    },
+    {
+      "contract": "every call writes a usage row (user_id, template, input_tokens, output_tokens, cost_estimate)",
+      "result": "NOT_IMPLEMENTED",
+      "blocker": "llm_usage table does not exist in lib/db/schema.js; creating it is a Neon migration."
+    },
+    {
+      "contract": "no template in the registry declares a web_search tool",
+      "result": "NOT_IMPLEMENTED",
+      "current_state": "web_search_20250305 is still declared client-side at components/NeuroRVU.jsx:1541"
+    },
+    {
+      "contract": "neurorvu-edge-api /api/v1/resolve gains rate limit, daily spend cap and usage row",
+      "result": "NOT_IMPLEMENTED",
+      "blocker": "Lives in a DIFFERENT git repository (github.com/MarceloDe/neurorvu-ios, on disk at /Users/mfelix/projects/neurorvu-ios/api), outside this agent's isolated worktree. The node's `couples` block requires both halves in ONE PR; two separate repositories cannot be one PR. That project also has no datastore dependency at all (dependencies: { jose }), so persisted limits require provisioning storage on a separate Vercel project."
+    },
+    {
+      "contract": "both projects' ANTHROPIC_API_KEY usage is attributable to a user",
+      "result": "NOT_IMPLEMENTED"
+    },
+    {
+      "contract": "Anthropic prompt caching enabled on the OCR template's static code-reference block",
+      "result": "NOT_IMPLEMENTED",
+      "blocker": "done_when requires cache_read_input_tokens > 0 on a second identical live call. No ANTHROPIC_API_KEY is available and D20 forbids a mock standing in as done_when evidence."
+    }
+  ]
+}

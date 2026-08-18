@@ -1,0 +1,33 @@
+# static verify — node N00a-remove-token-gated-routes
+# cwd: /Users/mfelix/projects/wruvs/.claude/worktrees/wf_24439eb9-cbc-2
+# utc: 2026-08-18T04:03:58Z
+
+$ test ! -e app/api/setup-clerk/route.js
+exit=0
+
+$ test ! -e app/api/setup/route.js
+exit=0
+
+$ test ! -e app/api/ocr-test/route.js
+exit=0
+
+$ ! grep -rn 'SETUP_TOKEN' app/ components/ lib/ middleware.js
+exit=0
+
+# context: remaining api routes
+$ ls app/api
+claude
+exams
+extra-duty
+health
+rvu-tables
+store
+
+# context: isPublicRoute after the change
+$ sed -n 15,20p middleware.js
+const isPublicRoute = createRouteMatcher([
+  "/", // landing page
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+  "/api/health",
+]);

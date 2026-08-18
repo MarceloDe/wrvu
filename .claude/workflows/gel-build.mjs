@@ -39,7 +39,7 @@ const BUILD = {
   required: ['nodeId', 'status', 'filesChanged', 'verifyOutput'],
   properties: {
     nodeId: { type: 'string' },
-    status: { enum: ['built', 'blocked', 'refused'] },
+    status: { enum: ['built', 'blocked_external', 'blocked', 'refused'] },
     filesChanged: { type: 'array', items: { type: 'string' } },
     verifyOutput: { type: 'string', description: 'verbatim output of every verify command the Builder ran' },
     evidencePaths: { type: 'array', items: { type: 'string' } },
@@ -53,7 +53,7 @@ const VERDICT = {
   required: ['nodeId', 'verdict', 'reDerived', 'failingCommand'],
   properties: {
     nodeId: { type: 'string' },
-    verdict: { enum: ['PASS', 'FAIL', 'UNCERTAIN'] },
+    verdict: { enum: ['PASS', 'BLOCKED_EXTERNAL', 'FAIL', 'UNCERTAIN'] },
     reDerived: {
       type: 'array',
       description: 'one entry per done_when, independently re-derived',
@@ -155,13 +155,26 @@ BUILD node ${node.id}.
 5. Write evidence artifacts to goals/evidence/${node.id}/.
 6. Stop. Do not self-certify. A Builder's self-report is never sufficient.
 
-If a contract is ambiguous or a verify command cannot run, return status 'blocked' with
-the specific obstacle rather than guessing.`,
+Status semantics — choose precisely:
+  'built'            every contract implemented AND every verify command ran and passed.
+  'blocked_external' every contract implemented and every RUNNABLE check passes, but named
+                     verifications need operator credentials, a deploy, or infrastructure
+                     you cannot reach. List each one and the exact command that closes it.
+  'blocked'          you could not implement a contract — it is ambiguous, contradictory,
+                     or depends on something that does not exist. Say which and why.
+  'refused'          implementing it would violate an invariant or the harness rules.
+
+Never guess. 'blocked_external' is not a failure and must not be used to hide one.`,
       { label: `build:${node.id}`, phase: 'Build', schema: BUILD, isolation: 'worktree' },
     ),
 
   // Stage 2 — Validator. Fresh agent, no memory of how it was built.
   (build, node) => {
+    if (build && build.status === 'blocked_external') {
+      return { nodeId: node.id, verdict: 'BLOCKED_EXTERNAL', reDerived: [], invariantsChecked: [],
+               failingCommand: `Work complete; operator must close: ${(build.unresolved ?? []).join(' | ')}`,
+               evidencePaths: build.evidencePaths ?? [] }
+    }
     if (!build || build.status !== 'built') {
       return { nodeId: node.id, verdict: 'FAIL', reDerived: [], invariantsChecked: [],
                failingCommand: `Builder returned status=${build?.status ?? 'null'}: ${(build?.unresolved ?? []).join('; ')}`,
@@ -225,6 +238,7 @@ const settled = results.filter(Boolean)
 
 const passed = []
 const failed = []
+const blockedExternal = []
 
 for (const r of settled) {
   const node = r.node ?? { id: r.nodeId }
@@ -234,6 +248,8 @@ for (const r of settled) {
 
   if (verdict?.verdict === 'PASS' && refutations.length === 0) {
     passed.push({ id: node.id, evidence: verdict.evidencePaths })
+  } else if (verdict?.verdict === 'BLOCKED_EXTERNAL') {
+    blockedExternal.push({ id: node.id, operatorMustClose: verdict.failingCommand })
   } else {
     failed.push({
       id: node.id,
@@ -244,10 +260,11 @@ for (const r of settled) {
   }
 }
 
-log(`PASS ${passed.length} · needs human review ${failed.length}`)
+log(`PASS ${passed.length} · blocked on operator ${blockedExternal.length} · needs human review ${failed.length}`)
 
 return {
   passed,
+  blockedExternal,
   failed,
   humanReviewRequired: failed.length > 0,
   stateUpdate:

@@ -1,4 +1,4 @@
-id: N00c-lock-llm-proxy
+id: N00c-pwa-lock-llm-proxy
 title: Replace the pass-through LLM relay with server-owned named prompt templates
 goal_refs: [G10]
 decisions: [D18, D8]
@@ -25,7 +25,20 @@ rationale: >
 context_query: >
   codegraph explore "api/claude route messages system tools maxTokens anthropic proxy web_search ocrPrompt timelineSystemPrompt"
 
-scope_amended_2026_08_17: >
+recontracted_2026_08_18: >
+  The first build attempt returned `blocked` and was RIGHT to. Three defects in the
+  original contract, all mine, all now fixed:
+  (1) `couples:` required the PWA and edge halves in ONE PR, but they live in two GitHub
+      repos and two repos cannot be one PR. DECOUPLED (founder call): the edge API's
+      request/response contract is not changing, only rate limiting is being ADDED, which
+      is backward-compatible and already covered by INV-ADDITIVE-CONTRACTS. Reserve
+      `couples:` for genuine contract changes. The edge half is now N00c-edge-usage-cap.
+  (2) Contracts named .ts paths, but A0 precedes the TypeScript migration (D19, phase A1).
+      The project is plain JS with jsconfig.json. All paths are now .js; A1 migrates them.
+  (3) The edge API has no datastore (deps are {jose} only) and a per-user usage row would
+      be user data, contradicting D29. Accounting moves to project-m6jfw entirely.
+
+scope_note: >
   There are TWO LLM paths, not one. neurorvu-edge-api holds its own ANTHROPIC_API_KEY and
   serves POST /api/v1/resolve. That route ALREADY does most of this correctly — Clerk JWT
   verification via jose, MAX_FRAGMENTS 40, MAX_FRAGMENT_LENGTH 120, a SUSPICIOUS regex
@@ -34,8 +47,8 @@ scope_amended_2026_08_17: >
   rewrite it. The uncapped relay is the PWA's /api/claude.
 
 contracts:
-  - "app/api/claude/route.ts accepts only { template: string, params: Record<string, unknown>, images?: string[] }"
-  - "lib/prompts/registry.ts exports PROMPT_TEMPLATES: Record<string, PromptTemplate> where
+  - "app/api/claude/route.js accepts only { template: string, params: Record<string, unknown>, images?: string[] }"
+  - "lib/prompts/registry.js exports PROMPT_TEMPLATES: Record<string, PromptTemplate> where
      PromptTemplate = { id, system, tools, maxTokens, paramsSchema }"
   - The route resolves system, tools and maxTokens from the registry entry only; a request
     supplying any of those three fields is rejected with 400
@@ -44,18 +57,26 @@ contracts:
   - A per-user daily spend cap is enforced; exceeding it returns 429 with a correlation id
   - Every call writes a usage row (user_id, template, input_tokens, output_tokens, cost_estimate)
   - No template in the registry declares a web_search tool
-  - neurorvu-edge-api /api/v1/resolve gains a per-user rate limit, a per-user daily spend cap
-    and a usage row, keeping its existing caps and PHI-shaped rejection unchanged
-  - Both projects' ANTHROPIC_API_KEY usage is attributable to a user
+  - "lib/usage/meter.js exports recordUsage(userId, source, tokensIn, tokensOut) and
+     checkCap(userId): Promise<{allowed: boolean, remaining: number}>, backed by an
+     additive llm_usage table in project-m6jfw's Neon database"
+  - "app/api/internal/usage/route.js accepts a Clerk-verified call from neurorvu-edge-api
+     and applies the same meter, so BOTH LLM paths bill against one per-user budget"
   - Anthropic prompt caching is enabled on the static code-reference block in the OCR template
 
 invariants: [INV-SERVER-PROMPTS, INV-NO-RAW-ERRORS, INV-NO-SWALLOW, INV-ALWAYS-SHIPPABLE, INV-ADDITIVE-CONTRACTS]
 
-couples:
-  - locking /api/claude
-  - extending /api/v1/resolve
-  # One PR: iOS calls /api/v1/resolve on every ambiguous scan. Changing its contract while
-  # the PWA proxy changes shape independently risks a skew no TestFlight user can escape.
+decoupled_from: N00c-edge-usage-cap
+# NOT coupled. The edge API's request/response contract is unchanged; rate limiting is
+# purely additive and INV-ADDITIVE-CONTRACTS covers the skew risk. Older TestFlight builds
+# keep working because nothing they send or parse changes.
+
+prerequisites: >
+  This node CANNOT be built without: a writable DATABASE_URL (for the additive llm_usage
+  migration, taken on a Neon branch per INV-PROD-AUDITED), a deployed preview URL, and a
+  real Clerk session. The first attempt failed on exactly these. An operator must run
+  `vercel env pull .env.local` and confirm the Builder may read it, or the node stays
+  blocked_external.
 
 verify:
   runtime:
@@ -66,8 +87,6 @@ verify:
     - "curl -X POST $PREVIEW/api/claude -H \"$AUTH\" -d '{\"template\":\"ocr\",\"maxTokens\":200000}'      # expect 400"
     - "node scripts/verify/rate-limit-probe.mjs --route /api/claude   # expect 429 after the configured burst"
     - "node scripts/verify/spend-cap-probe.mjs                        # expect 429 once the daily cap is reached"
-    - "node scripts/verify/resolve-contract.mjs --base https://neurorvu-edge-api.vercel.app
-       # asserts existing caps + PHI rejection still hold, and the new rate limit fires"
     - "pnpm verify:shippable   # PWA + edge API + iOS all green (INV-ALWAYS-SHIPPABLE)"
     - "psql $DATABASE_URL -c 'select count(*) from llm_usage'         # rows written for every call above"
   static:
