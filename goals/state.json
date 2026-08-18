@@ -55,11 +55,15 @@
       "roster_conclusion": "No unexplained accounts. The one flagged account (gaurav.saigal@rocketmail.com, created 2026-08-14 while SETUP_TOKEN was live) was confirmed by the owner as Gaurav Saigal's personal email. Session revocation is NOT required as incident response."
     },
     "N00c-pwa-lock-llm-proxy": {
-      "status": "ready",
-      "depends_on": [],
+      "status": "blocked_integration",
       "priority": 3,
-      "unblocked_2026_08_18": "dev Neon branch + .env.local + permission rules now exist; the llm_usage migration and the rate-limit/spend-cap probes can run against dev",
-      "still_needs": "a preview deployment URL and a real Clerk session for the live HTTP probes"
+      "built": "builder/N00c-llm-proxy (d57302b). NOT merged.",
+      "verified_by_builder": [
+        "rate limit PASSES --direct against the real dev Neon branch (10 allowed, 11-12 denied, refill restores exactly one)",
+        "spend cap PASSES --direct against real llm_usage rows"
+      ],
+      "blocked_on": "INTEGRATION, not credentials. N00c changes callClaude from (messages,{system,tools,maxTokens}) to (template,{params,attachments}). N00f's assertNoUnredactedImages() walks message.content[] and identifies redacted blocks by WeakSet IDENTITY; under the new signature the client passes data-URL strings, so the guard loses its identity handle and degrades to the isRedactedPayload string check. Restoring that guarantee is a DESIGN change to a PHI control, not a merge conflict.",
+      "partial_resolution": "route.js was reconciled (N00c structure + N00d code vocabulary) and preserved at goals/evidence/A0-integration/route.js.resolved. package.json and tsconfig.json resolutions preserved alongside."
     },
     "N00c-edge-usage-cap": {
       "status": "blocked",
@@ -70,9 +74,19 @@
       "note": "needs contracting; lives in the neurorvu-ios repo at api/"
     },
     "N00d-error-envelope": {
-      "status": "ready",
-      "depends_on": [],
-      "priority": 4
+      "status": "blocked_external",
+      "priority": 4,
+      "built": "builder/N00d-errors; merged into fix/A0-proxy-errors-redaction",
+      "verified": [
+        "npm run test:error-envelope 6/6",
+        "npm run test:route-contracts 9/9",
+        "next build passes"
+      ],
+      "operator_must_close": [
+        "authenticated fault injection needs a real Clerk session (.env.local holds no Clerk keys)",
+        "ERROR_MONITOR_URL / ERROR_MONITOR_TOKEN unprovisioned, so shipToMonitor() is a no-op in production"
+      ],
+      "known_boundary": "An unsupported METHOD on an existing route is answered by Next with a bodyless 405 before application code runs, so it carries no correlation id. It carries no information either."
     },
     "N00e-mfa-and-password-policy": {
       "status": "ready",
@@ -82,9 +96,23 @@
       "warning": "enabling forces every colleague to enrol at next sign-in"
     },
     "N00f-redact-before-upload": {
-      "status": "ready",
-      "depends_on": [],
-      "priority": 6
+      "status": "blocked_external",
+      "priority": 6,
+      "built": "builder/N00f-redaction; merged into fix/A0-proxy-errors-redaction",
+      "verified": [
+        "npm run test:redaction 30/30",
+        "next build passes against the dev Neon branch"
+      ],
+      "operator_must_close": [
+        "`pnpm --filter @rad/core test:redaction` is vacuous until the N01 monorepo exists; the same suite runs as `npm run test:redaction`"
+      ],
+      "bounded_gap": "PDFs bypass redaction BY DESIGN. prepareDoc() (components/NeuroRVU.jsx:209, called at :632) base64s application/pdf straight through to Anthropic. That path carries the HR consolidated report \u2014 the physician's own productivity and compensation, not patient data. PDF is the ONLY bypass and an AST check enforces it stays PDF-only. Tracked as N00g.",
+      "known_weakness": "Staleness is detected by aspect ratio within 2%. A differently-laid-out screenshot with the same aspect ratio would be masked with stored geometry rather than re-prompting. N27 (layout profiles) supersedes this heuristic."
+    },
+    "N00g-pdf-redaction-gap": {
+      "status": "backlog",
+      "priority": 9,
+      "reason": "Opened from the N00f finding. Close only if a PDF ever carries patient identifiers; today the PDF path carries the physician's own HR report."
     }
   },
   "statuses": {
@@ -94,7 +122,8 @@
     "pass": "Validator confirmed with evidence",
     "fail": "Validator rejected \u2014 human review required",
     "blocked": "waiting on a dependency",
-    "blocked_external": "work complete and all runnable checks pass; named verifications need operator credentials, a deploy, or infrastructure the agent cannot reach"
+    "blocked_external": "work complete and all runnable checks pass; named verifications need operator credentials, a deploy, or infrastructure the agent cannot reach",
+    "blocked_integration": "the node's own work is complete and verified, but landing it requires a design change where it meets another node"
   },
   "backlog_ref": "goals/BACKLOG.yaml",
   "evidence_dir": "goals/evidence",

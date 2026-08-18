@@ -14,6 +14,34 @@ updated: 2026-08-17
 
 invariants:
 
+  - id: INV-CHECKS-ACTUALLY-RUN
+    rule: >
+      Every invariant check must FAIL when the thing it checks does not exist. A command
+      that exits 0 because it matched nothing, found no tests, or skipped silently is a
+      vacuous pass and is treated as a broken invariant, not a satisfied one.
+    goals: [G10]
+    severity: blocking
+    discovered: >
+      2026-08-18, by the N00f Builder. Four checks in this file used
+      `pnpm --filter @rad/core <script>`, which exits 0 when the filter matches no package.
+      @rad/core does not exist yet (it arrives with the N01 monorepo). Verified on pnpm
+      10.33.1: bare form exits 0, `--fail-if-no-match` exits 1. Those four checks would have
+      reported PASS while executing nothing, in the suite the Validator relies on.
+    rationale: >
+      This invariant guards the verification system itself. A check that cannot fail is
+      worse than no check, because it manufactures false confidence in every node that
+      lists it.
+    checks:
+      - kind: ci
+        cmd: node scripts/verify/checks-are-executable.mjs
+        detail: >
+          Parses every `cmd:` in INVARIANTS.yaml and every verify.runtime entry in
+          goals/nodes/*.yaml, then asserts each is non-vacuous: pnpm --filter carries
+          --fail-if-no-match; test runners are invoked so that zero-tests-collected is an
+          error; referenced scripts and package.json entries exist on disk. Any command that
+          cannot currently run must be declared under a node's blocked_external, never left
+          to exit 0 quietly.
+
   - id: INV-NO-PHI-IN-CLOUD
     rule: >
       No patient identifier appears in any cloud table, log line, notification payload,
@@ -27,7 +55,7 @@ invariants:
       - kind: log-scan
         cmd: node scripts/verify/phi-log-scan.mjs --stream captured-session.log
       - kind: unit
-        cmd: pnpm --filter @rad/core test:prompt-builder
+        cmd: pnpm --filter @rad/core --fail-if-no-match test:prompt-builder
         detail: Asserts every prompt builder emits patient_ref placeholders, never names.
     fixture_policy: >
       Verified with synthetic PHI fixtures only (D25a). Real patient data never enters a
@@ -56,7 +84,7 @@ invariants:
           /wrvu|rvu|gpci|conversion|rate|cf/i outside packages/core/pricing
           and ios/RadRVUKit/Pricing.
       - kind: runtime
-        cmd: pnpm --filter @rad/core test:pricing
+        cmd: pnpm --filter @rad/core --fail-if-no-match test:pricing
 
   - id: INV-DESCRIPTOR-SEPARABLE
     rule: >
@@ -166,7 +194,7 @@ invariants:
     severity: blocking
     checks:
       - kind: runtime
-        cmd: pnpm --filter @rad/core test:unpriced
+        cmd: pnpm --filter @rad/core --fail-if-no-match test:unpriced
         detail: >
           Asserts resolveValue throws PricingUnavailable for an unknown code, that the
           unpriced state propagates to the UI, and that status-C overrides are totalled
@@ -298,7 +326,7 @@ invariants:
       disabled to unblock a release; if it is, the architecture has failed.
     checks:
       - kind: runtime
-        cmd: pnpm --filter @rad/core test:fixtures
+        cmd: pnpm --filter @rad/core --fail-if-no-match test:fixtures
       - kind: runtime
         cmd: xcodebuild test -scheme RadRVUKit -only-testing:FixtureParityTests
       - kind: runtime
