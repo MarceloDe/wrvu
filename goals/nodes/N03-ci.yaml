@@ -63,7 +63,7 @@ verify:
     # --- a GREEN run exists, and its steps are the contracted ones in order ---
     - "gh pr create --draft --base main --head builder/N03-ci --title 'N03 CI' --body 'verification' || gh pr view builder/N03-ci --json number
        # idempotent: a re-deriving Validator must not abort on 'a pull request already exists'"
-    - "node scripts/verify/gh-wait-run.mjs --branch builder/N03-ci --sha \"$(git rev-parse origin/builder/N03-ci)\" --out goals/evidence/N03-ci/ci-green-run.json
+    - "node scripts/verify/gh-wait-run.mjs --branch builder/N03-ci --sha-from-ref origin/builder/N03-ci --out goals/evidence/N03-ci/ci-green-run.json
        # polls until a run whose headSha MATCHES exists and has completed; never picks a stale run"
     - "node -e \"const r=require('./goals/evidence/N03-ci/ci-green-run.json'); if(r.conclusion!=='success'){console.error(r.conclusion);process.exit(1)} if(r.event!=='pull_request'){console.error('event',r.event);process.exit(1)} const s=r.jobs[0].steps.map(x=>x.name); const want=['npm ci','npm run lint','npx tsc --noEmit','npm run test:redaction','npm run test:error-envelope','npm run test:route-contracts','npm run test:llm-proxy-contract']; for(const w of want){ if(!s.includes(w)){console.error('missing step',w);process.exit(1)} } console.log('green run ok, context name:', r.jobs[0].name)\""
 
@@ -82,7 +82,7 @@ verify:
        # merge via the API and asserts a NON-ZERO exit. Leaves the PR OPEN."
     - "node -e \"const m=require('./goals/evidence/N03-ci/merge-blocked.json'); if(m.mergeStateStatus!=='BLOCKED'||m.mergeAttemptSucceeded){console.error(m);process.exit(1)} console.log('a red PR cannot merge')\""
 
-    - "npm run verify:shippable 2>&1 | tee goals/evidence/N03-ci/verify-shippable.txt"
+    - "npm run verify:shippable > goals/evidence/N03-ci/verify-shippable.txt 2>&1"
 
   static:
     - "test -f .github/workflows/ci.yml && ! grep -qE '^\\s*name:' .github/workflows/ci.yml"

@@ -27,6 +27,15 @@ for (let i = 2; i < process.argv.length; i++) {
   else if (process.argv[i].startsWith("--stream=")) streams.push(process.argv[i].slice("--stream=".length));
 }
 if (!streams.length) {
+  // No stream NAMED is different from a named stream being absent. The first is
+  // "nothing to scan yet" (PENDING 78); the second is "you claimed to scan and
+  // did not" (FAIL 1). Collapsing them would make the invariant unrunnable in the
+  // registry, which is how a check quietly stops existing.
+  console.log("PENDING  no --stream given, so there is no captured log to scan");
+  console.log("         becomes a real check when: a node captures a session log and passes it with --stream");
+  process.exit(78);
+}
+if (false) {
   console.error("phi-log-scan: usage: --stream <file> [--stream <file> ...]");
   process.exit(1);
 }

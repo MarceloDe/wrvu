@@ -43,7 +43,7 @@ invariants: [INV-NO-PHI-IN-CLOUD, INV-NO-SWALLOW, INV-ALWAYS-SHIPPABLE]
 
 verify:
   runtime:
-    - "pnpm --filter @rad/core test:redaction"
+    - "npm run test:redaction"
     - "node scripts/verify/redaction-e2e.mjs
        # drives a real upload with a synthetic PHI fixture image, intercepts the outbound
        # request body, decodes the image, OCRs it, and asserts zero fixture identifiers present"

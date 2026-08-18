@@ -52,7 +52,7 @@ verify:
     - "mkdir -p goals/evidence/N02-real-migrations"
 
     # --- the baseline actually reproduces production ---
-    - "node scripts/verify/schema-diff.mjs --left \"$DATABASE_URL_UNPOOLED\" --right-from-sql drizzle/0000_baseline.sql --out goals/evidence/N02-real-migrations/baseline-vs-dev.json
+    - "node scripts/verify/schema-diff.mjs --left-env DATABASE_URL_UNPOOLED --right-from-sql drizzle/0000_baseline.sql --out goals/evidence/N02-real-migrations/baseline-vs-dev.json
        # dev branch already carries the real schema; asserts ZERO differences and exits 1 otherwise"
     - "test -s goals/evidence/N02-real-migrations/baseline-vs-dev.json"
     - "node -e \"const d=require('./goals/evidence/N02-real-migrations/baseline-vs-dev.json'); if(!Array.isArray(d.differences)) {console.error('malformed report'); process.exit(1);} if(d.differences.length){console.error(d.differences); process.exit(1);} console.log('baseline matches, 0 differences')\""
@@ -67,7 +67,7 @@ verify:
     - "node -e \"const r=require('./goals/evidence/N02-real-migrations/replay.json'); if(r.applied!==2||r.differences.length){console.error(r); process.exit(1)} console.log('replay clean')\""
 
     # --- idempotence and checksum guard ---
-    - "node --env-file=.env.local lib/db/migrate.mjs --url \"$DATABASE_URL_UNPOOLED\" 2>&1 | tee goals/evidence/N02-real-migrations/migrate-second-run.txt"
+    - "node --env-file=.env.local lib/db/migrate.mjs --url-env DATABASE_URL_UNPOOLED > goals/evidence/N02-real-migrations/migrate-second-run.txt 2>&1"
     - "grep -q 'nothing to apply' goals/evidence/N02-real-migrations/migrate-second-run.txt"
     - "node scripts/verify/checksum-guard.mjs --out goals/evidence/N02-real-migrations/checksum-guard.txt
        # mutates a byte of an APPLIED migration in a temp copy, runs the migrator against it,
@@ -75,7 +75,7 @@ verify:
     - "grep -q 'REFUSED' goals/evidence/N02-real-migrations/checksum-guard.txt"
 
     # --- the app still works ---
-    - "node --env-file=.env.local ./node_modules/.bin/next build 2>&1 | tee goals/evidence/N02-real-migrations/next-build.txt"
+    - "node --env-file=.env.local ./node_modules/.bin/next build > goals/evidence/N02-real-migrations/next-build.txt 2>&1"
     - "grep -q 'Compiled successfully' goals/evidence/N02-real-migrations/next-build.txt"
     - "npm run test:route-contracts"
 

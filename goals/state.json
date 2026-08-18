@@ -220,50 +220,39 @@
       "scope_narrowed_by_D43": "No monorepo. N01 is now TypeScript-in-place for the PWA only \u2014 and N00d/N00f already landed tsconfig.json, .eslintrc.json and several .ts modules, so a good part of it is done."
     },
     "N02-real-migrations": {
-      "status": "blocked",
+      "status": "ready",
       "phase": "A1",
       "priority": 1,
       "collapsed_by": "D41 \u2014 was N02a/b/c; they shared the migration system and ci.yml",
-      "blocked_on": "verification tooling does not exist: schema-diff.mjs, migration-replay.mjs, checksum-guard.mjs. See N0V."
+      "blocked_on": "verification tooling does not exist: schema-diff.mjs, migration-replay.mjs, checksum-guard.mjs. See N0V.",
+      "unblocked": "N0V \u2014 the scripts these contracts reference now exist and are dependency-gated"
     },
     "N03-ci": {
-      "status": "blocked",
+      "status": "ready",
       "phase": "A1",
       "priority": 2,
       "collapsed_by": "D41 \u2014 was N03a/b/c/d/e; 6 of 8 A1 nodes edited ci.yml and 5 mutated branch protection",
-      "blocked_on": "verification tooling does not exist: gh-wait-run.mjs, poison.mjs, merge-blocked.mjs, and the verify:shippable npm script. See N0V."
+      "blocked_on": "verification tooling does not exist: gh-wait-run.mjs, poison.mjs, merge-blocked.mjs, and the verify:shippable npm script. See N0V.",
+      "unblocked": "N0V \u2014 the scripts these contracts reference now exist and are dependency-gated"
     },
     "N0V-verification-tooling": {
-      "status": "ready",
+      "status": "pass",
       "phase": "A1",
       "priority": 0,
-      "title": "Make the invariant suite executable",
-      "why": "Three contract passes were rejected (two Contractor, one hand-written). The mechanical cause is now visible: 12 of 33 checks in INVARIANTS.yaml reference scripts that DO NOT EXIST, and N02/N03 reference 6 more. Contracts cannot be accepted while they reference fiction, so this blocks all of A1.",
-      "already_done": "scripts/verify/checks-are-executable.mjs \u2014 the meta-check for INV-CHECKS-ACTUALLY-RUN. It finds all 26 problems mechanically in under a second, including three in A0 nodes already marked pass.",
-      "missing_invariant_scripts": [
-        "contract-compat.mjs",
-        "no-est-flag.mjs",
-        "source-terms.mjs",
-        "rls-enabled.mjs",
-        "parity-report.mjs",
-        "prod-audit-log.mjs",
-        "dead-code.mjs",
-        "phi-schema-scan.mjs",
-        "clerk-callsite-scan.mjs",
-        "descriptor-separable.mjs",
-        "flag-hygiene.mjs"
-      ],
-      "missing_node_scripts": [
-        "schema-diff.mjs",
-        "migration-replay.mjs",
-        "checksum-guard.mjs",
-        "gh-wait-run.mjs",
-        "poison.mjs",
-        "merge-blocked.mjs",
-        "mfa-required.mjs",
-        "weak-password-rejected.mjs"
-      ],
-      "also": "N00f still carries a vacuous 'pnpm --filter' without --fail-if-no-match, and N00b references $OLD_CLERK_KEY which is unset. Both were marked pass before the meta-check existed."
+      "delivered": "scripts/verify/_lib.mjs plus 19 checks. checks-are-executable.mjs reports PASS across all 89 commands in INVARIANTS.yaml and goals/nodes/.",
+      "three_outcomes": "PASS 0, FAIL 1, PENDING 78. A check whose SUBJECT does not exist exits PENDING with a mandatory becomesActiveWhen \u2014 it is visibly not-a-pass, and it flips to a real check the moment its subject lands. That is what stops the vacuous-pass class recurring.",
+      "suite_state": {
+        "pass": 7,
+        "pending": 5,
+        "fail": 1
+      },
+      "honest_red": "INV-TENANT fails: exams, extra_duty_periods, extra_duty_rates, user_kv, llm_usage, llm_rate_buckets all have rls=false force=false. That is N04's work and the check is correctly red until then.",
+      "findings": [
+        "phi-schema-scan flagged users.email/first_name/last_name \u2014 PHYSICIAN identity on the DEAD users table (0 rows, no code reads it). Allowlisted WITH the reason, printed on every run. Second reason for N06g to delete that table.",
+        "A bare /name$/ pattern matched rvu_tables.name and procedure_name. Tightened to person-shaped names rather than allowlisting around a bad rule.",
+        "verify:shippable uses EXIT CODES. Grepping next build for the compile marker is weak: it prints before type-check, page-data and static generation, and a tee pipeline returns tee's status.",
+        "iOS is deliberately out of verify:shippable until N20y \u2014 gating main on an iOS 27 Vision regression would block merges for an unrelated reason."
+      ]
     }
   },
   "statuses": {

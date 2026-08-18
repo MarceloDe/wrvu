@@ -50,7 +50,7 @@ invariants:
     severity: blocking
     checks:
       - kind: schema-introspection
-        cmd: node scripts/verify/phi-schema-scan.mjs --against $DATABASE_URL
+        cmd: node --env-file=.env.local scripts/verify/phi-schema-scan.mjs
         detail: Introspects the live schema and fails on any column matching the PHI name/pattern list.
       - kind: log-scan
         cmd: node scripts/verify/phi-log-scan.mjs --stream captured-session.log
