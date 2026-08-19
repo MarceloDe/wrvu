@@ -1,0 +1,144 @@
+{
+  "conclusion": "success",
+  "databaseId": 32312424442,
+  "event": "pull_request",
+  "headSha": "152da8b85eb665dc394b47bb0840e2dc2d4f6b64",
+  "status": "completed",
+  "workflowName": ".github/workflows/ci.yml",
+  "jobs": [
+    {
+      "name": "checks",
+      "conclusion": "success",
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-node@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "npm ci",
+          "conclusion": "success"
+        },
+        {
+          "name": "ensure chromium",
+          "conclusion": "success"
+        },
+        {
+          "name": "npm run lint",
+          "conclusion": "success"
+        },
+        {
+          "name": "npx tsc --noEmit",
+          "conclusion": "success"
+        },
+        {
+          "name": "npm run test:redaction",
+          "conclusion": "success"
+        },
+        {
+          "name": "npm run test:forged-attachment",
+          "conclusion": "success"
+        },
+        {
+          "name": "npm run test:error-envelope",
+          "conclusion": "success"
+        },
+        {
+          "name": "npm run test:route-contracts",
+          "conclusion": "success"
+        },
+        {
+          "name": "npm run test:llm-proxy-contract",
+          "conclusion": "success"
+        },
+        {
+          "name": "npm run test:baseline",
+          "conclusion": "success"
+        },
+        {
+          "name": "npm run test:analytics",
+          "conclusion": "success"
+        },
+        {
+          "name": "next build",
+          "conclusion": "success"
+        },
+        {
+          "name": "generated clients match the contract",
+          "conclusion": "success"
+        },
+        {
+          "name": "contract change is additive",
+          "conclusion": "success"
+        },
+        {
+          "name": "specialty tags rank but never restrict",
+          "conclusion": "success"
+        },
+        {
+          "name": "no modality is guessed into a paid bucket",
+          "conclusion": "success"
+        },
+        {
+          "name": "one price table only",
+          "conclusion": "success"
+        },
+        {
+          "name": "OCR prompt prices match the reference",
+          "conclusion": "success"
+        },
+        {
+          "name": "no table in public is exposed by default",
+          "conclusion": "success"
+        },
+        {
+          "name": "money has one path",
+          "conclusion": "success"
+        },
+        {
+          "name": "pricing matches the CMS source",
+          "conclusion": "success"
+        },
+        {
+          "name": "pricing golden covers every price state",
+          "conclusion": "success"
+        },
+        {
+          "name": "native contract (iOS) is intact",
+          "conclusion": "success"
+        },
+        {
+          "name": "migration journal is complete",
+          "conclusion": "success"
+        },
+        {
+          "name": "shippability parity",
+          "conclusion": "success"
+        },
+        {
+          "name": "invariant checks are executable",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-node@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ]
+}

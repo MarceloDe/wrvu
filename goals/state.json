@@ -497,8 +497,28 @@
         "pricing-golden-fresh.mjs against the live reference DB: 113 vectors match, 6 states covered",
         "CI run 32312048972 success; step 'pricing golden covers every price state' executed"
       ],
-      "rollback": "revert 32bb611 and 95a7c63; no production data was migrated by this node",
-      "open": "neurorvu-ios has NO CI workflow \u2014 PR #2 merged on locally-run tests only"
+      "rollback": "revert 32bb611 and 95a7c63; no production data was migrated by this node"
+    },
+    "N26b-ios-ci-gate": {
+      "status": "pass",
+      "depends_on": [
+        "N26-pricing-parity"
+      ],
+      "priority": 26.5,
+      "merged": "neurorvu-ios PR #3 (main 8a3211d)",
+      "found": "neurorvu-ios had no CI workflow and no branch protection at all, while shipping to TestFlight. N26 merged there on locally-run tests only.",
+      "verified": [
+        "run 32312840273 success on macos-26: 'Test run with 69 tests in 15 suites passed', pinned destination iPhone 17 Pro / iOS 26.5, 69 @Test declared",
+        "poison (source file committed without regenerating the pbxproj): run 32313383795 FAILED at 'the checked-in project matches project.yml', tests step skipped \u2014 the gate can go red, and fails before the expensive step",
+        "branch protection applied and probed: a direct push to neurorvu-ios main is rejected with GH006 / 'Required status check \"checks\" is expected' \u2014 identical to wruvs"
+      ],
+      "anti_vacuity": [
+        ".ios-runtime is read by both CI and scripts/test-ios.sh, so the two cannot disagree about what was tested; the script fails loudly rather than letting xcodebuild substitute a runtime",
+        "xcodegen output must match the checked-in pbxproj \u2014 an uncompiled Swift file's tests do not exist and the suite passes without them",
+        "the declared @Test count must not fall below 60"
+      ],
+      "cost": "macOS runners bill at 10x Linux minutes; the suite is ~4 minutes of build+test per run",
+      "rollback": "delete .github/workflows/ci.yml and remove the protection rule"
     }
   },
   "statuses": {
