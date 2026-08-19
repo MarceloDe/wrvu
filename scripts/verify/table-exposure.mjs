@@ -35,6 +35,7 @@ const CLASSIFICATION = {
   users: "shared",   // rvu_tables/rvu_codes dropped in 0006 — the reference schema replaced them
   _migrations: "operator",
   exams_reprice_log: "operator",
+  exams_modality_log: "operator",
 };
 
 const c = new pg.Client({ connectionString: url });
