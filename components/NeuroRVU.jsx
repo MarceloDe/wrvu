@@ -2,7 +2,10 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { TAXONOMY } from "@/lib/data/neuro-taxonomy.js";
 import { consolidateBaseline, BASELINE_FIELDS, FIELD_LABEL } from "@/lib/analytics/baseline.js";
-import { num, fmt, monthKey, pad2, localDay, localMonth, daysAgo, MONTH_LABEL } from "@/lib/analytics/format.js";
+import { num, fmt, monthKey, pad2, localDay, localMonth, daysAgo, MONTH_LABEL, weekStartKey, WEEK_LABEL } from "@/lib/analytics/format.js";
+import { INSTITUTIONS, classifyInstitution, instMeta } from "@/lib/analytics/institutions.js";
+import { buildTimeline } from "@/lib/analytics/timeline.js";
+import { buildAnalytics, buildRange } from "@/lib/analytics/tracked.js";
 import {
   Brain, Activity, Upload, Camera, Search, Settings as SettingsIcon, Plus, Trash2,
   TrendingUp, TrendingDown, Loader2, Sparkles, X, FileImage, Calendar,
@@ -55,21 +58,8 @@ const MOD_COLORS = { CT:"#0d9488", MRI:"#6366f1", CTA:"#0891b2", MRA:"#7c3aed", 
 const codeByCpt = Object.fromEntries(CODES.map(c => [c.cpt.replace("+",""), c]));
 
 /* ============================== INSTITUTION LOOP ============================== */
-const INSTITUTIONS = {
-  UM:    { key:"UM",    label:"UHealth / UM", short:"UM",  color:"#f97316", match:/uhealth|university\s*of\s*miami|sylvester|bascom|\bum[a-z0-9\-_]*/i },
-  JHS:   { key:"JHS",   label:"Jackson / JHS", short:"JHS", color:"#0ea5e9", match:/jackson|\bjhs\b|\bjhm\b|\bjmh\b|holtz|ryder/i },
-  Other: { key:"Other", label:"Other / Unassigned", short:"Other", color:"#94a3b8", match:null },
-};
-function classifyInstitution(raw) {
-  if (!raw) return "Other";
-  const s = String(raw).trim();
-  if (s === "UM" || s === "JHS" || s === "Other") return s;
-  if (/^\s*um/i.test(s)) return "UM";                 // PRIMARY: any site starting with UM
-  if (INSTITUTIONS.UM.match.test(s)) return "UM";
-  if (INSTITUTIONS.JHS.match.test(s)) return "JHS";
-  return "Other";
-}
-const instMeta = (k) => INSTITUTIONS[k] || INSTITUTIONS.Other;
+// INSTITUTIONS, classifyInstitution and instMeta now live in
+// lib/analytics/institutions.js (N06) — the module N18 replaces.
 function migrateLog(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.map(s => ({ ...s, items: (s.items || []).map(i => ({
@@ -272,54 +262,10 @@ async function saveKey(k, v) {
 // Stored exam dates keep their own value — this only affects today/this-month.
 // Monday-start week key for a "YYYY-MM-DD" day (built from local parts, so no
 // UTC drift). Returns the Monday's own "YYYY-MM-DD".
-const weekStartKey = (day) => {
-  const [y, m, d] = day.split("-").map(Number);
-  const dt = new Date(y, m - 1, d);
-  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); // Mon=0 … Sun=6
-  return localDay(dt);
-};
-const WEEK_LABEL = (k) => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d).toLocaleString("en-US", { month: "short", day: "numeric" }); };
 
 // Bucket the tracked exam log into weekly/monthly rows within [start, end]
 // (inclusive, YYYY-MM-DD strings compare lexicographically) and derive range
 // stats. Benchmark is scaled per bucket: monthly = target, weekly = target×12/52.
-function buildRange(log, settings, start, end, gran) {
-  const buckets = {};
-  const activeDays = new Set();
-  let total = 0, studies = 0, um = 0, jhs = 0;
-  for (const s of log) {
-    const day = String(s.date).slice(0, 10);
-    if (!day || (start && day < start) || (end && day > end)) continue;
-    const k = gran === "week" ? weekStartKey(day) : day.slice(0, 7);
-    const b = buckets[k] || (buckets[k] = { key: k, wrvu: 0, studies: 0, um: 0, jhs: 0 });
-    for (const i of s.items) {
-      const cnt = i.count || 1, w = cnt * (Number(i.wrvu) || 0), site = classifyInstitution(i.inst);
-      b.wrvu += w; b.studies += cnt; total += w; studies += cnt;
-      if (site === "UM") { b.um += w; um += w; }
-      if (site === "JHS") { b.jhs += w; jhs += w; }
-    }
-    activeDays.add(day);
-  }
-  let cum = 0;
-  const rows = Object.keys(buckets).sort().map((k) => {
-    const b = buckets[k]; cum += b.wrvu;
-    return { key: k, label: gran === "week" ? WEEK_LABEL(k) : MONTH_LABEL(k),
-      wrvu: Math.round(b.wrvu * 10) / 10, studies: b.studies,
-      um: Math.round(b.um), jhs: Math.round(b.jhs), cum: Math.round(cum * 10) / 10 };
-  });
-  const monthlyBench = settings.monthlyBenchmark * settings.cFTE;
-  const bench = gran === "week" ? (monthlyBench * 12) / 52 : monthlyBench;
-  const nB = rows.length || 1, nDays = activeDays.size || 1;
-  const best = rows.reduce((a, r) => (a && a.wrvu >= r.wrvu ? a : r), null);
-  const stats = {
-    total: Math.round(total * 10) / 10, studies, buckets: rows.length, activeDays: activeDays.size,
-    avgPerBucket: Math.round((total / nB) * 10) / 10, avgPerDay: Math.round((total / nDays) * 10) / 10,
-    vsBenchPct: bench ? ((total / nB / bench) - 1) * 100 : 0,
-    um: Math.round(um), jhs: Math.round(jhs), umPct: (um + jhs) ? (um / (um + jhs)) * 100 : 0,
-    best,
-  };
-  return { rows, stats, bench: Math.round(bench) };
-}
 
 /* ============================== EXTRA DUTY ==============================
    Extra-duty work is paid separately from the monthly wRVU target/flow and is
@@ -588,41 +534,7 @@ function StatTile({ label, value, sub }) {
 }
 
 /* ============================================================================ TIMELINE (merged) ============================================================================ */
-function buildTimeline(baseline, log, settings) {
-  const tracked = {};
-  for (const s of log) {
-    const k = monthKey(s.date);
-    tracked[k] = tracked[k] || { wrvu: 0, studies: 0, um: 0, jhs: 0 };
-    for (const i of s.items) {
-      const w = i.count * i.wrvu, site = classifyInstitution(i.inst);
-      tracked[k].wrvu += w; tracked[k].studies += i.count;
-      if (site === "UM") tracked[k].um += w; if (site === "JHS") tracked[k].jhs += w;
-    }
-  }
-  const denom = (settings.umYTD + settings.jhsYTD) || 1;
-  const umShare = settings.umYTD / denom, jhsShare = 1 - umShare;
-  const keys = [...new Set([...baseline.map(b => b.key), ...Object.keys(tracked)])].sort();
-  let cumRep = 0, cumTrk = 0, cumBench = 0;
-  const months = keys.map(k => {
-    const b = baseline.find(x => x.key === k), t = tracked[k];
-    const bench = b ? b.bench : Math.round(settings.monthlyBenchmark * settings.cFTE);
-    const reported = b ? b.base : 0, extra = b ? b.extra : 0, total = reported + extra;
-    const trk = t ? t.wrvu : 0;
-    cumRep += reported; cumBench += bench; cumTrk += trk;
-    return {
-      key: k, mo: b ? b.mo : MONTH_LABEL(k), bench, reported, extra, total,
-      repUM: Math.round(total * umShare), repJHS: Math.round(total * jhsShare),
-      tracked: Math.round(trk), trackedStudies: t ? t.studies : 0, trkUM: t ? t.um : 0, trkJHS: t ? t.jhs : 0,
-      cumReported: cumRep, cumBench, cumTracked: Math.round(cumTrk),
-      capture: reported ? (trk / reported) * 100 : (trk ? 100 : 0),
-      variance: reported - bench, variancePct: bench ? ((reported / bench) - 1) * 100 : 0,
-    };
-  });
-  const base = baseline.reduce((s, b) => s + b.base, 0), bench = baseline.reduce((s, b) => s + b.bench, 0);
-  const extra = baseline.reduce((s, b) => s + b.extra, 0), pay = baseline.reduce((s, b) => s + b.pay, 0);
-  const ytd = { base, bench, extra, pay, total: base + extra, variancePct: bench ? ((base / bench) - 1) * 100 : 0 };
-  return { months, ytd, umShare, jhsShare };
-}
+// buildTimeline now lives in lib/analytics/timeline.js (N06).
 
 function Timeline({ baseline, updateBaseline, updateSettings, log, settings, extraPeriods = [], reloadExtra, explorer, updateExplorer }) {
   const [view, setView] = useState("coverage"); // coverage | institution | reconcile
@@ -1598,30 +1510,7 @@ function ManualAdd({ onAdd }) {
 }
 
 /* ============================================================================ ANALYTICS (tracked) ============================================================================ */
-function buildAnalytics(log, settings) {
-  const byMonth = {}, institution = { UM: { wrvu: 0, studies: 0 }, JHS: { wrvu: 0, studies: 0 }, Other: { wrvu: 0, studies: 0 } }, byType = {};
-  for (const s of log) {
-    const k = monthKey(s.date); byMonth[k] = byMonth[k] || { wrvu: 0, studies: 0, um: 0, jhs: 0 };
-    for (const i of s.items) {
-      const w = i.count * i.wrvu; byMonth[k].wrvu += w; byMonth[k].studies += i.count;
-      const site = classifyInstitution(i.inst); institution[site].wrvu += w; institution[site].studies += i.count;
-      if (site === "UM") byMonth[k].um += w; if (site === "JHS") byMonth[k].jhs += w;
-      if (!byType[i.cpt]) { const canon = codeByCpt[i.cpt.replace("+", "")] || {}; byType[i.cpt] = { cpt: i.cpt, desc: i.desc, mod: i.mod || canon.mod || "Other", perStudy: i.wrvu, count: 0, wrvu: 0, byInst: {} }; }
-      byType[i.cpt].count += i.count; byType[i.cpt].wrvu += w;
-      byType[i.cpt].byInst[site] = byType[i.cpt].byInst[site] || { count: 0, wrvu: 0 };
-      byType[i.cpt].byInst[site].count += i.count; byType[i.cpt].byInst[site].wrvu += w;
-    }
-  }
-  const keys = Object.keys(byMonth).sort();
-  const months = keys.map(k => { const d = byMonth[k], bench = settings.monthlyBenchmark * settings.cFTE, variance = d.wrvu - bench; return { key: k, label: MONTH_LABEL(k), actual: d.wrvu, bench, studies: d.studies, um: d.um, jhs: d.jhs, variance, variancePct: bench ? (variance / bench) * 100 : 0 }; });
-  const nowKey = localMonth(), tm = byMonth[nowKey] || { wrvu: 0 }, tmBench = settings.monthlyBenchmark * settings.cFTE;
-  const thisMonth = { actual: tm.wrvu, bench: tmBench, variancePct: tmBench ? ((tm.wrvu - tmBench) / tmBench) * 100 : 0 };
-  const ytdActual = months.reduce((s, m) => s + m.actual, 0), ytdStudies = months.reduce((s, m) => s + m.studies, 0), ytdBench = months.reduce((s, m) => s + m.bench, 0);
-  const ytd = { actual: ytdActual, studies: ytdStudies, bench: ytdBench, variance: ytdActual - ytdBench, variancePct: ytdBench ? ((ytdActual - ytdBench) / ytdBench) * 100 : 0 };
-  const monthsElapsed = Math.max(months.length, 1), projected = (ytdActual / monthsElapsed) * 12, annualBench = settings.monthlyBenchmark * 12 * settings.cFTE;
-  const annual = { projected, bench: annualBench, variancePct: annualBench ? ((projected - annualBench) / annualBench) * 100 : 0 };
-  return { months, thisMonth, ytd, annual, institution, byType };
-}
+// buildAnalytics and buildRange now live in lib/analytics/tracked.js (N06).
 
 /* ============================================================================ EXAMS DATABASE ============================================================================ */
 function ExamsView({ log, settings }) {
