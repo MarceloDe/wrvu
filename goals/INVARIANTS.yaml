@@ -265,12 +265,22 @@ invariants:
     severity: blocking
     checks:
       - kind: runtime
-        cmd: pnpm test:cross-tenant-probe
+        cmd: node scripts/verify/cross-tenant-probe.mjs
+        detail: >
+          Against an ephemeral Postgres 17, seeds two tenants and proves a scoped
+          connection cannot READ, INSERT, UPDATE or DELETE across the boundary, and that
+          an UNSET tenant sees nothing rather than everything. Also runs rls-enabled.mjs
+          as the restricted role (must PASS) and as the owner (must FAIL), because a
+          checker never observed passing on a correct configuration is not known to work.
       - kind: schema-introspection
         cmd: node scripts/verify/rls-enabled.mjs
         detail: >
-          Asserts FORCE ROW LEVEL SECURITY on every app table and that the production
-          connection role holds neither BYPASSRLS nor ownership.
+          Asserts FORCE ROW LEVEL SECURITY and a non-permissive-true policy on every
+          tenant table, AND that the connecting role holds neither BYPASSRLS, nor
+          SUPERUSER, nor ownership of those tables. The role half is not optional: the
+          app connects as neondb_owner today, which owns all ten tables and holds
+          BYPASSRLS, so a check that omitted it would report PASS on a schema where
+          every policy is inert.
 
   - id: INV-SERVER-PROMPTS
     rule: >

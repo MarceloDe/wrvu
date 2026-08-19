@@ -1,0 +1,18 @@
+(node:6527) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+FAIL  8 problem(s): RLS does not constrain the application's connection
+        exams  ROW LEVEL SECURITY is off
+        extra_duty_periods  ROW LEVEL SECURITY is off
+        extra_duty_rates  ROW LEVEL SECURITY is off
+        llm_rate_buckets  ROW LEVEL SECURITY is off
+        llm_usage  ROW LEVEL SECURITY is off
+        user_kv  ROW LEVEL SECURITY is off
+        the connecting role "neondb_owner" holds BYPASSRLS — every policy above is inert for this connection
+        the connecting role "neondb_owner" OWNS 6 tenant table(s) (exams, extra_duty_periods, extra_duty_rates, llm_rate_buckets, …) — an owner is exempt from RLS unless it is FORCED, and can drop the policies outright
