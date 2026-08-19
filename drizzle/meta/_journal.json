@@ -41,6 +41,11 @@
       "idx": 7,
       "tag": "0007_code_specialties",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "tag": "0008_institutions",
+      "breakpoints": true
     }
   ]
 }

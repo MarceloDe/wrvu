@@ -432,14 +432,29 @@
       "size": "components/NeuroRVU.jsx 1835 -> 1800 lines"
     },
     "N18-n-institution-model": {
-      "status": "blocked",
+      "status": "partial",
       "phase": "B",
-      "decisions_taken": {
-        "reported_split": "Proportional, generalised \u2014 each institution carries a YTD figure and the reported total divides in proportion. Degrades to today's exact numbers with two institutions.",
-        "sequencing": "N06 (decompose) FIRST, then N18.",
-        "existing_data": "Seed UM and JHS as rows per user and link the 887 exams; keep the text column as provenance."
+      "decisions": {
+        "reported_split": "Proportional, generalised N-way",
+        "sequencing": "N06 first (done)",
+        "existing_data": "Seed UM/JHS, link history, keep the text column"
       },
-      "blocked_on": "N06 \u2014 the remaining extractions (analytics, tracker, uploads, extra duty, explorer)."
+      "done": [
+        "0008 \u2014 institutions + institution_sites tables, tenant-scoped with FORCE RLS from the first line; exams.institution_id added",
+        "institutions.js is data-driven: makeClassifier(list, overrides). The default list reproduces the old behaviour exactly.",
+        "timeline.js sharesFor() splits N ways with the remainder to the LAST institution, so shares sum to exactly 1",
+        "seed-institutions.mjs \u2014 dry-run by default",
+        "16 analytics tests: the 10 legacy ones pass UNCHANGED, which is the proof the generalisation altered nothing"
+      ],
+      "why_remainder_to_last": "Independently computed shares do not sum to 1 in floating point \u2014 1/3+1/3+1/3 is not 1 \u2014 and the difference is wRVU that vanishes from the reported split. The old two-institution code already did this with jhsShare = 1 - umShare; generalising means keeping the habit.",
+      "inv_site_never_fails": "Enforced by a partial unique index: exactly one default institution per user. An unmapped site always has somewhere to land.",
+      "new_capability": "A user-defined site mapping now beats every built-in pattern \u2014 the iOS nrv_sites behaviour, which the PWA lacked.",
+      "remaining": [
+        "seed production and link the 887 exams",
+        "UI reads institutions from the table instead of the hardcoded list (~71 references)",
+        "iOS Institution enum becomes data-driven",
+        "move settings.umYTD/jhsYTD onto institutions.ytd_wrvu"
+      ]
     },
     "N06-decompose-dashboard": {
       "status": "partial",
