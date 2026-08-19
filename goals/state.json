@@ -246,16 +246,21 @@
       "blocked_external": "Production backfill. No production connection string is reachable ([SENSITIVE] on every integration secret) and the pre-mutation snapshot needs a Neon API key. drizzle/0000_backfill_migrations.sql is ready, checksums embedded, and was PROVEN on an ephemeral database. Operator: snapshot main -> run that file in the Neon SQL console -> confirm two rows -> append one line to prod-audit-log.jsonl."
     },
     "N03-ci": {
-      "status": "blocked_external",
+      "status": "pass",
       "phase": "A1",
       "done": [
-        "N03a github-actions-base \u2014 11 steps, poison-proven",
-        "N03e verify-shippable \u2014 parity gate, PR #8",
-        "merge-blocked.mjs implemented (PENDS until main is protected)",
-        "gh-wait-run.mjs fixed: it matched on headSha alone and returned the Copilot review workflow's run, whose steps contain none of the checks \u2014 a green from it would have been a false PASS"
+        "N03a github-actions-base \u2014 13 steps, poison-proven",
+        "N03e verify-shippable \u2014 shippable-parity.mjs asserts ci.yml and the harness are the same set (PR #8)",
+        "branch protection ENABLED and PROVEN: contexts=[checks], strict, enforce_admins, no force-push, linear history",
+        "merge-blocked.mjs implemented \u2014 a red PR was refused by the API with 405 'Required status check \"checks\" is failing', against an admin token",
+        "journal-complete.mjs \u2014 catches orphan migrations (PR #10)",
+        "ensure-chromium.mjs \u2014 replaced an npx invocation that could hang forever"
+      ],
+      "defects_found_in_the_gate_itself": [
+        "gh-wait-run.mjs matched on headSha alone and returned the Copilot review workflow's run, whose steps contain none of the checks \u2014 a green from it was a false PASS",
+        "npx playwright install prompted on stdin because the project depends on playwright-core, not playwright; run 32208571889 hung 35 minutes on it"
       ],
       "remaining": [
-        "branch protection on main \u2014 blocked, the settings write was refused by the sandbox",
         "N03b eslint-invariant-rules",
         "N03c neon-branch-runner",
         "N03d macos-runner (must invoke neurorvu-ios/scripts/test-ios.sh or the runtime pin stops being a pin)"
@@ -291,17 +296,26 @@
     "N04-rls": {
       "status": "blocked_external",
       "phase": "A1",
-      "pr": 9,
-      "done": [
-        "rls-enabled.mjs rewritten \u2014 it was a false PASS waiting to happen: it checked only relrowsecurity/relforcerowsecurity, and the app connects as neondb_owner which owns all 10 tables and holds rolbypassrls, so FORCE RLS alone would have turned INV-TENANT green with every policy inert",
-        "drizzle/0002_rls.sql + .down.sql \u2014 tenant_isolation policies on the 6 user_id tables, app_authenticated role, reference tables left global",
-        "cross-tenant-probe.mjs \u2014 13/13 against a real Postgres 17: READ/INSERT/UPDATE/DELETE cannot cross, UNSET sees zero rows, checker PASSes as the restricted role and FAILs as the owner, rollback clean"
+      "prs": [
+        9,
+        10,
+        11,
+        12
       ],
-      "predicate": "user_id = current_setting('app.user_id', true) \u2014 chosen on measurement, not assumption: tenant-mechanism-probe.mjs proved against the real dev branch that a GUC set in one HTTP statement does not leak into the next, and that SET LOCAL holds across a neon-http transaction array",
-      "inert_on_landing": "app_authenticated is NOLOGIN and no connection string changed, so applying 0002 alters no behaviour. Policies first, role second \u2014 INV-ALWAYS-SHIPPABLE holds throughout.",
+      "mechanism": "D-option C: withTenant(userId, fn) opens one transaction, SET LOCAL app.user_id, scoped drizzle + tagged-template sql. getDb()/getSql() renamed to getUnscopedDb()/getUnscopedSql() so all 16 call sites had to be classified and a new one cannot reach tenant data by accident.",
+      "proven": [
+        "INV-TENANT PASSES as app_rls on the real Neon dev branch, FAILS as neondb_owner",
+        "cross-tenant-probe --live: 12/12 on real Neon",
+        "scoped-db-probe: 8/8 \u2014 the application's own data path over a connection with no BYPASSRLS. Scoped access works AND unscoped access sees zero rows.",
+        "verify:shippable 8/8; production 401s with correlation ids on every data route"
+      ],
+      "the_finding": "A role created through the NEON CONSOLE arrives with rolbypassrls=true and neon_superuser membership, and neondb_owner cannot revoke either. Wiring one up would have turned INV-TENANT green while the connection read every tenant's rows. Only a SQL-created role is clean. goals/runbooks/N04-rls-activation.md.",
+      "dev_state": "0002 applied; app_rls exists with a generated password in .env.local as DATABASE_URL_RLS; app still connects as the owner",
       "operator_must_close": [
-        "create a restricted LOGIN role in Neon and rotate DATABASE_URL to it (production + dev)",
-        "decide how the app supplies the tenant id \u2014 see the founder interview"
+        "apply 0002_rls to the production branch",
+        "create app_rls on production via SQL (never the console) and grant app_authenticated",
+        "override DATABASE_URL in Vercel to point at app_rls \u2014 the Neon integration owns that variable, so the override must shadow it and a re-sync will clobber it",
+        "authenticated smoke test \u2014 the one check no agent can run without a Clerk session"
       ]
     }
   },
