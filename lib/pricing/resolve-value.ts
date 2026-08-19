@@ -40,6 +40,8 @@ export interface Valuation {
   statusCode: string | null;
   sourceRelease: string | null;
   conversionFactor: number | null;
+  /** The fee schedule version this answer came from; stored on the exam as provenance. */
+  versionId: string | null;
 }
 
 /** True when a valuation carries a number the product may display or sum. */
@@ -59,15 +61,15 @@ export function explain(v: Valuation): string {
   }
 }
 
-const unknown = (hcpcs: string, modifier: string | null): Valuation => ({
+const unknown = (hcpcs: string, modifier: string | null, versionId: string | null = null): Valuation => ({
   hcpcs, modifier, state: "unknown_code", workRvu: null,
-  descriptor: null, statusCode: null, sourceRelease: null, conversionFactor: null,
+  descriptor: null, statusCode: null, sourceRelease: null, conversionFactor: null, versionId,
 });
 
 interface Row {
   hcpcs: string; modifier: string; work_rvu: string | number | null;
   price_state: PriceState; status_code: string; descriptor: string | null;
-  source_release: string; conversion_factor: string | number;
+  source_release: string; conversion_factor: string | number; version_id: string;
 }
 
 function toValuation(r: Row): Valuation {
@@ -81,6 +83,7 @@ function toValuation(r: Row): Valuation {
     statusCode: r.status_code,
     sourceRelease: r.source_release,
     conversionFactor: Number(r.conversion_factor),
+    versionId: r.version_id,
   };
 }
 
@@ -108,7 +111,7 @@ export async function resolveMany(
   const sql = getUnscopedSql();
   const rows = (await sql`
     select r.hcpcs, r.modifier, r.work_rvu, r.price_state, r.status_code,
-           c.descriptor, v.source_release, v.conversion_factor
+           c.descriptor, v.source_release, v.conversion_factor, v.id as version_id
     from reference.code_rvus r
     join reference.fee_schedule_versions v on v.id = r.version_id and v.is_current
     left join reference.procedure_codes c on c.version_id = r.version_id and c.hcpcs = r.hcpcs
@@ -117,17 +120,22 @@ export async function resolveMany(
 
   const byKey = new Map<string, Row>();
   for (const r of rows) byKey.set(`${r.hcpcs}|${r.modifier}`, r);
+  // An unrecognised code was still evaluated against a specific release; recording which
+  // one is what makes "unknown_code" reviewable later instead of merely unexplained.
+  const currentVersion = rows.length
+    ? rows[0].version_id
+    : ((await sql`select id from reference.fee_schedule_versions where is_current`) as unknown as Array<{ id: string }>)[0]?.id ?? null;
 
   return requests.map((req) => {
     const code = String(req.hcpcs ?? "").trim().toUpperCase().replace(/^\+/, "");
-    if (!code) return unknown(code, req.modifier ?? null);
+    if (!code) return unknown(code, req.modifier ?? null, currentVersion);
     if (req.modifier !== undefined) {
       const exact = byKey.get(`${code}|${req.modifier}`);
-      return exact ? toValuation(exact) : unknown(code, req.modifier);
+      return exact ? toValuation(exact) : unknown(code, req.modifier, currentVersion);
     }
     // Professional component first, then the global row — identical work RVU, but '26'
     // is what a radiologist actually bills. TC is never a default.
     const pro = byKey.get(`${code}|26`) ?? byKey.get(`${code}|`);
-    return pro ? toValuation(pro) : unknown(code, null);
+    return pro ? toValuation(pro) : unknown(code, null, currentVersion);
   });
 }
