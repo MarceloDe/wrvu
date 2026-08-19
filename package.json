@@ -16,7 +16,8 @@
     "test:route-contracts": "node --test tests/route-contracts.test.mjs",
     "verify:shippable": "node scripts/verify/shippable.mjs",
     "db:migrate": "node --env-file=.env.local lib/db/migrate.mjs --url-env DATABASE_URL_UNPOOLED",
-    "db:migrate:check": "node --env-file=.env.local lib/db/migrate.mjs --url-env DATABASE_URL_UNPOOLED --check"
+    "db:migrate:check": "node --env-file=.env.local lib/db/migrate.mjs --url-env DATABASE_URL_UNPOOLED --check",
+    "test:baseline": "node --test tests/baseline-consolidation.test.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^5.7.5",

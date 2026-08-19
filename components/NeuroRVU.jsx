@@ -1,6 +1,8 @@
 "use client";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { TAXONOMY } from "@/lib/data/neuro-taxonomy.js";
+import { consolidateBaseline, BASELINE_FIELDS, FIELD_LABEL } from "@/lib/analytics/baseline.js";
+import { num, fmt, monthKey, pad2, localDay, localMonth, daysAgo, MONTH_LABEL } from "@/lib/analytics/format.js";
 import {
   Brain, Activity, Upload, Camera, Search, Settings as SettingsIcon, Plus, Trash2,
   TrendingUp, TrendingDown, Loader2, Sparkles, X, FileImage, Calendar,
@@ -232,39 +234,9 @@ async function prepareDoc(file, profile) {
 //     DISCREPANCY (old vs new) and take the newer report's value.
 //   - existing months absent from the new report are left untouched.
 // Returns { merged, added, updated, unchanged, discrepancies, skipped }.
-const BASELINE_FIELDS = ["bench", "base", "extra", "pay", "cfte"];
-function consolidateBaseline(existing, incoming) {
-  const byKey = new Map((existing || []).map((b) => [b.key, { ...b }]));
-  const added = [], updated = [], unchanged = [], discrepancies = [], skipped = [];
-  for (const raw of incoming || []) {
-    const key = String(raw.month || raw.key || "").slice(0, 7);
-    if (!/^\d{4}-\d{2}$/.test(key)) { skipped.push(raw); continue; }
-    const row = {
-      key,
-      mo: MONTH_LABEL(key),
-      cfte: num(raw.cfte),
-      bench: num(raw.bench),
-      base: num(raw.base),
-      extra: num(raw.extra),
-      pay: num(raw.pay),
-    };
-    // Ignore fully-empty months (nothing to store).
-    if (!row.bench && !row.base && !row.extra && !row.pay) { skipped.push(raw); continue; }
-    const prev = byKey.get(key);
-    if (!prev) { byKey.set(key, row); added.push(row); continue; }
-    const changes = [];
-    for (const f of BASELINE_FIELDS) {
-      const eps = f === "pay" ? 1 : f === "cfte" ? 0.01 : 0.5;
-      if (Math.abs((Number(prev[f]) || 0) - row[f]) > eps) changes.push({ field: f, from: Number(prev[f]) || 0, to: row[f] });
-    }
-    if (changes.length) { byKey.set(key, { ...prev, ...row }); updated.push(row); discrepancies.push({ key, mo: row.mo, changes }); }
-    else unchanged.push(row);
-  }
-  const merged = [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
-  return { merged, added, updated, unchanged, discrepancies, skipped };
-}
-const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const FIELD_LABEL = { bench: "Benchmark", base: "Actual (base)", extra: "Extra coverage", pay: "Extra pay ($)", cfte: "cFTE" };
+// consolidateBaseline, BASELINE_FIELDS and FIELD_LABEL now live in
+// lib/analytics/baseline.js (N06b), under characterisation tests — the epsilons are the
+// part N18 must not disturb while generalising institutions.
 
 /* ============================== STORAGE ============================== */
 const KEY_LABEL = { nrv_baseline: "reported baseline", nrv_settings: "settings", nrv_explorer: "saved date range" };
@@ -294,16 +266,10 @@ async function saveKey(k, v) {
 }
 
 /* ============================== HELPERS ============================== */
-const fmt = (n, d = 0) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const monthKey = (iso) => iso.slice(0, 7);
 // "Now" must key off the user's LOCAL calendar (e.g. Miami/Eastern), not UTC.
 // new Date().toISOString() is UTC, so near a month boundary it flips "this
 // month" / the default exam date hours early (June 30 8pm ET = July 1 UTC).
 // Stored exam dates keep their own value — this only affects today/this-month.
-const pad2 = (n) => String(n).padStart(2, "0");
-const localDay = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-const localMonth = (d = new Date()) => localDay(d).slice(0, 7);
-const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return localDay(d); };
 // Monday-start week key for a "YYYY-MM-DD" day (built from local parts, so no
 // UTC drift). Returns the Monday's own "YYYY-MM-DD".
 const weekStartKey = (day) => {
@@ -354,7 +320,6 @@ function buildRange(log, settings, start, end, gran) {
   };
   return { rows, stats, bench: Math.round(bench) };
 }
-const MONTH_LABEL = (k) => { const [y, m] = k.split("-"); return new Date(Number(y), Number(m) - 1, 1).toLocaleString("en-US", { month: "short", year: "2-digit" }); };
 
 /* ============================== EXTRA DUTY ==============================
    Extra-duty work is paid separately from the monthly wRVU target/flow and is
