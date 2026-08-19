@@ -1,7 +1,7 @@
 {
   "$comment": "DAG state. Owned by the orchestrator. Do not hand-edit while a workflow is running.",
   "version": 2,
-  "updated": "2026-08-18",
+  "updated": "2026-08-19",
   "current_phase": "A1",
   "gate": {
     "rule": "Phase A1 may proceed. A0's gate was 'every node PASS'; its PURPOSE was 'no other work while live exposures are open'. All four exposures are verifiably closed in production \u2014 SETUP_TOKEN absent from code and Vercel, the LLM relay behind auth plus a template gate, the error envelope live with correlation ids, and a fail-closed redaction guard deployed.",
@@ -246,12 +246,20 @@
       "blocked_external": "Production backfill. No production connection string is reachable ([SENSITIVE] on every integration secret) and the pre-mutation snapshot needs a Neon API key. drizzle/0000_backfill_migrations.sql is ready, checksums embedded, and was PROVEN on an ephemeral database. Operator: snapshot main -> run that file in the Neon SQL console -> confirm two rows -> append one line to prod-audit-log.jsonl."
     },
     "N03-ci": {
-      "status": "ready",
+      "status": "blocked_external",
       "phase": "A1",
-      "priority": 2,
-      "collapsed_by": "D41 \u2014 was N03a/b/c/d/e; 6 of 8 A1 nodes edited ci.yml and 5 mutated branch protection",
-      "blocked_on": "verification tooling does not exist: gh-wait-run.mjs, poison.mjs, merge-blocked.mjs, and the verify:shippable npm script. See N0V.",
-      "unblocked": "N0V \u2014 the scripts these contracts reference now exist and are dependency-gated"
+      "done": [
+        "N03a github-actions-base \u2014 11 steps, poison-proven",
+        "N03e verify-shippable \u2014 parity gate, PR #8",
+        "merge-blocked.mjs implemented (PENDS until main is protected)",
+        "gh-wait-run.mjs fixed: it matched on headSha alone and returned the Copilot review workflow's run, whose steps contain none of the checks \u2014 a green from it would have been a false PASS"
+      ],
+      "remaining": [
+        "branch protection on main \u2014 blocked, the settings write was refused by the sandbox",
+        "N03b eslint-invariant-rules",
+        "N03c neon-branch-runner",
+        "N03d macos-runner (must invoke neurorvu-ios/scripts/test-ios.sh or the runtime pin stops being a pin)"
+      ]
     },
     "N0V-verification-tooling": {
       "status": "pass",
@@ -270,6 +278,30 @@
         "A bare /name$/ pattern matched rvu_tables.name and procedure_name. Tightened to person-shaped names rather than allowlisting around a bad rule.",
         "verify:shippable uses EXIT CODES. Grepping next build for the compile marker is weak: it prints before type-check, page-data and static generation, and a tee pipeline returns tee's status.",
         "iOS is deliberately out of verify:shippable until N20y \u2014 gating main on an iOS 27 Vision regression would block merges for an unrelated reason."
+      ]
+    },
+    "N03e-verify-shippable": {
+      "status": "pass",
+      "phase": "A1",
+      "pr": 8,
+      "what": "ci.yml and scripts/verify/shippable.mjs are now provably the same list of steps.",
+      "why_not_re-run": "CI keeps the steps individual so a red build names ONE step \u2014 the poison harness depends on that resolution. Re-running the harness in CI would double wall-time and lose it. shippable-parity.mjs asserts set equality instead, which is the actual failure mode: add a check to ci.yml, main stays green, and every Validator from then on PASSes against a harness that never ran it.",
+      "verified": "proven to fail in both drift directions locally; CI run 32202708277 green with the new step"
+    },
+    "N04-rls": {
+      "status": "blocked_external",
+      "phase": "A1",
+      "pr": 9,
+      "done": [
+        "rls-enabled.mjs rewritten \u2014 it was a false PASS waiting to happen: it checked only relrowsecurity/relforcerowsecurity, and the app connects as neondb_owner which owns all 10 tables and holds rolbypassrls, so FORCE RLS alone would have turned INV-TENANT green with every policy inert",
+        "drizzle/0002_rls.sql + .down.sql \u2014 tenant_isolation policies on the 6 user_id tables, app_authenticated role, reference tables left global",
+        "cross-tenant-probe.mjs \u2014 13/13 against a real Postgres 17: READ/INSERT/UPDATE/DELETE cannot cross, UNSET sees zero rows, checker PASSes as the restricted role and FAILs as the owner, rollback clean"
+      ],
+      "predicate": "user_id = current_setting('app.user_id', true) \u2014 chosen on measurement, not assumption: tenant-mechanism-probe.mjs proved against the real dev branch that a GUC set in one HTTP statement does not leak into the next, and that SET LOCAL holds across a neon-http transaction array",
+      "inert_on_landing": "app_authenticated is NOLOGIN and no connection string changed, so applying 0002 alters no behaviour. Policies first, role second \u2014 INV-ALWAYS-SHIPPABLE holds throughout.",
+      "operator_must_close": [
+        "create a restricted LOGIN role in Neon and rotate DATABASE_URL to it (production + dev)",
+        "decide how the app supplies the tenant id \u2014 see the founder interview"
       ]
     }
   },
