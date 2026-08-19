@@ -3,6 +3,7 @@
   "dialect": "postgresql",
   "entries": [
     { "idx": 0, "tag": "0000_baseline",   "breakpoints": true },
-    { "idx": 1, "tag": "0001_llm_usage",  "breakpoints": true }
+    { "idx": 1, "tag": "0001_llm_usage",  "breakpoints": true },
+    { "idx": 2, "tag": "0002_rls",        "breakpoints": true }
   ]
 }

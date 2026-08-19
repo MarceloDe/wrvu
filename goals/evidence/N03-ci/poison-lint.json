@@ -1,0 +1,9 @@
+{
+  "name": "lint",
+  "expectedStep": "npm run lint",
+  "failedStep": "npm run lint",
+  "conclusion": "failure",
+  "runId": 32204497595,
+  "branch": "poison/N03-lint",
+  "prLeftOpen": true
+}

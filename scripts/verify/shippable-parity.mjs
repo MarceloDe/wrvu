@@ -30,6 +30,7 @@ const EXEMPT = [
   "npm ci",
   "install chromium",
   "invariant checks are executable",
+  "migration journal is complete",
   "shippability parity",
 ];
 
