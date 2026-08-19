@@ -6,7 +6,7 @@
 // unavailable here (no neonctl, no API key — goals/DECISIONS.md). Real Postgres 17
 // in Docker is not a mock.
 import { pass, fail, pending, has, ROOT } from "./_lib.mjs";
-import { haveDocker, startEphemeral, stopEphemeral, applySql, snapshot, diff } from "./_pg.mjs";
+import { haveDocker, startEphemeralOrPend, stopEphemeral, applySql, snapshot, diff } from "./_pg.mjs";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -24,7 +24,7 @@ const journal = JSON.parse(readFileSync(join(ROOT, JOURNAL), "utf8"));
 const tags = journal.entries.map((e) => e.tag);
 if (!tags.length) fail("the journal lists zero migrations");
 
-const pg = startEphemeral();
+const pg = startEphemeralOrPend();
 let result;
 try {
   for (const tag of tags) {
