@@ -1,0 +1,117 @@
+{
+  "paths": {
+    "/api/health": [
+      "get"
+    ],
+    "/api/exams": [
+      "delete",
+      "get",
+      "post"
+    ],
+    "/api/extra-duty": [
+      "delete",
+      "get",
+      "post"
+    ],
+    "/api/extra-duty/rates": [
+      "get",
+      "post"
+    ],
+    "/api/store": [
+      "delete",
+      "get",
+      "post"
+    ],
+    "/api/reference/codes": [
+      "get"
+    ]
+  },
+  "schemas": {
+    "ErrorEnvelope": {
+      "properties": [
+        "error"
+      ],
+      "required": [
+        "error"
+      ]
+    },
+    "PriceState": {
+      "properties": [],
+      "required": [],
+      "enum": [
+        "contractor_priced",
+        "no_physician_work",
+        "not_payable",
+        "priced",
+        "unknown_code",
+        "unpriced_other"
+      ]
+    },
+    "Exam": {
+      "properties": [
+        "batchId",
+        "cpt",
+        "estimated",
+        "examDate",
+        "id",
+        "institution",
+        "modality",
+        "procedure",
+        "site",
+        "source",
+        "uploadedAt",
+        "wrvu",
+        "wrvuState"
+      ],
+      "required": [
+        "id"
+      ]
+    },
+    "ExamInput": {
+      "properties": [
+        "cpt",
+        "estimated",
+        "examDate",
+        "institution",
+        "modality",
+        "procedure",
+        "site"
+      ],
+      "required": []
+    },
+    "Period": {
+      "properties": [
+        "amount",
+        "batchId",
+        "bundleDate",
+        "countCt",
+        "countMri",
+        "countOther",
+        "countXr",
+        "createdAt",
+        "examCount",
+        "id",
+        "label",
+        "payModel",
+        "rateSnapshot",
+        "source"
+      ],
+      "required": [
+        "id"
+      ]
+    },
+    "ReferenceCode": {
+      "properties": [
+        "cpt",
+        "descriptor",
+        "priceState",
+        "statusCode",
+        "workRvu"
+      ],
+      "required": [
+        "cpt",
+        "priceState"
+      ]
+    }
+  }
+}

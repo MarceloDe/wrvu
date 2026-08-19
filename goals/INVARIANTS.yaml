@@ -150,12 +150,16 @@ invariants:
       achievable at all rather than aspirational.
     checks:
       - kind: ci
-        cmd: node scripts/verify/contract-compat.mjs --base origin/main
+        cmd: node scripts/verify/contracts-additive.mjs
         detail: >
           Diffs the OpenAPI spec against main and fails on any removed field, narrowed type,
           new required request field, or changed enum value.
-      - kind: runtime
-        cmd: pnpm test:client-skew
+      - kind: static
+        cmd: node scripts/verify/native-contract.mjs
+        detail: >
+          The client-skew half: the field names the Swift decoder expects are still the
+          field names the routes produce. `pnpm test:client-skew` never existed — it was a
+          monorepo artifact from the greenfield plan that D43 replaced.
         detail: >
           Replays the previous release's recorded client requests against the new server and
           asserts every one still succeeds.
@@ -344,7 +348,7 @@ invariants:
     severity: blocking
     checks:
       - kind: ci
-        cmd: pnpm contracts:regen && git diff --exit-code
+        cmd: node scripts/verify/contracts-fresh.mjs
         detail: Regenerates both clients in CI and fails on any diff.
 
   - id: INV-NATIVE-CONTRACT
