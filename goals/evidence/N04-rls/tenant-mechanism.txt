@@ -1,0 +1,10 @@
+{
+  "gucLeaksAcrossStatements": false,
+  "setLocalHoldsInHttpTransaction": true,
+  "pgSessionJwtAvailable": true,
+  "pgSessionJwtVersion": "0.5.0",
+  "appRole": "neondb_owner",
+  "appRoleBypassesRls": true,
+  "tablesOwnedByAppRole": 10
+}
+PASS  tenant-mechanism probe complete — findings above are inputs to the N04 decision, not a verdict
