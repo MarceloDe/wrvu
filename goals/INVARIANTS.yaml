@@ -333,6 +333,28 @@ invariants:
         cmd: pnpm contracts:regen && git diff --exit-code
         detail: Regenerates both clients in CI and fails on any diff.
 
+  - id: INV-NATIVE-CONTRACT
+    rule: >
+      Every field the iOS client decodes from fella.cc/api/* is still produced by the
+      route that serves it, and every envelope key it expects is still the key returned.
+    goals: [G10]
+    decisions: [D33b, D43]
+    severity: blocking
+    rationale: >
+      CloudSyncService.swift is a first-class client of these routes, and the two repos
+      are federated (D43), so nothing links them at build time. The PWA survives a
+      renamed field — JavaScript reads undefined and shrugs. Swift does not: a missing
+      key on a non-optional property throws, and cloud sync stops for every device
+      already installed from TestFlight, including builds that can no longer be patched
+      quickly. That asymmetry is the whole reason this is a blocking invariant.
+    checks:
+      - kind: static
+        cmd: node scripts/verify/native-contract.mjs
+        detail: >
+          Parses the Codable structs in neurorvu-ios and the SELECT lists in the routes,
+          and compares them field by field. PENDING when the iOS repo is not checked out
+          beside this one, because an absent comparison is not a passing one.
+
   - id: INV-PARITY
     rule: The Swift and TypeScript implementations of pricing and de-identification agree on every shared golden fixture.
     goals: [G2, G3]
