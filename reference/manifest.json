@@ -1,0 +1,19 @@
+{
+  "source_release": "RVU26A",
+  "source_file": "PPRRVU2026_Jan_nonQPP.csv",
+  "source_url": "https://www.cms.gov/files/zip/rvu26a-updated-12-29-2025.zip",
+  "source_year": 2026,
+  "source_sha256": "2e2a490788b6e15c6a8780926c3dd4a061b03737222fd0403daae1fecd3c3e34",
+  "conversion_factor": 33.4009,
+  "rows": 2164,
+  "distinct_hcpcs": 828,
+  "price_states": {
+    "priced": 1205,
+    "no_physician_work": 570,
+    "contractor_priced": 282,
+    "unpriced_other": 56,
+    "not_payable": 51
+  },
+  "slim_sha256": "67e148615a2d50076df0a1e3051aa39877ef65d9605e3ff469097372cadd7cd1",
+  "generated_from": "../neurorvu-ios/NeuroRVU/Reference/Resources/rvu26a.jsonl"
+}

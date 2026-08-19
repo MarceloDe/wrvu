@@ -364,11 +364,23 @@ invariants:
       Agents write the Swift (D11). Two independent implementations agreeing on a
       third-party-derived oracle is the only real safety net. This check may never be
       disabled to unblock a release; if it is, the architecture has failed.
+      The original commands here named @rad/core and RadRVUKit — monorepo artifacts from
+      the greenfield plan that D43 replaced with federated repos, so they could never
+      have run. They are now the two checks that do.
     checks:
       - kind: runtime
-        cmd: pnpm --filter @rad/core --fail-if-no-match test:fixtures
+        cmd: node scripts/verify/pricing-parity.mjs
+        detail: >
+          Prices all 828 codes through resolveValue() and compares against the UNTOUCHED
+          CMS extract in the iOS bundle — not against the slim artifact this repo derives
+          from it, which would only prove the derivation is self-consistent. Also asserts
+          the modifier rule: -26 never changes the work RVU, and a default lookup never
+          returns the technical component.
       - kind: runtime
-        cmd: xcodebuild test -scheme RadRVUKit -only-testing:FixtureParityTests
+        cmd: node scripts/verify/native-contract.mjs
+        detail: >
+          The other half of parity: the field names the Swift client decodes are still
+          the field names the routes produce.
       - kind: runtime
         cmd: node scripts/verify/parity-report.mjs
 

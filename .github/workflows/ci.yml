@@ -52,6 +52,10 @@ jobs:
           DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
           DATABASE_URL_UNPOOLED: postgres://ci:ci@127.0.0.1:5432/ci
         run: npx next build
+      - name: pricing matches the CMS source
+        # 78 is PENDING: CI has no reachable reference database. Reported, never
+        # swallowed — a real disagreement still exits 1 and fails the build.
+        run: node scripts/verify/pricing-parity.mjs || [ $? -eq 78 ]
       - name: native contract (iOS) is intact
         # 78 is PENDING: the runner has no neurorvu-ios checkout (D43 federates the
         # repos), so the comparison cannot run. Reported, never swallowed — 1 still fails.
