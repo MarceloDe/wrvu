@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { TAXONOMY } from "@/lib/data/neuro-taxonomy.js";
 import { consolidateBaseline, BASELINE_FIELDS, FIELD_LABEL } from "@/lib/analytics/baseline.js";
 import { num, fmt, monthKey, pad2, localDay, localMonth, daysAgo, MONTH_LABEL, weekStartKey, WEEK_LABEL } from "@/lib/analytics/format.js";
-import { INSTITUTIONS, classifyInstitution, instMeta } from "@/lib/analytics/institutions.js";
+import { INSTITUTIONS, classifyInstitution, instMeta, DEFAULT_INSTITUTIONS } from "@/lib/analytics/institutions.js";
 import { buildTimeline } from "@/lib/analytics/timeline.js";
 import { buildAnalytics, buildRange } from "@/lib/analytics/tracked.js";
 import {
@@ -39,6 +39,33 @@ const CODES = TAXONOMY;   // display taxonomy only — carries NO wRVU. See the 
 //
 // workRvu is null where CMS publishes no national value. Render that as "not priced",
 // never as 0: 0 in a total is a claim, and it is the wrong one.
+// The user's institutions. Falls back to the built-in UM/JHS/Other when the API returns
+// nothing, so someone who has never opened Settings still gets a working dashboard —
+// INV-SITE-NEVER-FAILS applies to a brand-new account too.
+let institutionsPromise = null;
+function useInstitutions() {
+  const [state, setState] = useState({ institutions: null, siteOverrides: {}, loading: true });
+  useEffect(() => {
+    let alive = true;
+    institutionsPromise = institutionsPromise || fetch("/api/institutions").then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status))));
+    institutionsPromise
+      .then(d => { if (!alive) return;
+        const list = (d.institutions || []).map(i => ({
+          key: i.name, label: i.label, short: i.shortLabel, color: i.color,
+          ytd: i.ytdWrvu, isDefault: i.isDefault,
+          // Patterns stay in code for the seeded three; a user-created institution is
+          // matched by its explicit site mappings, not by a regex nobody wrote.
+          prefix: DEFAULT_INSTITUTIONS.find(d => d.key === i.name)?.prefix,
+          match: DEFAULT_INSTITUTIONS.find(d => d.key === i.name)?.match ?? null,
+        }));
+        setState({ institutions: list.length ? list : null, siteOverrides: d.siteOverrides || {}, loading: false });
+      })
+      .catch(() => { if (alive) setState(s => ({ ...s, loading: false })); });
+    return () => { alive = false; };
+  }, []);
+  return state;
+}
+
 let priceBookPromise = null;   // one fetch per page load, shared by every caller
 function usePriceBook() {
   const [book, setBook] = useState({ byCpt: {}, release: null, loading: true, error: null });
@@ -331,6 +358,13 @@ export default function NeuroRVU() {
   const [exams, setExams] = useState([]);
   const [baseline, setBaseline] = useState([]);
   const [settings, setSettings] = useState(DEFAULTS);
+  const inst = useInstitutions();
+  // Injected, not stored. Every builder reads settings.institutions, so threading them
+  // here means no call site changes and nothing can forget to pass them.
+  const settingsWithInstitutions = useMemo(
+    () => (inst.institutions ? { ...settings, institutions: inst.institutions, siteOverrides: inst.siteOverrides } : settings),
+    [settings, inst.institutions, inst.siteOverrides],
+  );
   const [ready, setReady] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   // Extra-duty (paid separately from the wRVU target): aggregate period records
@@ -416,7 +450,13 @@ export default function NeuroRVU() {
   // saveKey resolves to "" on success or a sentence on failure — either way the
   // banner reflects the true state of the write.
   const updateBaseline = (n) => { setBaseline(n); saveKey("nrv_baseline", n).then(setSyncError); };
-  const updateSettings = (n) => { setSettings(n); saveKey("nrv_settings", n).then(setSyncError); };
+  const updateSettings = (n) => {
+    // Strip the injected keys before persisting: institutions live in their own table,
+    // and writing them into nrv_settings would create a second, staler copy.
+    const { institutions, siteOverrides, ...persistable } = n;
+    setSettings(persistable);
+    saveKey("nrv_settings", persistable).then(setSyncError);
+  };
   const updateExplorer = (n) => { setExplorer(n); saveKey("nrv_explorer", n).then(setSyncError); };
 
   if (!ready) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-6 h-6 animate-spin text-teal-600" /></div>;
@@ -449,11 +489,11 @@ export default function NeuroRVU() {
             <button onClick={() => setSyncError("")} className="text-xs underline shrink-0">Dismiss</button>
           </div>
         )}
-        {tab === "tracker" && <Tracker log={log} reloadExams={reloadExams} settings={settings} extraRates={extraRates} extraPeriods={extraPeriods} reloadExtra={reloadExtra} />}
-        {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} updateSettings={updateSettings} log={log} settings={settings} extraPeriods={extraPeriods} reloadExtra={reloadExtra} explorer={explorer} updateExplorer={updateExplorer} />}
-        {tab === "exams" && <ExamsView log={log} settings={settings} />}
+        {tab === "tracker" && <Tracker log={log} reloadExams={reloadExams} settings={settingsWithInstitutions} extraRates={extraRates} extraPeriods={extraPeriods} reloadExtra={reloadExtra} />}
+        {tab === "timeline" && <Timeline baseline={baseline} updateBaseline={updateBaseline} updateSettings={updateSettings} log={log} settings={settingsWithInstitutions} extraPeriods={extraPeriods} reloadExtra={reloadExtra} explorer={explorer} updateExplorer={updateExplorer} />}
+        {tab === "exams" && <ExamsView log={log} settings={settingsWithInstitutions} />}
         {tab === "uploads" && <UploadsView reloadExams={reloadExams} />}
-        {tab === "reference" && <Reference settings={settings} />}
+        {tab === "reference" && <Reference settings={settingsWithInstitutions} />}
       </main>
 
       {/* Mobile bottom tab bar — native PWA navigation, always visible, no lateral scroll. */}
@@ -472,7 +512,7 @@ export default function NeuroRVU() {
         </div>
       </nav>
 
-      {showSettings && <SettingsDrawer settings={settings} onSave={updateSettings} extraRates={extraRates} onSaveExtraRates={saveExtraRates} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsDrawer settings={settingsWithInstitutions} onSave={updateSettings} extraRates={extraRates} onSaveExtraRates={saveExtraRates} onClose={() => setShowSettings(false)} />}
 
       <footer className="max-w-6xl mx-auto px-5 py-6 text-[11px] text-slate-400 leading-relaxed">
         Two data layers, one tool: <span className="text-slate-500 font-medium">Reported</span> (FY26 monthly baseline, authoritative) and <span className="text-slate-500 font-medium">Tracked</span> (your daily screenshot logs, granular).
@@ -910,7 +950,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
               <span>{impStatus}</span>
             </div>
           )}
-          {impPreview && <ImportReview preview={impPreview} syncSettings={syncSettings} setSyncSettings={setSyncSettings} onApply={applyImport} onCancel={cancelImport} settings={settings} />}
+          {impPreview && <ImportReview preview={impPreview} syncSettings={syncSettings} setSyncSettings={setSyncSettings} onApply={applyImport} onCancel={cancelImport} settings={settingsWithInstitutions} />}
           {!impStatus && !impPreview && !impBusy && (
             <p className="mb-3 text-[11px] text-slate-400 flex items-start gap-1.5"><Upload className="w-3.5 h-3.5 mt-px shrink-0" />Upload a monthly wRVU report (PDF or photo) to auto-fill this table. Re-uploading a newer report keeps your existing months and adds the new ones — you&apos;ll be shown any discrepancies before anything changes.</p>
           )}
@@ -1251,7 +1291,7 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
 
       <div>
         <div className="flex items-center gap-2 mb-2"><Building2 className="w-4 h-4 text-slate-500" /><h2 className="font-semibold">Tracked institution split — accumulated wRVU</h2></div>
-        <InstitutionCards split={a.institution} settings={settings} />
+        <InstitutionCards split={a.institution} settings={settingsWithInstitutions} />
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
@@ -1539,7 +1579,7 @@ function ExamsView({ log, settings }) {
     <div className="space-y-4">
       <div>
         <div className="flex items-center gap-2 mb-2"><Building2 className="w-4 h-4 text-slate-500" /><h2 className="font-semibold">Tracked wRVU by institution</h2></div>
-        <InstitutionCards split={a.institution} settings={settings} />
+        <InstitutionCards split={a.institution} settings={settingsWithInstitutions} />
       </div>
       <div className="bg-white rounded-2xl border border-slate-200 p-4">
         <div className="flex flex-col lg:flex-row gap-3 lg:items-center">

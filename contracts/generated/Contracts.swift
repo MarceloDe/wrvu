@@ -2,7 +2,7 @@
 // DO NOT EDIT. Edit the spec and re-run; contracts-fresh.mjs fails the build if
 // this file and the spec disagree.
 //
-// API version 1.3.0
+// API version 1.4.0
 
 import Foundation
 
@@ -24,6 +24,20 @@ public enum PriceState: String, Codable {
         let raw = try decoder.singleValueContainer().decode(String.self)
         self = PriceState(rawValue: raw) ?? .unknown_code
     }
+}
+
+public struct Institution: Codable {
+    public var id: String
+    /// Stable key. UM / JHS / Other are seeded; a user may add more.
+    public var name: String
+    public var label: String?
+    public var shortLabel: String?
+    public var color: String?
+    /// The YTD figure the reported total is split by.
+    public var ytdWrvu: Double?
+    public var sortOrder: Int?
+    /// Exactly one per user. Where an unrecognised site lands (INV-SITE-NEVER-FAILS).
+    public var isDefault: Bool
 }
 
 public struct Exam: Codable {

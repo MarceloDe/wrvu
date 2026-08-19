@@ -77,6 +77,12 @@ export const POST = withErrorEnvelope("/api/exams", async (req, ctx) => {
     // Already inside ONE transaction via withTenant, so the batch is still atomic —
     // sql.transaction() is gone because nesting would discard the SET LOCAL.
     await withTenant(userId, async ({ sql }) => {
+      // Resolve the institution link once for the batch. A user who has never opened
+      // Settings has no rows yet, and that is fine: institution_id stays null and the
+      // text column still carries the site, exactly as it did before N18.
+      const rows = await sql`select id, name from institutions`;
+      const instIdByName = Object.fromEntries(rows.map((r) => [r.name, r.id]));
+      const fallbackId = instIdByName.Other ?? null;
       for (let i = 0; i < exams.length; i++) {
         const e = exams[i];
         const v = priced[i];
@@ -89,10 +95,11 @@ export const POST = withErrorEnvelope("/api/exams", async (req, ctx) => {
         // Falling back to whatever the client said is fine — what is not fine is
         // inventing "CT" when nobody knows.
         await sql`
-          INSERT INTO exams (user_id, batch_id, exam_date, cpt, procedure, site, institution, modality, wrvu, estimated, source, wrvu_state, priced_from)
+          INSERT INTO exams (user_id, batch_id, exam_date, cpt, procedure, site, institution, modality, wrvu, estimated, source, wrvu_state, priced_from, institution_id)
           VALUES (${userId}, ${batchId}, ${e.examDate || null}, ${e.cpt || null}, ${e.procedure || null},
                   ${e.site || null}, ${e.institution || null}, ${v.modality ?? e.modality ?? null},
-                  ${String(wrvu)}, ${!!e.estimated}, ${source}, ${v.state}, ${v.versionId})`;
+                  ${String(wrvu)}, ${!!e.estimated}, ${source}, ${v.state}, ${v.versionId},
+                  ${instIdByName[e.institution] ?? fallbackId})`;
       }
     });
     return Response.json({
