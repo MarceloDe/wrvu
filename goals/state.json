@@ -381,6 +381,19 @@
         "INV-CONTRACT-SYNC named `pnpm contracts:regen`",
         "None existed. Both invariants now run."
       ]
+    },
+    "N19-unify-modality-vocabulary": {
+      "status": "pass",
+      "phase": "B",
+      "backlog_claim_corrected": "The backlog says this 'mis-prices real money today'. Measured on production: 6 of 887 exams disagree with CMS (5 XR, 1 NM), and NONE of them sit inside a paid PPC bundle. Realised damage: zero dollars. The mechanism was real; the loss had not happened yet.",
+      "the_defect": "PPC_BUCKET was always correct \u2014 an unrecognised modality falls to 'other', which is unpaid. Every CALL SITE defaulted to 'CT' first, so nothing was ever unrecognised and any unknown study was paid at the CT rate. In the July rate snapshot that is $150 instead of $50 per study. The old neuro table contained no XR codes at all; CMS has 236.",
+      "fixed": [
+        "resolveValue() returns CMS modality; /api/reference/codes serves it; /api/exams stores it",
+        "every '|| \"CT\"' default replaced with 'Other', which is unpaid",
+        "the modality filter lists are derived from the data instead of a hardcoded five"
+      ],
+      "guard": "no-guessed-modality.mjs \u2014 fails if any call site defaults into a paid bucket, or if PPC_BUCKET stops failing closed. Poisoned.",
+      "not_touched": "Historical extra-duty pay. amount and rate_snapshot are frozen at save time by deliberate design so editing rates never re-prices past shifts \u2014 and none of the mis-classified exams were in a paid bundle anyway."
     }
   },
   "statuses": {

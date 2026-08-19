@@ -37,6 +37,9 @@ export interface Valuation {
   /** NULL unless state is "priced" or "no_physician_work". Never a placeholder. */
   workRvu: number | null;
   descriptor: string | null;
+  /** CMS modality for the code (XR, CT, MRI, NM, US, …). NULL when unknown — never
+   *  guessed. A guessed modality decides which PPC bucket a study is PAID from. */
+  modality: string | null;
   statusCode: string | null;
   sourceRelease: string | null;
   conversionFactor: number | null;
@@ -63,12 +66,12 @@ export function explain(v: Valuation): string {
 
 const unknown = (hcpcs: string, modifier: string | null, versionId: string | null = null): Valuation => ({
   hcpcs, modifier, state: "unknown_code", workRvu: null,
-  descriptor: null, statusCode: null, sourceRelease: null, conversionFactor: null, versionId,
+  descriptor: null, modality: null, statusCode: null, sourceRelease: null, conversionFactor: null, versionId,
 });
 
 interface Row {
   hcpcs: string; modifier: string; work_rvu: string | number | null;
-  price_state: PriceState; status_code: string; descriptor: string | null;
+  price_state: PriceState; status_code: string; descriptor: string | null; modality: string | null;
   source_release: string; conversion_factor: string | number; version_id: string;
 }
 
@@ -80,6 +83,7 @@ function toValuation(r: Row): Valuation {
     // numeric arrives as a string from the driver; null must stay null, not become 0.
     workRvu: r.work_rvu === null ? null : Number(r.work_rvu),
     descriptor: r.descriptor,
+    modality: r.modality,
     statusCode: r.status_code,
     sourceRelease: r.source_release,
     conversionFactor: Number(r.conversion_factor),
@@ -111,7 +115,7 @@ export async function resolveMany(
   const sql = getUnscopedSql();
   const rows = (await sql`
     select r.hcpcs, r.modifier, r.work_rvu, r.price_state, r.status_code,
-           c.descriptor, v.source_release, v.conversion_factor, v.id as version_id
+           c.descriptor, c.modality, v.source_release, v.conversion_factor, v.id as version_id
     from reference.code_rvus r
     join reference.fee_schedule_versions v on v.id = r.version_id and v.is_current
     left join reference.procedure_codes c on c.version_id = r.version_id and c.hcpcs = r.hcpcs

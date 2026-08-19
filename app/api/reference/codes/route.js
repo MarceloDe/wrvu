@@ -21,7 +21,7 @@ export const GET = withErrorEnvelope("/api/reference/codes", async (req, ctx) =>
   try {
     const sql = getUnscopedSql();
     const rows = await sql`
-      select r.hcpcs, r.work_rvu, r.price_state, r.status_code, c.descriptor,
+      select r.hcpcs, r.work_rvu, r.price_state, r.status_code, c.descriptor, c.modality,
              v.source_release, v.conversion_factor
       from reference.code_rvus r
       join reference.fee_schedule_versions v on v.id = r.version_id and v.is_current
@@ -47,6 +47,10 @@ export const GET = withErrorEnvelope("/api/reference/codes", async (req, ctx) =>
         priceState: r.price_state,
         statusCode: r.status_code,
         descriptor: r.descriptor,
+        // CMS modality. The client must not guess this: it decides which PPC bucket a
+        // study is PAID from, and the old "default to CT" turned every unrecognised
+        // study into a paid CT.
+        modality: r.modality,
       })),
     };
     return Response.json(body, {

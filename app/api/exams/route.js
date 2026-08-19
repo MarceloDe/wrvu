@@ -84,10 +84,14 @@ export const POST = withErrorEnvelope("/api/exams", async (req, ctx) => {
         // records why. wrvu stays NOT NULL because the dashboard sums it with bare +=,
         // and a NULL there becomes NaN and poisons every total silently.
         const wrvu = v.workRvu === null ? 0 : v.workRvu;
+        // Modality comes from CMS too, for the same reason the price does: the client
+        // used to default an unrecognised study to "CT", which is a PAID PPC bucket.
+        // Falling back to whatever the client said is fine — what is not fine is
+        // inventing "CT" when nobody knows.
         await sql`
           INSERT INTO exams (user_id, batch_id, exam_date, cpt, procedure, site, institution, modality, wrvu, estimated, source, wrvu_state, priced_from)
           VALUES (${userId}, ${batchId}, ${e.examDate || null}, ${e.cpt || null}, ${e.procedure || null},
-                  ${e.site || null}, ${e.institution || null}, ${e.modality || null},
+                  ${e.site || null}, ${e.institution || null}, ${v.modality ?? e.modality ?? null},
                   ${String(wrvu)}, ${!!e.estimated}, ${source}, ${v.state}, ${v.versionId})`;
       }
     });

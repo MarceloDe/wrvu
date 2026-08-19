@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: RadRVU API
-  version: "1.1.0"
+  version: "1.2.0"
   description: |
     The contract between fella.cc and its two clients: the PWA and the iOS app
     (CloudSyncService.swift). The repos are federated by D43, so nothing links them at
@@ -124,6 +124,7 @@ components:
         priceState: { $ref: '#/components/schemas/PriceState' }
         statusCode: { type: string, nullable: true }
         descriptor: { type: string, nullable: true }
+        modality:   { type: string, nullable: true, description: CMS modality (XR, CT, MRI, NM, US, …). NULL when unknown — never guessed, because it decides which PPC bucket a study is paid from. }
 
 security:
   - clerkSession: []
