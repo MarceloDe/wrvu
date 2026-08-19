@@ -40,6 +40,7 @@ const EXEMPT = [
   "no table in public is exposed by default",
   "money has one path",
   "pricing matches the CMS source",
+  "pricing golden covers every price state",
   "migration journal is complete",
   "shippability parity",
 ];

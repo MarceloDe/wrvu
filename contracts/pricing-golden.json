@@ -1,0 +1,686 @@
+{
+  "release": "RVU26A",
+  "sourceSha256": "2e2a490788b6e15c6a8780926c3dd4a061b03737222fd0403daae1fecd3c3e34",
+  "generatedBy": "scripts/contracts/build-pricing-golden.mjs",
+  "note": "Shared oracle for INV-PARITY. The Swift and TypeScript pricing paths must both reproduce every vector.",
+  "vectors": [
+    {
+      "cpt": "0055T",
+      "workRvu": null,
+      "priceState": "contractor_priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "01916",
+      "workRvu": null,
+      "priceState": "unpriced_other",
+      "modality": "IR"
+    },
+    {
+      "cpt": "0332T",
+      "workRvu": null,
+      "priceState": "contractor_priced",
+      "modality": "NM"
+    },
+    {
+      "cpt": "0558T",
+      "workRvu": null,
+      "priceState": "contractor_priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "0629T",
+      "workRvu": null,
+      "priceState": "contractor_priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "0630T",
+      "workRvu": null,
+      "priceState": "contractor_priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "0633T",
+      "workRvu": null,
+      "priceState": "contractor_priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "0634T",
+      "workRvu": null,
+      "priceState": "contractor_priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "0635T",
+      "workRvu": null,
+      "priceState": "contractor_priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "0636T",
+      "workRvu": null,
+      "priceState": "contractor_priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "10009",
+      "workRvu": 2.2,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "10010",
+      "workRvu": 1.61,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "21116",
+      "workRvu": 0.79,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "23350",
+      "workRvu": 0.98,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "25246",
+      "workRvu": 1.41,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "27093",
+      "workRvu": 1.27,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "27095",
+      "workRvu": 1.46,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "27369",
+      "workRvu": 0.75,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "27648",
+      "workRvu": 0.94,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "3111F",
+      "workRvu": null,
+      "priceState": "not_payable",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "3112F",
+      "workRvu": null,
+      "priceState": "not_payable",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "33019",
+      "workRvu": 4.18,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "3319F",
+      "workRvu": null,
+      "priceState": "unpriced_other",
+      "modality": "CT"
+    },
+    {
+      "cpt": "3320F",
+      "workRvu": null,
+      "priceState": "unpriced_other",
+      "modality": "CT"
+    },
+    {
+      "cpt": "3324F",
+      "workRvu": null,
+      "priceState": "not_payable",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "3340F",
+      "workRvu": null,
+      "priceState": "not_payable",
+      "modality": "MAMMO"
+    },
+    {
+      "cpt": "3570F",
+      "workRvu": null,
+      "priceState": "not_payable",
+      "modality": "XR"
+    },
+    {
+      "cpt": "36005",
+      "workRvu": 0.93,
+      "priceState": "priced",
+      "modality": "IR"
+    },
+    {
+      "cpt": "38200",
+      "workRvu": 2.57,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "4165F",
+      "workRvu": null,
+      "priceState": "not_payable",
+      "modality": "RADONC"
+    },
+    {
+      "cpt": "5100F",
+      "workRvu": null,
+      "priceState": "not_payable",
+      "modality": "XR"
+    },
+    {
+      "cpt": "70336",
+      "workRvu": 1.44,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "70450",
+      "workRvu": 0.83,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70460",
+      "workRvu": 1.1,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70470",
+      "workRvu": 1.24,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70471",
+      "workRvu": 2.5,
+      "priceState": "priced",
+      "modality": "CTA"
+    },
+    {
+      "cpt": "70472",
+      "workRvu": 0.77,
+      "priceState": "priced",
+      "modality": "CTA"
+    },
+    {
+      "cpt": "70473",
+      "workRvu": 1,
+      "priceState": "priced",
+      "modality": "CTA"
+    },
+    {
+      "cpt": "70480",
+      "workRvu": 1.25,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70481",
+      "workRvu": 1.1,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70482",
+      "workRvu": 1.24,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70486",
+      "workRvu": 0.83,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70487",
+      "workRvu": 1.1,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70488",
+      "workRvu": 1.24,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70490",
+      "workRvu": 1.25,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70491",
+      "workRvu": 1.35,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70492",
+      "workRvu": 1.58,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "70496",
+      "workRvu": 1.71,
+      "priceState": "priced",
+      "modality": "CTA"
+    },
+    {
+      "cpt": "70498",
+      "workRvu": 1.71,
+      "priceState": "priced",
+      "modality": "CTA"
+    },
+    {
+      "cpt": "70540",
+      "workRvu": 1.32,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "70542",
+      "workRvu": 1.58,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "70543",
+      "workRvu": 2.1,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "70544",
+      "workRvu": 1.17,
+      "priceState": "priced",
+      "modality": "MRA"
+    },
+    {
+      "cpt": "70545",
+      "workRvu": 1.17,
+      "priceState": "priced",
+      "modality": "MRA"
+    },
+    {
+      "cpt": "70546",
+      "workRvu": 1.44,
+      "priceState": "priced",
+      "modality": "MRA"
+    },
+    {
+      "cpt": "70547",
+      "workRvu": 1.17,
+      "priceState": "priced",
+      "modality": "MRA"
+    },
+    {
+      "cpt": "70548",
+      "workRvu": 1.46,
+      "priceState": "priced",
+      "modality": "MRA"
+    },
+    {
+      "cpt": "70549",
+      "workRvu": 1.76,
+      "priceState": "priced",
+      "modality": "MRA"
+    },
+    {
+      "cpt": "70551",
+      "workRvu": 1.44,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "70552",
+      "workRvu": 1.74,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "70553",
+      "workRvu": 2.23,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "70554",
+      "workRvu": 2.06,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "70555",
+      "workRvu": 2.48,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "70557",
+      "workRvu": 2.83,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "70558",
+      "workRvu": 3.12,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "70559",
+      "workRvu": 3.12,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "72125",
+      "workRvu": 0.98,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "72126",
+      "workRvu": 1.19,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "72127",
+      "workRvu": 1.24,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "72128",
+      "workRvu": 0.98,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "72129",
+      "workRvu": 1.19,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "72130",
+      "workRvu": 1.24,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "72131",
+      "workRvu": 0.98,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "72132",
+      "workRvu": 1.19,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "72133",
+      "workRvu": 1.24,
+      "priceState": "priced",
+      "modality": "CT"
+    },
+    {
+      "cpt": "72141",
+      "workRvu": 1.44,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "72142",
+      "workRvu": 1.74,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "72146",
+      "workRvu": 1.44,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "72147",
+      "workRvu": 1.74,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "72148",
+      "workRvu": 1.44,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "72149",
+      "workRvu": 1.74,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "72156",
+      "workRvu": 2.23,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "72157",
+      "workRvu": 2.23,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "72158",
+      "workRvu": 2.23,
+      "priceState": "priced",
+      "modality": "MRI"
+    },
+    {
+      "cpt": "72159",
+      "workRvu": 1.76,
+      "priceState": "priced",
+      "modality": "MRA"
+    },
+    {
+      "cpt": "72240",
+      "workRvu": 0.89,
+      "priceState": "priced",
+      "modality": "FLUORO"
+    },
+    {
+      "cpt": "72255",
+      "workRvu": 0.89,
+      "priceState": "priced",
+      "modality": "FLUORO"
+    },
+    {
+      "cpt": "72265",
+      "workRvu": 0.81,
+      "priceState": "priced",
+      "modality": "FLUORO"
+    },
+    {
+      "cpt": "72270",
+      "workRvu": 1.3,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "76014",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "XR"
+    },
+    {
+      "cpt": "76015",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "XR"
+    },
+    {
+      "cpt": "76140",
+      "workRvu": null,
+      "priceState": "not_payable",
+      "modality": "XR"
+    },
+    {
+      "cpt": "76145",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "XR"
+    },
+    {
+      "cpt": "76376",
+      "workRvu": 0.2,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "76377",
+      "workRvu": 0.77,
+      "priceState": "priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "76390",
+      "workRvu": null,
+      "priceState": "contractor_priced",
+      "modality": "XR"
+    },
+    {
+      "cpt": "77061",
+      "workRvu": null,
+      "priceState": "not_payable",
+      "modality": "MAMMO"
+    },
+    {
+      "cpt": "77062",
+      "workRvu": null,
+      "priceState": "not_payable",
+      "modality": "MAMMO"
+    },
+    {
+      "cpt": "77090",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "XR"
+    },
+    {
+      "cpt": "77091",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "XR"
+    },
+    {
+      "cpt": "77336",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "RADONC"
+    },
+    {
+      "cpt": "77370",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "RADONC"
+    },
+    {
+      "cpt": "77372",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "RADONC"
+    },
+    {
+      "cpt": "77373",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "RADONC"
+    },
+    {
+      "cpt": "77402",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "RADONC"
+    },
+    {
+      "cpt": "77407",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "RADONC"
+    },
+    {
+      "cpt": "77412",
+      "workRvu": 0,
+      "priceState": "no_physician_work",
+      "modality": "RADONC"
+    },
+    {
+      "cpt": "99999",
+      "workRvu": null,
+      "priceState": "unknown_code",
+      "modality": null
+    },
+    {
+      "cpt": "D0364",
+      "workRvu": null,
+      "priceState": "unpriced_other",
+      "modality": "CT"
+    },
+    {
+      "cpt": "D0365",
+      "workRvu": null,
+      "priceState": "unpriced_other",
+      "modality": "CT"
+    },
+    {
+      "cpt": "D0366",
+      "workRvu": null,
+      "priceState": "unpriced_other",
+      "modality": "CT"
+    },
+    {
+      "cpt": "D0367",
+      "workRvu": null,
+      "priceState": "unpriced_other",
+      "modality": "CT"
+    },
+    {
+      "cpt": "D0368",
+      "workRvu": null,
+      "priceState": "unpriced_other",
+      "modality": "CT"
+    }
+  ]
+}
