@@ -80,6 +80,10 @@ jobs:
         # 78 is PENDING: CI has no reachable reference database. Reported, never
         # swallowed — a real disagreement still exits 1 and fails the build.
         run: node scripts/verify/pricing-parity.mjs || [ $? -eq 78 ]
+      - name: pricing golden covers every price state
+        # 78 is PENDING: CI has no reachable reference database to re-derive the vectors
+        # against. A vector that has actually gone stale still exits 1 and fails the build.
+        run: node scripts/verify/pricing-golden-fresh.mjs || [ $? -eq 78 ]
       - name: native contract (iOS) is intact
         # 78 is PENDING: the runner has no neurorvu-ios checkout (D43 federates the
         # repos), so the comparison cannot run. Reported, never swallowed — 1 still fails.
