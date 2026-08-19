@@ -25,8 +25,11 @@ jobs:
           cache: npm
       - name: npm ci
         run: npm ci
-      - name: install chromium
-        run: npx playwright install --with-deps chromium
+      - name: ensure chromium
+        # NOT `npx playwright install`: this project depends on playwright-core, so npx
+        # cannot resolve a local binary and prompts "Ok to proceed?" on a runner with no
+        # stdin — an infinite hang. See the script for the full story.
+        run: node scripts/verify/harness/ensure-chromium.mjs
       - name: npm run lint
         run: npm run lint
       - name: npx tsc --noEmit
