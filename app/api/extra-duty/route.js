@@ -10,7 +10,7 @@
 // Every query is scoped to the signed-in Clerk user id.
 
 import { auth } from "@clerk/nextjs/server";
-import { getSql } from "@/lib/db";
+import { withTenant } from "@/lib/db";
 import { withErrorEnvelope } from "@/lib/http/errors";
 
 export const runtime = "nodejs";
@@ -23,10 +23,9 @@ export const GET = withErrorEnvelope("/api/extra-duty", async (req, ctx) => {
   const to = searchParams.get("to");
 
   try {
-    const sql = getSql();
-    let periods;
-    if (from && to) {
-      periods = await sql`
+    const periods = await withTenant(userId, async ({ sql }) => {
+      if (from && to) {
+        return await sql`
         SELECT id, bundle_date AS "bundleDate", pay_model AS "payModel",
                exam_count AS "examCount", count_mri AS "countMri", count_ct AS "countCt",
                count_xr AS "countXr", count_other AS "countOther", amount::float AS amount,
@@ -35,9 +34,9 @@ export const GET = withErrorEnvelope("/api/extra-duty", async (req, ctx) => {
         FROM extra_duty_periods
         WHERE user_id = ${userId}
           AND bundle_date::date >= ${from}::date AND bundle_date::date <= ${to}::date
-        ORDER BY bundle_date DESC`;
-    } else {
-      periods = await sql`
+          ORDER BY bundle_date DESC`;
+      }
+      return await sql`
         SELECT id, bundle_date AS "bundleDate", pay_model AS "payModel",
                exam_count AS "examCount", count_mri AS "countMri", count_ct AS "countCt",
                count_xr AS "countXr", count_other AS "countOther", amount::float AS amount,
@@ -46,7 +45,7 @@ export const GET = withErrorEnvelope("/api/extra-duty", async (req, ctx) => {
         FROM extra_duty_periods
         WHERE user_id = ${userId}
         ORDER BY bundle_date DESC`;
-    }
+    });
     return Response.json({ periods });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: "periods read failed" });
@@ -68,8 +67,7 @@ export const POST = withErrorEnvelope("/api/extra-duty", async (req, ctx) => {
   const int = (v) => Math.max(0, Math.round(Number(v) || 0));
 
   try {
-    const sql = getSql();
-    const [row] = await sql`
+    const [row] = await withTenant(userId, ({ sql }) => sql`
       INSERT INTO extra_duty_periods
         (user_id, bundle_date, pay_model, exam_count, count_mri, count_ct, count_xr,
          count_other, amount, rate_snapshot, label, batch_id, source)
@@ -78,7 +76,7 @@ export const POST = withErrorEnvelope("/api/extra-duty", async (req, ctx) => {
          ${int(b.countCt)}, ${int(b.countXr)}, ${int(b.countOther)}, ${String(Number(b.amount) || 0)},
          ${b.rateSnapshot ? JSON.stringify(b.rateSnapshot) : null}, ${b.label || null},
          ${b.batchId || null}, ${b.source === "screenshot" ? "screenshot" : "manual"})
-      RETURNING id`;
+      RETURNING id`);
     return Response.json({ ok: true, id: row.id });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: "period write failed" });
@@ -91,8 +89,8 @@ export const DELETE = withErrorEnvelope("/api/extra-duty", async (req, ctx) => {
   const id = new URL(req.url).searchParams.get("id");
   if (!id) return ctx.fail("bad_request", 400, { message: "id query param required" });
   try {
-    const sql = getSql();
-    const rows = await sql`DELETE FROM extra_duty_periods WHERE user_id = ${userId} AND id = ${id} RETURNING id`;
+    const rows = await withTenant(userId, ({ sql }) =>
+      sql`DELETE FROM extra_duty_periods WHERE user_id = ${userId} AND id = ${id} RETURNING id`);
     return Response.json({ ok: true, deleted: rows.length });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: `period delete failed for ${id}` });

@@ -28,7 +28,7 @@ if (!has(HARNESS)) fail(`${HARNESS} does not exist — INV-ALWAYS-SHIPPABLE has 
 // in the harness.
 const EXEMPT = [
   "npm ci",
-  "install chromium",
+  "ensure chromium",
   "invariant checks are executable",
   "migration journal is complete",
   "shippability parity",

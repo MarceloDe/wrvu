@@ -8,7 +8,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
-import { getDb, extraDutyRates } from "@/lib/db";
+import { withTenant, extraDutyRates } from "@/lib/db";
 import { withErrorEnvelope } from "@/lib/http/errors";
 
 export const runtime = "nodejs";
@@ -19,11 +19,11 @@ export const GET = withErrorEnvelope("/api/extra-duty/rates", async (req, ctx) =
   const { userId } = await auth();
   if (!userId) return ctx.fail("unauthorized", 401);
   try {
-    const rows = await getDb()
-      .select()
-      .from(extraDutyRates)
-      .where(eq(extraDutyRates.userId, userId))
-      .limit(1);
+    const rows = await withTenant(userId, ({ db }) =>
+      db.select()
+        .from(extraDutyRates)
+        .where(eq(extraDutyRates.userId, userId))
+        .limit(1));
     const r = rows[0];
     const rates = r
       ? {
@@ -58,9 +58,9 @@ export const POST = withErrorEnvelope("/api/extra-duty/rates", async (req, ctx) 
     updatedAt: new Date(),
   };
   try {
-    await getDb()
-      .insert(extraDutyRates)
-      .values(values)
+    await withTenant(userId, ({ db }) =>
+      db.insert(extraDutyRates)
+        .values(values)
       .onConflictDoUpdate({
         target: extraDutyRates.userId,
         set: {
@@ -68,9 +68,9 @@ export const POST = withErrorEnvelope("/api/extra-duty/rates", async (req, ctx) 
           ppcMri: values.ppcMri,
           ppcCt: values.ppcCt,
           ppcXr: values.ppcXr,
-          updatedAt: values.updatedAt,
-        },
-      });
+            updatedAt: values.updatedAt,
+          },
+        }));
     return Response.json({ ok: true });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: "rates write failed" });

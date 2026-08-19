@@ -23,8 +23,11 @@ will tell you so.
 
 1. **Apply `0002_rls`.** Inert: `app_authenticated` is NOLOGIN and nothing rotates.
    `node --env-file=.env.local lib/db/migrate.mjs --url-env DATABASE_URL_UNPOOLED`
-2. **Land the scoped client** (`getScopedDb`). Until this ships, a connection without
-   BYPASSRLS reads nothing.
+2. **Land the scoped client.** DONE — `withTenant(userId, fn)` in `lib/db/index.js`.
+   The old `getDb()`/`getSql()` were renamed to `getUnscopedDb()`/`getUnscopedSql()` on
+   purpose: every call site had to be visited and classified, and a new one cannot reach
+   tenant data by accident. Proven by `scoped-db-probe.mjs`, 8/8 against real Neon as
+   `app_rls`.
 3. **Create the login role — SQL only, in the Neon SQL Editor.** Choose your own
    password; it must never enter a migration, a commit, or a command line.
    ```sql
@@ -40,9 +43,15 @@ will tell you so.
    must shadow it, and re-syncing the integration will clobber it.
 5. **Verify, in this order.**
    ```
-   node --env-file=.env.local scripts/verify/rls-enabled.mjs --url-env DATABASE_URL_UNPOOLED
-   node scripts/verify/cross-tenant-probe.mjs
+   node --env-file=.env.local scripts/verify/rls-enabled.mjs --url-env DATABASE_URL_RLS_UNPOOLED
+   node --env-file=.env.local scripts/verify/cross-tenant-probe.mjs --live
+   node --env-file=.env.local scripts/verify/scoped-db-probe.mjs
    npm run verify:shippable
+   ```
+   `verify:shippable` alone is NOT sufficient here and never will be: it passes while
+   every tenant query returns zero rows, because it never connects as the restricted
+   role. `scoped-db-probe.mjs` is the one that would catch a broken rotation.
+   ```
    ```
 
 ## Rollback
