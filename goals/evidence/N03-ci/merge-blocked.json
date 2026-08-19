@@ -1,0 +1,15 @@
+{
+  "pr": 6,
+  "branch": "poison/N03-lint",
+  "protection": {
+    "contexts": [
+      "checks"
+    ],
+    "strict": true,
+    "enforceAdmins": true
+  },
+  "mergeAttempt": {
+    "refused": true,
+    "response": "{\"message\":\"Required status check \\\"checks\\\" is failing.\",\"documentation_url\":\"https://docs.github.com/articles/about-protected-branches\",\"status\":\"405\"}gh: Required status check \"checks\" is failing. (HTTP 405)\n"
+  }
+}

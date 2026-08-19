@@ -49,6 +49,8 @@ jobs:
           DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
           DATABASE_URL_UNPOOLED: postgres://ci:ci@127.0.0.1:5432/ci
         run: npx next build
+      - name: migration journal is complete
+        run: node scripts/verify/journal-complete.mjs
       - name: shippability parity
         # The steps above ARE the INV-ALWAYS-SHIPPABLE gate. shippable.mjs is the same
         # list as one harness, which is what a Validator runs on a node branch. This
