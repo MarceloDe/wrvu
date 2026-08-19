@@ -395,6 +395,30 @@
       "guard": "no-guessed-modality.mjs \u2014 fails if any call site defaults into a paid bucket, or if PPC_BUCKET stops failing closed. Poisoned.",
       "not_touched": "Historical extra-duty pay. amount and rate_snapshot are frozen at save time by deliberate design so editing rates never re-prices past shifts \u2014 and none of the mis-classified exams were in a paid bundle anyway.",
       "backfilled": "6 production rows aligned with CMS (display/analytics only). Now MRI 467, CT 291, MRA 79, CTA 44, XR 5, NM 1. Total wRVU unchanged at 1392.19. Reversible via exams_modality_log."
+    },
+    "N12-reference-api": {
+      "status": "pass",
+      "phase": "B",
+      "repo": "neurorvu-ios (PR #1)",
+      "what": "The edge API reads the Neon reference schema; the iOS client now APPLIES the payload instead of discarding it.",
+      "found": "The endpoint served a 293 KB static file with TWO tables \u2014 including the stale 61-code neuro table (54 codes disagreeing with CMS) and conversionFactor 33.4 against 33.4009. The seventh copy. Nobody noticed because RemoteTable never decoded `codes`: the client parsed the payload and threw the tables away.",
+      "why_it_matters": "Until now iOS and the PWA agreed only because the bundled seed happened to match. A new CMS release now reaches installed builds by loading a version in Postgres, not by shipping a binary through App Store review.",
+      "d29_enforced": "The service connects as app_rls \u2014 SELECT on reference and nothing else, every tenant table behind FORCE RLS whose GUC it never sets. Verified against the real database: select count(*) from exams returns 0. D29 is enforced rather than asserted.",
+      "care": [
+        "ETag is release + content hash of the CMS source, so it changes when the DATA does",
+        "failure is 503, never a stale fallback \u2014 a failed sync is non-fatal client-side",
+        "the ETag is recorded only AFTER a successful apply; the old order would have marked a device up to date forever after a failed install",
+        "a payload under 500 codes is refused \u2014 a truncated download must not replace a complete local table"
+      ],
+      "tests": "62 in 14 suites on the pinned iOS 26.5 runtime, including four new"
+    },
+    "N13-taxonomy-seed": {
+      "status": "pass",
+      "phase": "B",
+      "what": "reference.code_specialties \u2014 352 of 828 codes tagged: neuro 126, body 113, msk 49, breast 23, vascular 21, cardiac 20.",
+      "d36": "Tags RANK; they may never restrict. 476 codes are deliberately untagged (body_region 'other') \u2014 unranked, never hidden. A filter would make most of the schedule unreachable, and the doctor could not log the study.",
+      "derived_not_curated": "Rules in scripts/reference/derive-specialties.mjs, re-runnable against any release, so a new CMS extract never arrives untagged. A hand-typed 828-row mapping is exactly the artifact that drifts \u2014 this codebase has paid for that twice.",
+      "guard": "taxonomy-never-restricts.mjs \u2014 static (no query narrows by specialty) plus runtime (the price book still serves every code in the release). Poisoned."
     }
   },
   "statuses": {

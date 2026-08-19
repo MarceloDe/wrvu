@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: RadRVU API
-  version: "1.2.0"
+  version: "1.3.0"
   description: |
     The contract between fella.cc and its two clients: the PWA and the iOS app
     (CloudSyncService.swift). The repos are federated by D43, so nothing links them at
@@ -125,6 +125,10 @@ components:
         statusCode: { type: string, nullable: true }
         descriptor: { type: string, nullable: true }
         modality:   { type: string, nullable: true, description: CMS modality (XR, CT, MRI, NM, US, …). NULL when unknown — never guessed, because it decides which PPC bucket a study is paid from. }
+        specialties:
+          type: array
+          description: Specialty tags. These RANK search and quick-add and must never filter — an untagged code is unranked, not hidden (D36). 476 of 828 codes are untagged.
+          items: { type: string, enum: [neuro, body, msk, breast, cardiac, vascular] }
 
 security:
   - clerkSession: []
