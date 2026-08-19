@@ -52,6 +52,10 @@ jobs:
           DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
           DATABASE_URL_UNPOOLED: postgres://ci:ci@127.0.0.1:5432/ci
         run: npx next build
+      - name: native contract (iOS) is intact
+        # 78 is PENDING: the runner has no neurorvu-ios checkout (D43 federates the
+        # repos), so the comparison cannot run. Reported, never swallowed — 1 still fails.
+        run: node scripts/verify/native-contract.mjs || [ $? -eq 78 ]
       - name: migration journal is complete
         run: node scripts/verify/journal-complete.mjs
       - name: shippability parity
