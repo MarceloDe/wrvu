@@ -348,6 +348,37 @@
         "_migrations \u2014 the app role held INSERT/UPDATE/DELETE and could have rewritten recorded checksums, defeating the migrator's drift guard"
       ],
       "fixed": "0005_revoke_operator_tables, applied to dev and production"
+    },
+    "N17-pwa-reads-reference-api": {
+      "status": "pass",
+      "phase": "B",
+      "deleted": [
+        "lib/data/cms2026-neuro.js (61 codes WITH prices)",
+        "the inline 63-line copy at components/NeuroRVU.jsx:27",
+        "scripts/seed.mjs \u2014 seeded rvu_codes, the third copy, from the first",
+        "app/api/rvu-tables \u2014 served that third copy and had no callers anywhere, including iOS",
+        "const CF_2026 = 33.40 \u2014 declared, never used, and wrong (the schema says 33.4009)"
+      ],
+      "kept": "lib/data/neuro-taxonomy.js \u2014 cpt/modality/region/contrast/display name, NO prices. CMS descriptors read 'Mri brain stem w/o dye', which is not what a radiologist scans a list for, so the curation is worth keeping. It just must not carry money.",
+      "added": "/api/reference/codes serves the price book; usePriceBook() fetches it once per page load.",
+      "guard": "no-second-price-table.mjs \u2014 no code-to-price mapping may exist outside reference/. Poisoned.",
+      "ocr_prompt": "The OCR prompt is Anthropic's cache PREFIX, so it must be a byte-stable synchronous string \u2014 a per-request query would destroy the cache it exists to exploit. Its prices are now GENERATED from the reference into reference/neuro-prompt-prices.json, and prompt-prices-fresh.mjs fails the build if they drift. Previously it was feeding the model the wrong numbers AND caching them."
+    },
+    "N22-contracts-and-codegen": {
+      "status": "pass",
+      "phase": "C",
+      "what": "contracts/openapi.yaml \u2014 6 paths, 6 schemas \u2014 plus generated TypeScript and Swift clients.",
+      "why_hand_rolled": "A general OpenAPI generator is a large dependency producing code nobody reads. The output here is meant to be read in review, because that is where a breaking change gets noticed by a person.",
+      "guards": [
+        "contracts-fresh.mjs \u2014 the generated clients must match the spec; a generated file nobody regenerates is a stale hand-written file with a misleading header",
+        "contracts-additive.mjs \u2014 removals, renames and newly-required fields are refused against contracts/surface.lock.json; additions pass and re-locking is a deliberate, reviewable act"
+      ],
+      "swift_detail": "Generated enums decode an unknown value to a fallback rather than throwing: the server may add a price_state before an installed build knows it, and a decode failure there stops sync entirely.",
+      "stale_invariants_fixed": [
+        "INV-ADDITIVE-CONTRACTS named contract-compat.mjs and `pnpm test:client-skew`",
+        "INV-CONTRACT-SYNC named `pnpm contracts:regen`",
+        "None existed. Both invariants now run."
+      ]
     }
   },
   "statuses": {

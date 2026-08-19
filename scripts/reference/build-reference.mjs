@@ -93,6 +93,33 @@ const manifest = {
 };
 writeFileSync("reference/manifest.json", JSON.stringify(manifest, null, 2) + "\n");
 
+// A tiny derived artifact for the OCR prompt. That prompt is the Anthropic cache prefix,
+// so it must be a byte-stable synchronous string — it cannot query the database per
+// request without destroying the cache. This is a CACHE of the reference data, and
+// prompt-prices-fresh.mjs fails the build if the two ever disagree.
+const taxonomy = JSON.parse(
+  readFileSync("lib/data/neuro-taxonomy.js", "utf8")
+    .replace(/[\s\S]*export const TAXONOMY = \[/, "[")
+    .replace(/\];[\s\S]*/, "]")
+    .replace(/(\w+):/g, '"$1":')
+    .replace(/,(\s*[\]}])/g, "$1"),
+);
+const bestByCode = new Map();
+for (const r of slim) {
+  if (r.modifier === "TC") continue;
+  if (bestByCode.has(r.hcpcs) && r.modifier !== "26") continue;
+  bestByCode.set(r.hcpcs, r);
+}
+const prices = {};
+for (const t of taxonomy) {
+  const code = String(t.cpt).replace("+", "");
+  const row = bestByCode.get(code);
+  prices[code] = row ? row.work_rvu : null;     // null, never 0, when there is no value
+}
+writeFileSync("reference/neuro-prompt-prices.json",
+  JSON.stringify({ source_release: manifest.source_release, source_sha256: sourceSha, prices }, null, 2) + "\n");
+console.log(`  prompt prices     ${Object.keys(prices).length} taxonomy codes -> reference/neuro-prompt-prices.json`);
+
 console.log(`  source            ${src.replace(process.env.HOME, "~")}`);
 console.log(`  source sha256     ${sourceSha.slice(0, 24)}…`);
 console.log(`  rows              ${manifest.rows}  (${manifest.distinct_hcpcs} distinct HCPCS)`);

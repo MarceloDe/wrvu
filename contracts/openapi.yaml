@@ -1,0 +1,343 @@
+openapi: 3.1.0
+info:
+  title: RadRVU API
+  version: "1.1.0"
+  description: |
+    The contract between fella.cc and its two clients: the PWA and the iOS app
+    (CloudSyncService.swift). The repos are federated by D43, so nothing links them at
+    build time — this file is that link, and scripts/verify/contracts-fresh.mjs plus
+    contracts-additive.mjs are what stop it becoming decoration.
+
+    ADDITIVE ONLY (D33b). TestFlight builds already on colleagues' phones decode these
+    shapes today and cannot be patched quickly. Adding an optional field is free: both
+    JSON decoders ignore keys they do not know. Removing or renaming one is an outage on
+    every installed build, and contracts-additive.mjs refuses it.
+
+    Money: no client sends a wRVU. The server prices every exam through resolveValue()
+    against the CMS reference schema and the client's figure is discarded, because the
+    two clients previously priced locally and disagreed on 54 of 61 codes.
+
+servers:
+  - url: https://fella.cc
+
+components:
+  responses:
+    Unauthorized:
+      description: No Clerk session
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  securitySchemes:
+    clerkSession:
+      type: apiKey
+      in: cookie
+      name: __session
+      description: Clerk session. Every route except /api/health requires it.
+
+  schemas:
+    ErrorEnvelope:
+      description: |
+        The only error shape. Never carries driver text or a stack (INV-NO-RAW-ERRORS);
+        correlationId is how a user-visible failure is tied to a server log.
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, correlationId]
+          properties:
+            code: { type: string, example: storage_unavailable }
+            correlationId: { type: string, format: uuid }
+            message: { type: string }
+
+    PriceState:
+      description: |
+        Why a code has, or has not, a work RVU. These are distinct facts that used to
+        collapse into the number 0.
+      type: string
+      enum: [priced, no_physician_work, contractor_priced, not_payable, unpriced_other, unknown_code]
+
+    Exam:
+      type: object
+      required: [id]
+      properties:
+        id:          { type: string, format: uuid }
+        batchId:     { type: string, nullable: true }
+        examDate:    { type: string, nullable: true, description: ISO8601. Day precision from iOS (Safe Harbor). }
+        cpt:         { type: string, nullable: true }
+        procedure:   { type: string, nullable: true }
+        site:        { type: string, nullable: true }
+        institution: { type: string, nullable: true }
+        modality:    { type: string, nullable: true }
+        wrvu:        { type: number, nullable: true, description: Server-priced. 0 when unpriced — read wrvuState before summing. }
+        wrvuState:   { $ref: '#/components/schemas/PriceState' }
+        estimated:   { type: boolean, nullable: true }
+        source:      { type: string, nullable: true }
+        uploadedAt:  { type: string, nullable: true }
+
+    ExamInput:
+      description: |
+        What a client may send. There is deliberately no wrvu field: the server prices.
+      type: object
+      properties:
+        examDate:    { type: string, nullable: true }
+        cpt:         { type: string, nullable: true }
+        procedure:   { type: string, nullable: true }
+        site:        { type: string, nullable: true }
+        institution: { type: string, nullable: true }
+        modality:    { type: string, nullable: true }
+        estimated:   { type: boolean }
+
+    Period:
+      type: object
+      required: [id]
+      properties:
+        id:           { type: string, format: uuid }
+        bundleDate:   { type: string, nullable: true }
+        payModel:     { type: string, nullable: true, enum: [per_diem, ppc, null] }
+        examCount:    { type: integer, nullable: true }
+        countMri:     { type: integer, nullable: true }
+        countCt:      { type: integer, nullable: true }
+        countXr:      { type: integer, nullable: true }
+        countOther:   { type: integer, nullable: true }
+        amount:       { type: number, nullable: true }
+        rateSnapshot:
+          type: object
+          nullable: true
+          properties:
+            perDiem: { type: number, nullable: true }
+            mri:     { type: number, nullable: true }
+            ct:      { type: number, nullable: true }
+            xr:      { type: number, nullable: true }
+        label:      { type: string, nullable: true }
+        batchId:    { type: string, nullable: true }
+        source:     { type: string, nullable: true }
+        createdAt:  { type: string, nullable: true }
+
+    ReferenceCode:
+      type: object
+      required: [cpt, priceState]
+      properties:
+        cpt:        { type: string }
+        workRvu:    { type: number, nullable: true, description: NULL where CMS publishes no national value. Never 0 as a stand-in. }
+        priceState: { $ref: '#/components/schemas/PriceState' }
+        statusCode: { type: string, nullable: true }
+        descriptor: { type: string, nullable: true }
+
+security:
+  - clerkSession: []
+
+paths:
+  /api/health:
+    get:
+      summary: Liveness, and whether RLS is actually enforced
+      security: []
+      responses:
+        "200":
+          description: Healthy and RLS-enforced
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, db, dbRole, rlsEnforced]
+                properties:
+                  ok:          { type: boolean }
+                  db:          { type: boolean }
+                  dbRole:      { type: string, nullable: true }
+                  rlsEnforced: { type: boolean, nullable: true }
+                  anthropic:   { type: boolean }
+                  clerk:       { type: boolean }
+        "503": { description: Unreachable database, or a connection that bypasses RLS }
+
+  /api/exams:
+    get:
+      summary: All exams for the signed-in user
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [exams]
+                properties:
+                  exams: { type: array, items: { $ref: '#/components/schemas/Exam' } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Insert one upload batch. The server prices every row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [batchId, exams]
+              properties:
+                batchId: { type: string }
+                source:  { type: string }
+                exams:   { type: array, minItems: 1, items: { $ref: '#/components/schemas/ExamInput' } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, inserted, batchId]
+                properties:
+                  ok:       { type: boolean }
+                  inserted: { type: integer }
+                  batchId:  { type: string }
+                  unpriced:
+                    type: array
+                    description: Codes that could not be priced, so a client can say so instead of showing zero.
+                    items:
+                      type: object
+                      properties:
+                        cpt:   { type: string, nullable: true }
+                        state: { $ref: '#/components/schemas/PriceState' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { description: The reference schema was unreachable, so nothing was priced or stored }
+    delete:
+      summary: Delete by batchId, examDate, uploadDate or id
+      parameters:
+        - { in: query, name: batchId,    schema: { type: string } }
+        - { in: query, name: examDate,   schema: { type: string } }
+        - { in: query, name: uploadDate, schema: { type: string } }
+        - { in: query, name: id,         schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, deleted]
+                properties: { ok: { type: boolean }, deleted: { type: integer } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
+  /api/extra-duty:
+    get:
+      summary: Extra-duty periods
+      parameters:
+        - { in: query, name: from, schema: { type: string } }
+        - { in: query, name: to,   schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [periods]
+                properties:
+                  periods: { type: array, items: { $ref: '#/components/schemas/Period' } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Record one extra-duty period
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties: { ok: { type: boolean }, id: { type: string } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      summary: Delete one period
+      parameters:
+        - { in: query, name: id, required: true, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, deleted]
+                properties: { ok: { type: boolean }, deleted: { type: integer } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
+  /api/extra-duty/rates:
+    get:
+      summary: Current extra-duty rates
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rates]
+                properties:
+                  rates:
+                    type: object
+                    properties:
+                      perDiemRate: { type: number }
+                      ppcMri:      { type: number }
+                      ppcCt:       { type: number }
+                      ppcXr:       { type: number }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Replace the current rates
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties: { ok: { type: boolean } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
+  /api/store:
+    get:
+      summary: Read one per-user key
+      parameters:
+        - { in: query, name: key, required: true, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, value]
+                properties: { key: { type: string }, value: { nullable: true } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Write one per-user key
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, ok]
+                properties: { key: { type: string }, ok: { type: boolean } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      summary: Delete one per-user key
+      parameters:
+        - { in: query, name: key, required: true, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, deleted]
+                properties: { key: { type: string }, deleted: { type: boolean } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
+  /api/reference/codes:
+    get:
+      summary: The price book — every code and what it is worth
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [release, conversionFactor, codes]
+                properties:
+                  release:          { type: string, example: RVU26A }
+                  conversionFactor: { type: number, example: 33.4009 }
+                  codes: { type: array, items: { $ref: '#/components/schemas/ReferenceCode' } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { description: The reference schema is unreachable or holds no codes }

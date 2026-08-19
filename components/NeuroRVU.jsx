@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { TAXONOMY } from "@/lib/data/neuro-taxonomy.js";
 import {
   Brain, Activity, Upload, Camera, Search, Settings as SettingsIcon, Plus, Trash2,
   TrendingUp, TrendingDown, Loader2, Sparkles, X, FileImage, Calendar,
@@ -23,70 +24,31 @@ import RedactionTagger from "./RedactionTagger";
 /* ============================================================================
    NEURORADIOLOGY CPT REFERENCE — CMS 2026 professional-component work RVU
    ========================================================================== */
-const CF_2026 = 33.40;
-const CODES = [
-  { cpt:"70450", mod:"CT",  region:"Head/Brain", desc:"CT Head/Brain", con:"W/O",  wrvu:0.83 },
-  { cpt:"70460", mod:"CT",  region:"Head/Brain", desc:"CT Head/Brain", con:"W",    wrvu:1.10 },
-  { cpt:"70470", mod:"CT",  region:"Head/Brain", desc:"CT Head/Brain", con:"W/WO", wrvu:1.24 },
-  { cpt:"70480", mod:"CT",  region:"Orbit/Sella/IAC/Temporal", desc:"CT Orbit/Sella/Post Fossa/Temporal Bone/IAC", con:"W/O",  wrvu:1.19 },
-  { cpt:"70481", mod:"CT",  region:"Orbit/Sella/IAC/Temporal", desc:"CT Orbit/Sella/Post Fossa/Temporal Bone/IAC", con:"W",    wrvu:1.32 },
-  { cpt:"70482", mod:"CT",  region:"Orbit/Sella/IAC/Temporal", desc:"CT Orbit/Sella/Post Fossa/Temporal Bone/IAC", con:"W/WO", wrvu:1.38 },
-  { cpt:"70486", mod:"CT",  region:"Maxillofacial/Sinus", desc:"CT Maxillofacial / Sinus", con:"W/O",  wrvu:0.96, est:true },
-  { cpt:"70487", mod:"CT",  region:"Maxillofacial/Sinus", desc:"CT Maxillofacial / Sinus", con:"W",    wrvu:1.07, est:true },
-  { cpt:"70488", mod:"CT",  region:"Maxillofacial/Sinus", desc:"CT Maxillofacial / Sinus", con:"W/WO", wrvu:1.16, est:true },
-  { cpt:"70490", mod:"CT",  region:"Soft Tissue Neck", desc:"CT Soft Tissue Neck", con:"W/O",  wrvu:0.96 },
-  { cpt:"70491", mod:"CT",  region:"Soft Tissue Neck", desc:"CT Soft Tissue Neck", con:"W",    wrvu:1.06 },
-  { cpt:"70492", mod:"CT",  region:"Soft Tissue Neck", desc:"CT Neck W/WO (incl. 4D parathyroid)", con:"W/WO", wrvu:1.16 },
-  { cpt:"72125", mod:"CT",  region:"C-Spine", desc:"CT Cervical Spine", con:"W/O",  wrvu:1.16 },
-  { cpt:"72126", mod:"CT",  region:"C-Spine", desc:"CT Cervical Spine", con:"W",    wrvu:1.27 },
-  { cpt:"72127", mod:"CT",  region:"C-Spine", desc:"CT Cervical Spine", con:"W/WO", wrvu:1.42 },
-  { cpt:"72128", mod:"CT",  region:"T-Spine", desc:"CT Thoracic Spine", con:"W/O",  wrvu:1.16 },
-  { cpt:"72129", mod:"CT",  region:"T-Spine", desc:"CT Thoracic Spine", con:"W",    wrvu:1.27 },
-  { cpt:"72130", mod:"CT",  region:"T-Spine", desc:"CT Thoracic Spine", con:"W/WO", wrvu:1.42 },
-  { cpt:"72131", mod:"CT",  region:"L-Spine", desc:"CT Lumbar Spine", con:"W/O",  wrvu:1.16 },
-  { cpt:"72132", mod:"CT",  region:"L-Spine", desc:"CT Lumbar Spine", con:"W",    wrvu:1.27 },
-  { cpt:"72133", mod:"CT",  region:"L-Spine", desc:"CT Lumbar Spine", con:"W/WO", wrvu:1.42 },
-  { cpt:"72240", mod:"CT",  region:"Myelography", desc:"Myelography Cervical (S&I)", con:"—", wrvu:1.16, est:true },
-  { cpt:"72255", mod:"CT",  region:"Myelography", desc:"Myelography Thoracic (S&I)", con:"—", wrvu:1.16, est:true },
-  { cpt:"72265", mod:"CT",  region:"Myelography", desc:"Myelography Lumbar (S&I)",   con:"—", wrvu:1.00, est:true },
-  { cpt:"72270", mod:"CT",  region:"Myelography", desc:"Myelography 2+ Regions (S&I)", con:"—", wrvu:1.39, est:true },
-  { cpt:"70496", mod:"CTA", region:"Head",        desc:"CTA Head (incl. CTV)",  con:"W", wrvu:1.75 },
-  { cpt:"70498", mod:"CTA", region:"Neck",        desc:"CTA Neck (incl. CTV)",  con:"W", wrvu:1.75 },
-  { cpt:"70471", mod:"CTA", region:"Head & Neck", desc:"CTA Head & Neck (combined)", con:"W", wrvu:2.50, flag:"2026" },
-  { cpt:"70473", mod:"CTA", region:"Perfusion",   desc:"CT Cerebral Perfusion (standalone)", con:"W", wrvu:1.20, est:true, flag:"2026" },
-  { cpt:"70472", mod:"CTA", region:"Perfusion",   desc:"CT Cerebral Perfusion (add-on w/ CTA)", con:"W", wrvu:0.80, est:true, flag:"add-on" },
-  { cpt:"70551", mod:"MRI", region:"Brain", desc:"MRI Brain / Brainstem (incl. IAC, pituitary)", con:"W/O",  wrvu:1.45 },
-  { cpt:"70552", mod:"MRI", region:"Brain", desc:"MRI Brain / Brainstem (incl. IAC, pituitary)", con:"W",    wrvu:1.78 },
-  { cpt:"70553", mod:"MRI", region:"Brain", desc:"MRI Brain / Brainstem (incl. IAC, pituitary)", con:"W/WO", wrvu:2.23 },
-  { cpt:"70554", mod:"MRI", region:"Brain", desc:"fMRI Brain (tech administered)",      con:"—", wrvu:1.43, est:true },
-  { cpt:"70555", mod:"MRI", region:"Brain", desc:"fMRI Brain (physician administered)", con:"—", wrvu:1.43, est:true },
-  { cpt:"76390", mod:"MRI", region:"Brain", desc:"MR Spectroscopy",                     con:"—", wrvu:1.46, est:true },
-  { cpt:"70557", mod:"MRI", region:"Brain (Intraop)", desc:"MRI Brain during open intracranial procedure", con:"W/O",  wrvu:1.50, est:true },
-  { cpt:"70558", mod:"MRI", region:"Brain (Intraop)", desc:"MRI Brain during open intracranial procedure", con:"W",    wrvu:1.80, est:true },
-  { cpt:"70559", mod:"MRI", region:"Brain (Intraop)", desc:"MRI Brain during open intracranial procedure", con:"W/WO", wrvu:2.20, est:true },
-  { cpt:"70540", mod:"MRI", region:"Orbit/Face/Neck", desc:"MRI Orbit / Face / Neck", con:"W/O",  wrvu:1.48 },
-  { cpt:"70542", mod:"MRI", region:"Orbit/Face/Neck", desc:"MRI Orbit / Face / Neck", con:"W",    wrvu:1.84 },
-  { cpt:"70543", mod:"MRI", region:"Orbit/Face/Neck", desc:"MRI Orbit / Face / Neck", con:"W/WO", wrvu:2.16 },
-  { cpt:"70336", mod:"MRI", region:"TMJ", desc:"MRI Temporomandibular Joint", con:"—", wrvu:1.48, est:true },
-  { cpt:"72141", mod:"MRI", region:"C-Spine", desc:"MRI Cervical Spine", con:"W/O",  wrvu:1.22 },
-  { cpt:"72142", mod:"MRI", region:"C-Spine", desc:"MRI Cervical Spine", con:"W",    wrvu:1.40, est:true },
-  { cpt:"72156", mod:"MRI", region:"C-Spine", desc:"MRI Cervical Spine", con:"W/WO", wrvu:1.84, est:true },
-  { cpt:"72146", mod:"MRI", region:"T-Spine", desc:"MRI Thoracic Spine", con:"W/O",  wrvu:1.22, est:true },
-  { cpt:"72147", mod:"MRI", region:"T-Spine", desc:"MRI Thoracic Spine", con:"W",    wrvu:1.40, est:true },
-  { cpt:"72157", mod:"MRI", region:"T-Spine", desc:"MRI Thoracic Spine", con:"W/WO", wrvu:1.84, est:true },
-  { cpt:"72148", mod:"MRI", region:"L-Spine", desc:"MRI Lumbar Spine", con:"W/O",  wrvu:1.19 },
-  { cpt:"72149", mod:"MRI", region:"L-Spine", desc:"MRI Lumbar Spine", con:"W",    wrvu:1.40, est:true },
-  { cpt:"72158", mod:"MRI", region:"L-Spine", desc:"MRI Lumbar Spine", con:"W/WO", wrvu:1.87 },
-  { cpt:"70544", mod:"MRA", region:"Head", desc:"MRA Head (incl. MRV)", con:"W/O",  wrvu:1.20 },
-  { cpt:"70545", mod:"MRA", region:"Head", desc:"MRA Head (incl. MRV)", con:"W",    wrvu:1.42 },
-  { cpt:"70546", mod:"MRA", region:"Head", desc:"MRA Head (incl. MRV)", con:"W/WO", wrvu:1.60 },
-  { cpt:"70547", mod:"MRA", region:"Neck", desc:"MRA Neck (carotids)", con:"W/O",  wrvu:1.20 },
-  { cpt:"70548", mod:"MRA", region:"Neck", desc:"MRA Neck (carotids)", con:"W",    wrvu:1.49 },
-  { cpt:"70549", mod:"MRA", region:"Neck", desc:"MRA Neck (carotids)", con:"W/WO", wrvu:1.71 },
-  { cpt:"72159", mod:"MRA", region:"Spine", desc:"MRA Spinal Canal", con:"W/WO", wrvu:1.43, est:true },
-  { cpt:"76376", mod:"Add-on", region:"3D Post-Processing", desc:"3D Rendering (no independent workstation)", con:"—", wrvu:0.20, est:true, flag:"add-on" },
-  { cpt:"76377", mod:"Add-on", region:"3D Post-Processing", desc:"3D Rendering (independent workstation)", con:"—", wrvu:0.79, est:true, flag:"add-on" },
-];
+const CODES = TAXONOMY;   // display taxonomy only — carries NO wRVU. See the price book below.
+
+// THE PRICE BOOK. Every wRVU shown in this component comes from here, which comes from
+// /api/reference/codes, which comes from the CMS reference schema. This file used to
+// carry its own 61-code table with prices baked in — duplicated a third time in
+// lib/data — and it disagreed with CMS on 54 of 61 codes, so the same study was worth
+// one number on the phone and another in the browser.
+//
+// workRvu is null where CMS publishes no national value. Render that as "not priced",
+// never as 0: 0 in a total is a claim, and it is the wrong one.
+let priceBookPromise = null;   // one fetch per page load, shared by every caller
+function usePriceBook() {
+  const [book, setBook] = useState({ byCpt: {}, release: null, loading: true, error: null });
+  useEffect(() => {
+    let alive = true;
+    priceBookPromise = priceBookPromise || fetch("/api/reference/codes")
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status))));
+    priceBookPromise
+      .then(d => { if (!alive) return;
+        setBook({ byCpt: Object.fromEntries(d.codes.map(c => [c.cpt, c])), release: d.release, loading: false, error: null }); })
+      .catch(e => { if (alive) setBook(b => ({ ...b, loading: false, error: e })); });
+    return () => { alive = false; };
+  }, []);
+  return book;
+}
 const MOD_COLORS = { CT:"#0d9488", MRI:"#6366f1", CTA:"#0891b2", MRA:"#7c3aed", "Add-on":"#64748b" };
 const codeByCpt = Object.fromEntries(CODES.map(c => [c.cpt.replace("+",""), c]));
 
@@ -1173,6 +1135,7 @@ function NumCell({ v, onChange }) {
 
 /* ============================================================================ TRACKER ============================================================================ */
 function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, ppcMri: 0, ppcCt: 0, ppcXr: 0 }, extraPeriods = [], reloadExtra }) {
+  const prices = usePriceBook();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [draft, setDraft] = useState(null);
@@ -1292,13 +1255,17 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
         const canon = codeByCpt[String(x.cpt).replace("+", "")];
         const detected = classifyInstitution(x.site || x.institution);
         const inst = detected === "Other" ? curInst : detected;
-        const wrvu = canon ? canon.wrvu : (Number(x.wrvu_each) || 0);
+        // Preview only — the server prices authoritatively on commit. Reading it from
+        // the price book keeps the preview and the stored value in agreement instead of
+        // showing the user one number and saving another.
+        const p = canon ? prices.byCpt[canon.cpt] : null;
+        const wrvu = p ? (p.workRvu ?? 0) : (Number(x.wrvu_each) || 0);
         const day = (x.exam_date ? String(x.exam_date) : "").slice(0, 10) || manualDate;
         return {
           uid: ++uidc, cpt: String(x.cpt || "?"),
           desc: x.procedure || (canon ? `${canon.desc} ${canon.con}` : "Unrecognized study"),
           mod: canon ? canon.mod : (x.modality || "CT"),
-          wrvu, est: canon ? !!canon.est : true, inst, site: x.site || "",
+          wrvu, est: p ? p.workRvu === null : true, inst, site: x.site || "",
           date: day, examDate: x.exam_date || `${day}T00:00:00`, needsPrice: !(wrvu > 0),
         };
       });
@@ -1337,14 +1304,23 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
   function addManual(code) {
     setDraft(d => {
       const base = d || { batchId: `batch_${Date.now()}`, source: "manual", items: [] };
+      // Preview only. The server re-prices on save and its answer is the one that is
+      // stored, so this can never be the figure of record — but it must still agree,
+      // and it must not invent one where CMS has none.
+      const p = prices.byCpt[code.cpt];
       const item = { uid: Date.now() + Math.random(), cpt: code.cpt, desc: `${code.desc} ${code.con}`, mod: code.mod,
-        wrvu: code.wrvu, est: !!code.est, inst: curInst, site: "", date: manualDate, examDate: `${manualDate}T00:00:00`, needsPrice: false };
+        wrvu: p?.workRvu ?? 0, est: p ? p.workRvu === null : true, inst: curInst, site: "", date: manualDate, examDate: `${manualDate}T00:00:00`, needsPrice: false };
       return { ...base, items: [...base.items, item] };
     });
   }
   function removeDraftItem(it) { setDraft(d => { const items = d.items.filter(i => i.uid !== it.uid); return items.length ? { ...d, items } : null; }); }
   function cycleInst(it) { const order = ["UM", "JHS", "Other"]; setDraft(d => ({ ...d, items: d.items.map(i => i.uid === it.uid ? { ...i, inst: order[(order.indexOf(i.inst) + 1) % 3] } : i) })); }
-  function assignCode(it, code) { setDraft(d => ({ ...d, items: d.items.map(i => i.uid === it.uid ? { ...i, cpt: code.cpt, desc: `${code.desc} ${code.con}`, mod: code.mod, wrvu: code.wrvu, est: !!code.est, needsPrice: false } : i) })); }
+  function assignCode(it, code) {
+    const p = prices.byCpt[code.cpt];   // preview; the server re-prices on commit
+    setDraft(d => ({ ...d, items: d.items.map(i => i.uid === it.uid
+      ? { ...i, cpt: code.cpt, desc: `${code.desc} ${code.con}`, mod: code.mod, wrvu: p?.workRvu ?? 0, est: p ? p.workRvu === null : true, needsPrice: false }
+      : i) }));
+  }
   async function commitDraft() {
     if (!draft || !draft.items.length) return;
     setBusy(true);
@@ -1755,6 +1731,7 @@ function ExamsView({ log, settings }) {
 // search tool, so the feature has no server-owned form. The static wRVU table
 // below is the authoritative figure.
 function Reference({ settings }) {
+  const prices = usePriceBook();
   const [q, setQ] = useState(""); const [mod, setMod] = useState("ALL");
   const mods = ["ALL", "CT", "CTA", "MRI", "MRA", "Add-on"];
   const rows = useMemo(() => { const t = q.toLowerCase(); return CODES.filter(c => (mod === "ALL" || c.mod === mod) && (!t || c.cpt.includes(t) || c.desc.toLowerCase().includes(t) || c.region.toLowerCase().includes(t))); }, [q, mod]);
@@ -1778,8 +1755,17 @@ function Reference({ settings }) {
                   <td className="py-2 px-4 font-mono text-xs"><span className="font-semibold">{c.cpt}</span>{c.flag && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-600 align-middle">{c.flag}</span>}</td>
                   <td className="py-2 px-2"><span className="inline-flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full" style={{ background: MOD_COLORS[c.mod] || "#94a3b8" }} />{c.desc}</span></td>
                   <td className="py-2 px-2 font-mono text-xs text-slate-500">{c.con}</td>
-                  <td className="py-2 px-2 text-right font-mono font-semibold">{c.wrvu.toFixed(2)}{c.est && <span className="text-amber-500 text-[10px] ml-1">est.</span>}</td>
-                  <td className="py-2 px-2 text-right font-mono text-slate-600">${fmt(c.wrvu * settings.ratePerWrvu, 0)}</td>
+                  <td className="py-2 px-2 text-right font-mono font-semibold">{(() => { const p = prices.byCpt[c.cpt];
+                    if (prices.loading) return <span className="text-slate-300">…</span>;
+                    if (!p) return <span className="text-slate-400" title="Not in the loaded CMS release">n/a</span>;
+                    if (p.workRvu === null) return <span className="text-amber-600" title={`No national work RVU — ${p.priceState.replace(/_/g, " ")} (CMS status ${p.statusCode})`}>not priced</span>;
+                    return p.workRvu.toFixed(2); })()}</td>
+                  <td className="py-2 px-2 text-right font-mono text-slate-600">{(() => { const p = prices.byCpt[c.cpt];
+                    // No number means no dollar figure. Rendering $0 here would read as
+                    // "this study is worth nothing", which is the opposite of the truth
+                    // for a contractor-priced code.
+                    if (prices.loading || !p || p.workRvu === null) return <span className="text-slate-300">—</span>;
+                    return `$${fmt(p.workRvu * settings.ratePerWrvu, 0)}`; })()}</td>
                 </tr>
               ))}
             </tbody>
