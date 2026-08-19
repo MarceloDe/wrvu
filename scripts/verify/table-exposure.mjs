@@ -32,7 +32,7 @@ const APP_ROLE = "app_authenticated";
 const CLASSIFICATION = {
   exams: "tenant", extra_duty_periods: "tenant", extra_duty_rates: "tenant",
   user_kv: "tenant", llm_usage: "tenant", llm_rate_buckets: "tenant",
-  rvu_tables: "shared", rvu_codes: "shared", users: "shared",
+  users: "shared",   // rvu_tables/rvu_codes dropped in 0006 — the reference schema replaced them
   _migrations: "operator",
   exams_reprice_log: "operator",
 };

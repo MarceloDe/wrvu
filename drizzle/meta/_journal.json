@@ -31,6 +31,11 @@
       "idx": 5,
       "tag": "0005_revoke_operator_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "tag": "0006_drop_legacy_rvu_tables",
+      "breakpoints": true
     }
   ]
 }
