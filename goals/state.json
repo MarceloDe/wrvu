@@ -454,7 +454,8 @@
         "UI reads institutions from the table instead of the hardcoded list (~71 references)",
         "iOS Institution enum becomes data-driven",
         "move settings.umYTD/jhsYTD onto institutions.ytd_wrvu"
-      ]
+      ],
+      "production": "0008 applied and seeded: 6 institutions across 2 users, 887 exams linked. UM 541 / JHS 346 / Other 0 \u2014 identical to the pre-migration distribution."
     },
     "N06-decompose-dashboard": {
       "status": "partial",
