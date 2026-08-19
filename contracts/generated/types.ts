@@ -2,13 +2,27 @@
 // DO NOT EDIT. Edit the spec and re-run; contracts-fresh.mjs fails the build if
 // this file and the spec disagree.
 //
-// API version 1.3.0
+// API version 1.4.0
 
 export interface ErrorEnvelope {
   error: { code: string; correlationId: string; message?: string };
 }
 
 export type PriceState = "priced" | "no_physician_work" | "contractor_priced" | "not_payable" | "unpriced_other" | "unknown_code";
+
+export interface Institution {
+  id: string;
+  /** Stable key. UM / JHS / Other are seeded; a user may add more. */
+  name: string;
+  label?: string | null;
+  shortLabel?: string | null;
+  color?: string | null;
+  /** The YTD figure the reported total is split by. */
+  ytdWrvu?: number | null;
+  sortOrder?: number | null;
+  /** Exactly one per user. Where an unrecognised site lands (INV-SITE-NEVER-FAILS). */
+  isDefault: boolean;
+}
 
 export interface Exam {
   id: string;

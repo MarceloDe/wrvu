@@ -444,18 +444,20 @@
         "institutions.js is data-driven: makeClassifier(list, overrides). The default list reproduces the old behaviour exactly.",
         "timeline.js sharesFor() splits N ways with the remainder to the LAST institution, so shares sum to exactly 1",
         "seed-institutions.mjs \u2014 dry-run by default",
-        "16 analytics tests: the 10 legacy ones pass UNCHANGED, which is the proof the generalisation altered nothing"
+        "16 analytics tests: the 10 legacy ones pass UNCHANGED, which is the proof the generalisation altered nothing",
+        "/api/institutions serves the user's rows and site overrides; /api/exams stamps institution_id on new rows",
+        "The PWA reads institutions at the root and injects them into settings, so every builder gets them with no call-site change; falls back to the built-ins when the API returns nothing"
       ],
       "why_remainder_to_last": "Independently computed shares do not sum to 1 in floating point \u2014 1/3+1/3+1/3 is not 1 \u2014 and the difference is wRVU that vanishes from the reported split. The old two-institution code already did this with jhsShare = 1 - umShare; generalising means keeping the habit.",
       "inv_site_never_fails": "Enforced by a partial unique index: exactly one default institution per user. An unmapped site always has somewhere to land.",
       "new_capability": "A user-defined site mapping now beats every built-in pattern \u2014 the iOS nrv_sites behaviour, which the PWA lacked.",
       "remaining": [
-        "seed production and link the 887 exams",
-        "UI reads institutions from the table instead of the hardcoded list (~71 references)",
         "iOS Institution enum becomes data-driven",
-        "move settings.umYTD/jhsYTD onto institutions.ytd_wrvu"
+        "a Settings UI to create/rename institutions and map sites",
+        "move settings.umYTD/jhsYTD onto institutions.ytd_wrvu (the column exists and is served)"
       ],
-      "production": "0008 applied and seeded: 6 institutions across 2 users, 887 exams linked. UM 541 / JHS 346 / Other 0 \u2014 identical to the pre-migration distribution."
+      "production": "0008 applied and seeded: 6 institutions across 2 users, 887 exams linked. UM 541 / JHS 346 / Other 0 \u2014 identical to the pre-migration distribution.",
+      "fallback": "A user who has never opened Settings has no rows; the client falls back to the built-in UM/JHS/Other so the dashboard still works. INV-SITE-NEVER-FAILS applies to a brand-new account too."
     },
     "N06-decompose-dashboard": {
       "status": "partial",

@@ -22,6 +22,9 @@
       "get",
       "post"
     ],
+    "/api/institutions": [
+      "get"
+    ],
     "/api/reference/codes": [
       "get"
     ]
@@ -45,6 +48,23 @@
         "priced",
         "unknown_code",
         "unpriced_other"
+      ]
+    },
+    "Institution": {
+      "properties": [
+        "color",
+        "id",
+        "isDefault",
+        "label",
+        "name",
+        "shortLabel",
+        "sortOrder",
+        "ytdWrvu"
+      ],
+      "required": [
+        "id",
+        "isDefault",
+        "name"
       ]
     },
     "Exam": {
