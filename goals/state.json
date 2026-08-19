@@ -410,7 +410,8 @@
         "the ETag is recorded only AFTER a successful apply; the old order would have marked a device up to date forever after a failed install",
         "a payload under 500 codes is refused \u2014 a truncated download must not replace a complete local table"
       ],
-      "tests": "62 in 14 suites on the pinned iOS 26.5 runtime, including four new"
+      "tests": "62 in 14 suites on the pinned iOS 26.5 runtime, including four new",
+      "production": "Deployed. Edge API reads Neon; DATABASE_URL set as app_rls on the neurorvu-edge-api project."
     },
     "N13-taxonomy-seed": {
       "status": "pass",
@@ -418,7 +419,8 @@
       "what": "reference.code_specialties \u2014 352 of 828 codes tagged: neuro 126, body 113, msk 49, breast 23, vascular 21, cardiac 20.",
       "d36": "Tags RANK; they may never restrict. 476 codes are deliberately untagged (body_region 'other') \u2014 unranked, never hidden. A filter would make most of the schedule unreachable, and the doctor could not log the study.",
       "derived_not_curated": "Rules in scripts/reference/derive-specialties.mjs, re-runnable against any release, so a new CMS extract never arrives untagged. A hand-typed 828-row mapping is exactly the artifact that drifts \u2014 this codebase has paid for that twice.",
-      "guard": "taxonomy-never-restricts.mjs \u2014 static (no query narrows by specialty) plus runtime (the price book still serves every code in the release). Poisoned."
+      "guard": "taxonomy-never-restricts.mjs \u2014 static (no query narrows by specialty) plus runtime (the price book still serves every code in the release). Poisoned.",
+      "production": "0007 applied and 352 tags derived in production; tagged 352 / 828 codes / 668 served."
     }
   },
   "statuses": {
