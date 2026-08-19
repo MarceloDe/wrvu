@@ -2,7 +2,7 @@
 // Diff two schemas. Sources: --left-env VAR (live) or --left-sql f1,f2 (applied to
 // an ephemeral Postgres). Same for --right-. Exits 1 on ANY difference.
 import { pass, fail } from "./_lib.mjs";
-import { haveDocker, startEphemeral, stopEphemeral, applySql, snapshot, diff } from "./_pg.mjs";
+import { haveDocker, startEphemeralOrPend, stopEphemeral, applySql, snapshot, diff } from "./_pg.mjs";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -17,7 +17,7 @@ async function resolve(side) {
   }
   if (sqls) {
     if (!haveDocker()) fail("docker is not running — applying SQL needs an ephemeral Postgres");
-    const pg = startEphemeral(`diff${side}${process.pid}`);
+    const pg = startEphemeralOrPend(`diff${side}${process.pid}`);
     try {
       for (const f of sqls.split(",")) applySql(pg.url, join(process.cwd(), f.trim()));
       return { snap: await snapshot(pg.url), label: sqls };

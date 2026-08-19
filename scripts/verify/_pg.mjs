@@ -5,6 +5,7 @@
 // Postgres 17 in Docker is not a mock: the question replay answers is "do these
 // migration files produce this schema", which is a property of the SQL, not of Neon.
 import { execSync, spawnSync } from "node:child_process";
+import { pending } from "./_lib.mjs";
 
 const PSQL = ["/opt/homebrew/opt/postgresql@16/bin/psql", "psql"].find((p) => {
   try { execSync(`command -v ${p}`, { stdio: "ignore" }); return true; } catch { return false; }
@@ -14,14 +15,47 @@ export function haveDocker() {
   try { execSync("docker info", { stdio: "ignore" }); return true; } catch { return false; }
 }
 
+// `docker info` succeeding does NOT mean a container can start. Docker Desktop's VM
+// disk fills long before the host does, and `docker run` then exits 125. An earlier
+// version let that surface as a raw execSync stack trace — the same INV-NO-RAW-ERRORS
+// failure we forbid in the app, in the code that is supposed to police it. The reason
+// is now carried on the error so callers can report it instead of a backtrace.
+export class EphemeralUnavailable extends Error {
+  constructor(reason) { super(reason); this.name = "EphemeralUnavailable"; }
+}
+
 export function startEphemeral(name = `pgtmp${process.pid}`, port = 55433 + (process.pid % 500)) {
   execSync(`docker rm -f ${name}`, { stdio: "ignore" });
-  execSync(`docker run -d --name ${name} -e POSTGRES_PASSWORD=x -p ${port}:5432 postgres:17-alpine`, { stdio: "ignore" });
+  const run = spawnSync("docker", ["run", "-d", "--name", name, "-e", "POSTGRES_PASSWORD=x", "-p", `${port}:5432`, "postgres:17-alpine"], { encoding: "utf8" });
+  if (run.status !== 0) {
+    const err = (run.stderr || run.stdout || "").trim();
+    if (/no space left on device/i.test(err)) {
+      throw new EphemeralUnavailable(`Docker cannot start a container: its virtual disk is full. Reclaim space in Docker Desktop (the host disk is not the constraint). Raw: ${err.split("\n").pop()}`);
+    }
+    if (/port is already allocated|address already in use/i.test(err)) {
+      throw new EphemeralUnavailable(`port ${port} is already in use by another container. Raw: ${err.split("\n").pop()}`);
+    }
+    throw new EphemeralUnavailable(`docker run exited ${run.status}: ${err.split("\n").slice(-2).join(" ")}`);
+  }
   for (let i = 0; i < 60; i++) {
     try { execSync(`docker exec ${name} pg_isready -U postgres`, { stdio: "ignore" }); break; } catch { execSync("sleep 1"); }
     if (i === 59) throw new Error("ephemeral postgres never became ready");
   }
   return { name, url: `postgres://postgres:x@localhost:${port}/postgres` };
+}
+
+// Every caller wants the same thing when the container will not start: an honest
+// PENDING that names the fix, never a backtrace. Kept here so a new replay check
+// cannot forget it.
+export function startEphemeralOrPend(name, port) {
+  try { return startEphemeral(name, port); }
+  catch (e) {
+    if (e instanceof EphemeralUnavailable) {
+      pending(`the ephemeral Postgres could not start — ${e.message}`,
+              "Docker can start a postgres:17-alpine container again");
+    }
+    throw e;
+  }
 }
 
 export function stopEphemeral(name) { execSync(`docker rm -f ${name}`, { stdio: "ignore" }); }

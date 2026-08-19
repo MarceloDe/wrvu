@@ -1,0 +1,65 @@
+{
+  "passed": true,
+  "results": [
+    {
+      "name": "fixture seeded for two tenants",
+      "ok": true,
+      "detail": "[{\"user_id\":\"probe_tenant_a_synthetic\",\"n\":2},{\"user_id\":\"probe_tenant_b_synthetic\",\"n\":1}]"
+    },
+    {
+      "name": "app role has no BYPASSRLS",
+      "ok": true,
+      "detail": "{\"u\":\"app_rls\",\"rolbypassrls\":false,\"rolsuper\":false}"
+    },
+    {
+      "name": "app role is not superuser",
+      "ok": true,
+      "detail": "{\"u\":\"app_rls\",\"rolbypassrls\":false,\"rolsuper\":false}"
+    },
+    {
+      "name": "UNSET tenant sees zero rows (fails closed)",
+      "ok": true,
+      "detail": "saw 0 rows with app.user_id unset"
+    },
+    {
+      "name": "READ sees only own rows",
+      "ok": true,
+      "detail": "expected 2, saw 2"
+    },
+    {
+      "name": "READ cannot reach another tenant even when naming them",
+      "ok": true,
+      "detail": "saw 0 of tenant B's rows"
+    },
+    {
+      "name": "WRITE cannot forge a row for another tenant",
+      "ok": true,
+      "detail": "new row violates row-level security policy for table \"exams\""
+    },
+    {
+      "name": "UPDATE cannot mutate another tenant's row",
+      "ok": true,
+      "detail": "0 row(s) updated"
+    },
+    {
+      "name": "DELETE cannot remove another tenant's row",
+      "ok": true,
+      "detail": "0 row(s) deleted"
+    },
+    {
+      "name": "tenant B's data survived the whole probe",
+      "ok": true,
+      "detail": "1 row(s) remain"
+    },
+    {
+      "name": "rls-enabled.mjs PASSES as the restricted role",
+      "ok": true,
+      "detail": "exit 0: PASS  all 6 tenant table(s) FORCE RLS with scoping policies; role \"app_rls\" has no BYPASSRLS and owns none of them\n(node:19251) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.\nIn the next major version (pg-connection-string v3.0"
+    },
+    {
+      "name": "rls-enabled.mjs FAILS as the privileged owner (not vacuous)",
+      "ok": true,
+      "detail": "exit 1: (node:19259) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.\nIn the next major version (pg-connection-string v3.0.0 and pg v9.0."
+    }
+  ]
+}
