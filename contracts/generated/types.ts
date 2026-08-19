@@ -2,7 +2,7 @@
 // DO NOT EDIT. Edit the spec and re-run; contracts-fresh.mjs fails the build if
 // this file and the spec disagree.
 //
-// API version 1.2.0
+// API version 1.3.0
 
 export interface ErrorEnvelope {
   error: { code: string; correlationId: string; message?: string };
@@ -64,4 +64,6 @@ export interface ReferenceCode {
   descriptor?: string | null;
   /** CMS modality (XR */
   modality?: string | null;
+  /** Specialty tags. These RANK search and quick-add and must never filter — an untagged code is unranked, not hidden (D36). 476 of 828 codes are untagged. */
+  specialties?: "neuro" | "body" | "msk" | "breast" | "cardiac" | "vascular"[];
 }

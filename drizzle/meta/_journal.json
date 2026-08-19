@@ -36,6 +36,11 @@
       "idx": 6,
       "tag": "0006_drop_legacy_rvu_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "tag": "0007_code_specialties",
+      "breakpoints": true
     }
   ]
 }

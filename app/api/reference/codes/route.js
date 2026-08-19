@@ -22,7 +22,13 @@ export const GET = withErrorEnvelope("/api/reference/codes", async (req, ctx) =>
     const sql = getUnscopedSql();
     const rows = await sql`
       select r.hcpcs, r.work_rvu, r.price_state, r.status_code, c.descriptor, c.modality,
-             v.source_release, v.conversion_factor
+             v.source_release, v.conversion_factor,
+             coalesce(
+               (select array_agg(s.specialty order by s.specialty)
+                from reference.code_specialties s
+                where s.version_id = r.version_id and s.hcpcs = r.hcpcs),
+               '{}'
+             ) as specialties
       from reference.code_rvus r
       join reference.fee_schedule_versions v on v.id = r.version_id and v.is_current
       left join reference.procedure_codes c on c.version_id = r.version_id and c.hcpcs = r.hcpcs
@@ -51,6 +57,9 @@ export const GET = withErrorEnvelope("/api/reference/codes", async (req, ctx) =>
         // study is PAID from, and the old "default to CT" turned every unrecognised
         // study into a paid CT.
         modality: r.modality,
+        // Tags RANK search and quick-add; they never filter. A LEFT JOIN, deliberately:
+        // an untagged code is unranked, not hidden, and 476 of 828 are untagged (D36).
+        specialties: r.specialties ?? [],
       })),
     };
     return Response.json(body, {

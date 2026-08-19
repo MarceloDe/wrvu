@@ -33,6 +33,7 @@ const EXEMPT = [
   "native contract (iOS) is intact",
   "generated clients match the contract",
   "contract change is additive",
+  "specialty tags rank but never restrict",
   "no modality is guessed into a paid bucket",
   "one price table only",
   "OCR prompt prices match the reference",

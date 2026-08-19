@@ -56,6 +56,9 @@ jobs:
         run: node scripts/verify/contracts-fresh.mjs
       - name: contract change is additive
         run: node scripts/verify/contracts-additive.mjs
+      - name: specialty tags rank but never restrict
+        # 78 is PENDING: the completeness half needs a reachable reference database.
+        run: node scripts/verify/taxonomy-never-restricts.mjs || [ $? -eq 78 ]
       - name: no modality is guessed into a paid bucket
         run: node scripts/verify/no-guessed-modality.mjs
       - name: one price table only
