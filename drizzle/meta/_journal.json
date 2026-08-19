@@ -26,6 +26,11 @@
       "idx": 4,
       "tag": "0004_exam_pricing_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "tag": "0005_revoke_operator_tables",
+      "breakpoints": true
     }
   ]
 }

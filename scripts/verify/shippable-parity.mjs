@@ -31,6 +31,7 @@ const EXEMPT = [
   "ensure chromium",
   "invariant checks are executable",
   "native contract (iOS) is intact",
+  "no table in public is exposed by default",
   "money has one path",
   "pricing matches the CMS source",
   "migration journal is complete",

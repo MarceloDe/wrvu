@@ -283,6 +283,18 @@ invariants:
           while every tenant query returns nothing, because today's connection is the
           owner. The failure would only appear at the moment of rotation.
       - kind: schema-introspection
+        cmd: node scripts/verify/table-exposure.mjs
+        detail: >
+          The half rls-enabled.mjs cannot see. 0002 left a blanket
+          `alter default privileges ... grant ... to app_authenticated` on schema public,
+          so every table created afterwards is granted to the application role
+          automatically, and rls-enabled.mjs only inspects tables carrying a user_id — so
+          a table without one is both exposed and invisible. It found two: _migrations
+          (the app role could rewrite migration history and defeat the checksum drift
+          guard) and exams_reprice_log (every tenant's before/after wRVU). Every table in
+          public must now be classified tenant, shared or operator; an unclassified one
+          fails, because the default in this schema is exposure.
+      - kind: schema-introspection
         cmd: node scripts/verify/rls-enabled.mjs
         detail: >
           Asserts FORCE ROW LEVEL SECURITY and a non-permissive-true policy on every
