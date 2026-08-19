@@ -477,6 +477,28 @@
         "N06g delete the dead users table"
       ],
       "note": "The remaining extractions are UI components, not arithmetic. N18's prerequisite \u2014 the money math out of the monolith and under test \u2014 is met."
+    },
+    "N26-pricing-parity": {
+      "status": "pass",
+      "depends_on": [
+        "N14-unified-pricing"
+      ],
+      "priority": 26,
+      "merged": "wruvs PR #32 (main 32bb611); neurorvu-ios PR #2 (main 95a7c63)",
+      "found": [
+        "ParserService priced from the 61-code neuro table, 55 of whose 61 work RVUs disagreed with CMS RVU26A; 24 were hand-estimates flagged 2026/add-on",
+        "ReferenceSeeder never set est/flag when seeding RVU26A, so all 282 contractor-priced codes read as a real price of 0 on the bundled offline seed",
+        "Pricing.resolveValue existed with zero callers \u2014 the money path bypassed it entirely"
+      ],
+      "verified": [
+        "69 tests in 15 suites pass on the iOS simulator",
+        "poison (revert seeder fix): 40 of 113 golden vectors disagree; 76390 reads .priced/0",
+        "poison (corrupt one neuro value + re-add a 2026 flag): both drift guards fire, and FixturePipelineTests STAYS GREEN \u2014 proof money no longer flows through the neuro table",
+        "pricing-golden-fresh.mjs against the live reference DB: 113 vectors match, 6 states covered",
+        "CI run 32312048972 success; step 'pricing golden covers every price state' executed"
+      ],
+      "rollback": "revert 32bb611 and 95a7c63; no production data was migrated by this node",
+      "open": "neurorvu-ios has NO CI workflow \u2014 PR #2 merged on locally-run tests only"
     }
   },
   "statuses": {
