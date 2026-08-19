@@ -2,7 +2,7 @@
 // DO NOT EDIT. Edit the spec and re-run; contracts-fresh.mjs fails the build if
 // this file and the spec disagree.
 //
-// API version 1.1.0
+// API version 1.2.0
 
 export interface ErrorEnvelope {
   error: { code: string; correlationId: string; message?: string };
@@ -62,4 +62,6 @@ export interface ReferenceCode {
   priceState: PriceState;
   statusCode?: string | null;
   descriptor?: string | null;
+  /** CMS modality (XR */
+  modality?: string | null;
 }

@@ -104,6 +104,7 @@
       "properties": [
         "cpt",
         "descriptor",
+        "modality",
         "priceState",
         "statusCode",
         "workRvu"

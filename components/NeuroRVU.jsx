@@ -71,7 +71,7 @@ const instMeta = (k) => INSTITUTIONS[k] || INSTITUTIONS.Other;
 function migrateLog(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.map(s => ({ ...s, items: (s.items || []).map(i => ({
-    ...i, inst: classifyInstitution(i.inst), mod: i.mod || (codeByCpt[String(i.cpt).replace("+", "")]?.mod) || "CT",
+    ...i, inst: classifyInstitution(i.inst), mod: i.mod || (codeByCpt[String(i.cpt).replace("+", "")]?.mod) || "Other",
   })) }));
 }
 
@@ -362,8 +362,13 @@ const MONTH_LABEL = (k) => { const [y, m] = k.split("-"); return new Date(Number
    rows — so none of the wRVU analytics above are affected. Two pay models:
      - per_diem: flat $ per shift.
      - ppc (pay-per-click): $ per exam by modality bucket (MRI / CT / XR). */
-// Map a worklist modality onto a PPC pay bucket. The neuro schedule has no XR
-// and OCR defaults unknowns to "CT" — so counts stay user-editable in the UI.
+// Map a worklist modality onto a PPC pay bucket.
+//
+// This function was always right: an unrecognised modality falls to "other", which is
+// NOT paid. The bug was upstream — every call site defaulted an unknown modality to
+// "CT" before it got here, so nothing was ever unrecognised and every unknown study was
+// paid at the CT rate. The reference schema knows the modality for all 828 codes,
+// including 236 XR, so nothing has to be guessed any more. Unknown now means unknown.
 const PPC_BUCKET = (mod) => {
   const m = String(mod || "").toUpperCase();
   if (m.includes("MR")) return "mri";                        // MRI, MRA
@@ -491,7 +496,7 @@ export default function NeuroRVU() {
     id: e.id, batchId: e.batchId,
     date: (e.examDate ? String(e.examDate) : String(e.uploadedAt || "")).slice(0, 10),
     items: [{
-      uid: e.id, cpt: e.cpt || "?", desc: e.procedure || "Study", mod: e.modality || "CT",
+      uid: e.id, cpt: e.cpt || "?", desc: e.procedure || "Study", mod: e.modality || "Other",
       count: 1, wrvu: Number(e.wrvu) || 0, est: !!e.estimated,
       inst: e.institution || classifyInstitution(e.site),
     }],
@@ -1264,7 +1269,9 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
         return {
           uid: ++uidc, cpt: String(x.cpt || "?"),
           desc: x.procedure || (canon ? `${canon.desc} ${canon.con}` : "Unrecognized study"),
-          mod: canon ? canon.mod : (x.modality || "CT"),
+          // Reference modality first: it is the only source that knows an X-ray is an
+          // X-ray. Never "CT" as a fallback — that is a PAID bucket.
+          mod: p?.modality || (canon ? canon.mod : null) || x.modality || "Other",
           wrvu, est: p ? p.workRvu === null : true, inst, site: x.site || "",
           date: day, examDate: x.exam_date || `${day}T00:00:00`, needsPrice: !(wrvu > 0),
         };
@@ -1634,7 +1641,7 @@ function buildAnalytics(log, settings) {
       const w = i.count * i.wrvu; byMonth[k].wrvu += w; byMonth[k].studies += i.count;
       const site = classifyInstitution(i.inst); institution[site].wrvu += w; institution[site].studies += i.count;
       if (site === "UM") byMonth[k].um += w; if (site === "JHS") byMonth[k].jhs += w;
-      if (!byType[i.cpt]) { const canon = codeByCpt[i.cpt.replace("+", "")] || {}; byType[i.cpt] = { cpt: i.cpt, desc: i.desc, mod: i.mod || canon.mod || "CT", perStudy: i.wrvu, count: 0, wrvu: 0, byInst: {} }; }
+      if (!byType[i.cpt]) { const canon = codeByCpt[i.cpt.replace("+", "")] || {}; byType[i.cpt] = { cpt: i.cpt, desc: i.desc, mod: i.mod || canon.mod || "Other", perStudy: i.wrvu, count: 0, wrvu: 0, byInst: {} }; }
       byType[i.cpt].count += i.count; byType[i.cpt].wrvu += w;
       byType[i.cpt].byInst[site] = byType[i.cpt].byInst[site] || { count: 0, wrvu: 0 };
       byType[i.cpt].byInst[site].count += i.count; byType[i.cpt].byInst[site].wrvu += w;
@@ -1654,8 +1661,14 @@ function buildAnalytics(log, settings) {
 /* ============================================================================ EXAMS DATABASE ============================================================================ */
 function ExamsView({ log, settings }) {
   const [q, setQ] = useState(""); const [mod, setMod] = useState("ALL"); const [inst, setInst] = useState("ALL"); const [sort, setSort] = useState("wrvu");
-  const mods = ["ALL", "CT", "CTA", "MRI", "MRA", "Add-on"];
   const a = useMemo(() => buildAnalytics(log, settings), [log, settings]);
+  // Derived, not hardcoded. The old fixed list was ["CT","CTA","MRI","MRA","Add-on"] —
+  // five neuro modalities — so an X-ray or ultrasound had no filter to appear under even
+  // once it was classified correctly. CMS recognises thirteen.
+  const mods = useMemo(
+    () => ["ALL", ...[...new Set(Object.values(a.byType).map((x) => x.mod).filter(Boolean))].sort()],
+    [a],
+  );
   const rows = useMemo(() => {
     const t = q.toLowerCase();
     let r = Object.values(a.byType).filter(x => {
@@ -1733,7 +1746,10 @@ function ExamsView({ log, settings }) {
 function Reference({ settings }) {
   const prices = usePriceBook();
   const [q, setQ] = useState(""); const [mod, setMod] = useState("ALL");
-  const mods = ["ALL", "CT", "CTA", "MRI", "MRA", "Add-on"];
+  const mods = useMemo(
+    () => ["ALL", ...[...new Set(CODES.map((c) => c.mod).filter(Boolean))].sort()],
+    [],
+  );
   const rows = useMemo(() => { const t = q.toLowerCase(); return CODES.filter(c => (mod === "ALL" || c.mod === mod) && (!t || c.cpt.includes(t) || c.desc.toLowerCase().includes(t) || c.region.toLowerCase().includes(t))); }, [q, mod]);
   return (
     <div className="space-y-4">

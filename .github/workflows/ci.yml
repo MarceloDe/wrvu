@@ -56,6 +56,8 @@ jobs:
         run: node scripts/verify/contracts-fresh.mjs
       - name: contract change is additive
         run: node scripts/verify/contracts-additive.mjs
+      - name: no modality is guessed into a paid bucket
+        run: node scripts/verify/no-guessed-modality.mjs
       - name: one price table only
         run: node scripts/verify/no-second-price-table.mjs
       - name: OCR prompt prices match the reference

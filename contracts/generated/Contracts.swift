@@ -2,7 +2,7 @@
 // DO NOT EDIT. Edit the spec and re-run; contracts-fresh.mjs fails the build if
 // this file and the spec disagree.
 //
-// API version 1.1.0
+// API version 1.2.0
 
 import Foundation
 
@@ -78,4 +78,6 @@ public struct ReferenceCode: Codable {
     public var priceState: PriceState
     public var statusCode: String?
     public var descriptor: String?
+    /// CMS modality (XR
+    public var modality: String?
 }
