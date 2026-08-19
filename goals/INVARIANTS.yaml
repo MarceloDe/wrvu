@@ -272,6 +272,14 @@ invariants:
           an UNSET tenant sees nothing rather than everything. Also runs rls-enabled.mjs
           as the restricted role (must PASS) and as the owner (must FAIL), because a
           checker never observed passing on a correct configuration is not known to work.
+      - kind: runtime
+        cmd: node scripts/verify/scoped-db-probe.mjs
+        detail: >
+          Runs the APPLICATION's own data path (lib/db withTenant) over a connection with
+          no BYPASSRLS and asserts both directions: scoped access works, and unscoped
+          access sees zero rows. verify:shippable cannot catch this — it passes happily
+          while every tenant query returns nothing, because today's connection is the
+          owner. The failure would only appear at the moment of rotation.
       - kind: schema-introspection
         cmd: node scripts/verify/rls-enabled.mjs
         detail: >

@@ -9,7 +9,7 @@
 // Every query is scoped to the signed-in Clerk user id.
 
 import { auth } from "@clerk/nextjs/server";
-import { getSql } from "@/lib/db";
+import { withTenant } from "@/lib/db";
 import { withErrorEnvelope } from "@/lib/http/errors";
 
 export const runtime = "nodejs";
@@ -20,7 +20,7 @@ export const GET = withErrorEnvelope("/api/exams", async (req, ctx) => {
   const { searchParams } = new URL(req.url);
 
   try {
-    const sql = getSql();
+    return await withTenant(userId, async ({ sql }) => {
     if (searchParams.get("batches")) {
       const batches = await sql`
         SELECT batch_id AS "batchId",
@@ -41,6 +41,7 @@ export const GET = withErrorEnvelope("/api/exams", async (req, ctx) => {
       FROM exams WHERE user_id = ${userId}
       ORDER BY exam_date NULLS LAST`;
     return Response.json({ exams });
+    });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: "exams read failed" });
   }
@@ -60,13 +61,17 @@ export const POST = withErrorEnvelope("/api/exams", async (req, ctx) => {
     return ctx.fail("validation_failed", 400, { message: "batchId and non-empty exams[] required" });
   }
   try {
-    const sql = getSql();
-    const queries = exams.map((e) => sql`
-      INSERT INTO exams (user_id, batch_id, exam_date, cpt, procedure, site, institution, modality, wrvu, estimated, source)
-      VALUES (${userId}, ${batchId}, ${e.examDate || null}, ${e.cpt || null}, ${e.procedure || null},
-              ${e.site || null}, ${e.institution || null}, ${e.modality || null},
-              ${String(e.wrvu ?? 0)}, ${!!e.estimated}, ${source})`);
-    await sql.transaction(queries);
+    // Already inside ONE transaction via withTenant, so the batch is still atomic —
+    // sql.transaction() is gone because nesting would discard the SET LOCAL.
+    await withTenant(userId, async ({ sql }) => {
+      for (const e of exams) {
+        await sql`
+          INSERT INTO exams (user_id, batch_id, exam_date, cpt, procedure, site, institution, modality, wrvu, estimated, source)
+          VALUES (${userId}, ${batchId}, ${e.examDate || null}, ${e.cpt || null}, ${e.procedure || null},
+                  ${e.site || null}, ${e.institution || null}, ${e.modality || null},
+                  ${String(e.wrvu ?? 0)}, ${!!e.estimated}, ${source})`;
+      }
+    });
     return Response.json({ ok: true, inserted: exams.length, batchId });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: `exam batch write failed for ${batchId}` });
@@ -85,17 +90,16 @@ export const DELETE = withErrorEnvelope("/api/exams", async (req, ctx) => {
     return ctx.fail("bad_request", 400, { message: "specify batchId, examDate, uploadDate, or id" });
   }
   try {
-    const sql = getSql();
-    let rows;
+    const rows = await withTenant(userId, async ({ sql }) => {
     if (batchId) {
-      rows = await sql`DELETE FROM exams WHERE user_id = ${userId} AND batch_id = ${batchId} RETURNING id`;
+      return await sql`DELETE FROM exams WHERE user_id = ${userId} AND batch_id = ${batchId} RETURNING id`;
     } else if (examDate) {
-      rows = await sql`DELETE FROM exams WHERE user_id = ${userId} AND exam_date::date = ${examDate}::date RETURNING id`;
+      return await sql`DELETE FROM exams WHERE user_id = ${userId} AND exam_date::date = ${examDate}::date RETURNING id`;
     } else if (uploadDate) {
-      rows = await sql`DELETE FROM exams WHERE user_id = ${userId} AND uploaded_at::date = ${uploadDate}::date RETURNING id`;
-    } else {
-      rows = await sql`DELETE FROM exams WHERE user_id = ${userId} AND id = ${id} RETURNING id`;
+      return await sql`DELETE FROM exams WHERE user_id = ${userId} AND uploaded_at::date = ${uploadDate}::date RETURNING id`;
     }
+      return await sql`DELETE FROM exams WHERE user_id = ${userId} AND id = ${id} RETURNING id`;
+    });
     return Response.json({ ok: true, deleted: rows.length });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: "exam delete failed" });

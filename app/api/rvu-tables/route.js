@@ -9,7 +9,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { eq, or, sql } from "drizzle-orm";
-import { getDb, rvuTables, rvuCodes } from "@/lib/db";
+import { getUnscopedDb, rvuTables, rvuCodes } from "@/lib/db";
 import { withErrorEnvelope } from "@/lib/http/errors";
 
 export const runtime = "nodejs";
@@ -21,7 +21,7 @@ export const GET = withErrorEnvelope("/api/rvu-tables", async (req, ctx) => {
   const tableId = new URL(req.url).searchParams.get("tableId");
 
   try {
-    const db = getDb();
+    const db = getUnscopedDb();  // reference data: rvu_tables/rvu_codes carry no user_id
     if (tableId) {
       // Authorize: table must be system or owned by this user.
       const [t] = await db.select().from(rvuTables).where(eq(rvuTables.id, tableId)).limit(1);
@@ -66,7 +66,7 @@ export const POST = withErrorEnvelope("/api/rvu-tables", async (req, ctx) => {
   if (!name) return ctx.fail("validation_failed", 400, { message: "name required" });
 
   try {
-    const db = getDb();
+    const db = getUnscopedDb();  // reference data: rvu_tables/rvu_codes carry no user_id
     const [table] = await db
       .insert(rvuTables)
       .values({ ownerId: userId, name, source, year, isSystem: false })

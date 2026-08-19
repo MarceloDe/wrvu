@@ -1,0 +1,45 @@
+{
+  "passed": true,
+  "results": [
+    {
+      "name": "the connection under test cannot bypass RLS",
+      "ok": true,
+      "detail": "role app_rls -> {\"b\":false,\"s\":false}"
+    },
+    {
+      "name": "scoped WRITE lands for both tenants",
+      "ok": true,
+      "detail": "[{\"user_id\":\"scoped_probe_a_synthetic\",\"n\":2},{\"user_id\":\"scoped_probe_b_synthetic\",\"n\":1}]"
+    },
+    {
+      "name": "scoped READ returns the tenant's own rows",
+      "ok": true,
+      "detail": "expected 2, got 2"
+    },
+    {
+      "name": "scoped READ cannot reach another tenant",
+      "ok": true,
+      "detail": "saw 0 of B's rows"
+    },
+    {
+      "name": "the drizzle client is scoped too, not a separate connection",
+      "ok": true,
+      "detail": "expected 2, got 2"
+    },
+    {
+      "name": "a scoped connection cannot forge a row for another tenant",
+      "ok": true,
+      "detail": "new row violates row-level security policy for table \"exams\""
+    },
+    {
+      "name": "UNSCOPED access sees zero tenant rows",
+      "ok": true,
+      "detail": "unscoped read returned 0 row(s) — RLS is not constraining this connection"
+    },
+    {
+      "name": "withTenant refuses an empty userId",
+      "ok": true,
+      "detail": "an empty tenant would read zero rows and look like an empty account"
+    }
+  ]
+}

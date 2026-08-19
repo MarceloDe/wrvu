@@ -9,7 +9,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { and, eq } from "drizzle-orm";
-import { getDb, userKv } from "@/lib/db";
+import { withTenant, userKv } from "@/lib/db";
 import { withErrorEnvelope } from "@/lib/http/errors";
 
 export const runtime = "nodejs";
@@ -20,11 +20,11 @@ export const GET = withErrorEnvelope("/api/store", async (req, ctx) => {
   const key = new URL(req.url).searchParams.get("key");
   if (!key) return ctx.fail("bad_request", 400, { message: "key query param required" });
   try {
-    const rows = await getDb()
-      .select({ value: userKv.value })
-      .from(userKv)
-      .where(and(eq(userKv.userId, userId), eq(userKv.key, key)))
-      .limit(1);
+    const rows = await withTenant(userId, ({ db }) =>
+      db.select({ value: userKv.value })
+        .from(userKv)
+        .where(and(eq(userKv.userId, userId), eq(userKv.key, key)))
+        .limit(1));
     return Response.json({ key, value: rows[0]?.value ?? null });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: `read failed for key ${key}` });
@@ -43,13 +43,13 @@ export const POST = withErrorEnvelope("/api/store", async (req, ctx) => {
   const { key, value } = body || {};
   if (!key) return ctx.fail("bad_request", 400, { message: "key required" });
   try {
-    await getDb()
-      .insert(userKv)
-      .values({ userId, key, value })
-      .onConflictDoUpdate({
-        target: [userKv.userId, userKv.key],
-        set: { value, updatedAt: new Date() },
-      });
+    await withTenant(userId, ({ db }) =>
+      db.insert(userKv)
+        .values({ userId, key, value })
+        .onConflictDoUpdate({
+          target: [userKv.userId, userKv.key],
+          set: { value, updatedAt: new Date() },
+        }));
     return Response.json({ key, ok: true });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: `write failed for key ${key}` });
@@ -62,7 +62,8 @@ export const DELETE = withErrorEnvelope("/api/store", async (req, ctx) => {
   const key = new URL(req.url).searchParams.get("key");
   if (!key) return ctx.fail("bad_request", 400, { message: "key query param required" });
   try {
-    await getDb().delete(userKv).where(and(eq(userKv.userId, userId), eq(userKv.key, key)));
+    await withTenant(userId, ({ db }) =>
+      db.delete(userKv).where(and(eq(userKv.userId, userId), eq(userKv.key, key))));
     return Response.json({ key, deleted: true });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: `delete failed for key ${key}` });

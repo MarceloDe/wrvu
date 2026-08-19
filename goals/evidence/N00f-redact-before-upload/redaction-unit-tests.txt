@@ -1,6 +1,6 @@
 npm run test:redaction — N00f redaction unit suite
 browser: /Users/mfelix/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing
-run: 2026-08-19T00:44:10.099Z
+run: 2026-08-19T02:13:11.871Z
 
 ok   resolveRegions converts 0..1 fractions to clamped pixel rectangles
 ok   resolveRegions drops rectangles that fall entirely off the image
