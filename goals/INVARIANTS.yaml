@@ -77,14 +77,16 @@ invariants:
     goals: [G2]
     severity: blocking
     checks:
-      - kind: ast
-        cmd: pnpm lint:money
+      - kind: static
+        cmd: node scripts/verify/money-one-path.mjs
         detail: >
-          Fails on multiplication or division involving an identifier matching
-          /wrvu|rvu|gpci|conversion|rate|cf/i outside packages/core/pricing
-          and ios/RadRVUKit/Pricing.
-      - kind: runtime
-        cmd: pnpm --filter @rad/core --fail-if-no-match test:pricing
+          Two halves, because either alone is defeatable. Static: no route interpolates a
+          client-supplied wrvu into the exams INSERT, and every INSERT records wrvu_state.
+          Runtime: writes one synthetic row through the real path and confirms the stored
+          figure is the CMS figure, not a number a client could have sent — a grep alone
+          would pass against a route that called resolveValue() and then ignored it.
+          The commands here previously named `pnpm lint:money` and `@rad/core`, monorepo
+          artifacts from the greenfield plan that D43 replaced; neither ever existed.
 
   - id: INV-DESCRIPTOR-SEPARABLE
     rule: >

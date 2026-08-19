@@ -10,6 +10,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { withTenant } from "@/lib/db";
+import { resolveMany } from "@/lib/pricing/resolve-value";
 import { withErrorEnvelope } from "@/lib/http/errors";
 
 export const runtime = "nodejs";
@@ -37,7 +38,8 @@ export const GET = withErrorEnvelope("/api/exams", async (req, ctx) => {
 
     const exams = await sql`
       SELECT id, batch_id AS "batchId", exam_date AS "examDate", cpt, procedure, site,
-             institution, modality, wrvu::float AS wrvu, estimated, source, uploaded_at AS "uploadedAt"
+             institution, modality, wrvu::float AS wrvu, estimated, source, uploaded_at AS "uploadedAt",
+             wrvu_state AS "wrvuState"
       FROM exams WHERE user_id = ${userId}
       ORDER BY exam_date NULLS LAST`;
     return Response.json({ exams });
@@ -60,19 +62,41 @@ export const POST = withErrorEnvelope("/api/exams", async (req, ctx) => {
   if (!batchId || !Array.isArray(exams) || !exams.length) {
     return ctx.fail("validation_failed", 400, { message: "batchId and non-empty exams[] required" });
   }
+  // INV-MONEY-ONE-PATH: the wRVU is resolved HERE, from the CMS reference schema. Any
+  // value the client sent is read and discarded — the two clients disagreed on 54 of 61
+  // codes precisely because each priced locally, and no amount of unifying the table
+  // fixes that while the number still arrives from the device.
+  let priced;
+  try {
+    priced = await resolveMany(exams.map((e) => ({ hcpcs: e.cpt || "" })));
+  } catch (err) {
+    return ctx.fail("pricing_unavailable", 503, { cause: err, message: "could not reach the reference schema" });
+  }
+
   try {
     // Already inside ONE transaction via withTenant, so the batch is still atomic —
     // sql.transaction() is gone because nesting would discard the SET LOCAL.
     await withTenant(userId, async ({ sql }) => {
-      for (const e of exams) {
+      for (let i = 0; i < exams.length; i++) {
+        const e = exams[i];
+        const v = priced[i];
+        // 0 for an unpriced code, but never a 0 that pretends to be a price: wrvu_state
+        // records why. wrvu stays NOT NULL because the dashboard sums it with bare +=,
+        // and a NULL there becomes NaN and poisons every total silently.
+        const wrvu = v.workRvu === null ? 0 : v.workRvu;
         await sql`
-          INSERT INTO exams (user_id, batch_id, exam_date, cpt, procedure, site, institution, modality, wrvu, estimated, source)
+          INSERT INTO exams (user_id, batch_id, exam_date, cpt, procedure, site, institution, modality, wrvu, estimated, source, wrvu_state, priced_from)
           VALUES (${userId}, ${batchId}, ${e.examDate || null}, ${e.cpt || null}, ${e.procedure || null},
                   ${e.site || null}, ${e.institution || null}, ${e.modality || null},
-                  ${String(e.wrvu ?? 0)}, ${!!e.estimated}, ${source})`;
+                  ${String(wrvu)}, ${!!e.estimated}, ${source}, ${v.state}, ${v.versionId})`;
       }
     });
-    return Response.json({ ok: true, inserted: exams.length, batchId });
+    return Response.json({
+      ok: true, inserted: exams.length, batchId,
+      // Surfaced so a client can tell the user which studies could not be priced,
+      // instead of quietly showing them as zero.
+      unpriced: priced.map((v, i) => (v.workRvu === null ? { cpt: exams[i].cpt ?? null, state: v.state } : null)).filter(Boolean),
+    });
   } catch (err) {
     return ctx.fail("storage_unavailable", 503, { cause: err, message: `exam batch write failed for ${batchId}` });
   }

@@ -52,6 +52,10 @@ jobs:
           DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
           DATABASE_URL_UNPOOLED: postgres://ci:ci@127.0.0.1:5432/ci
         run: npx next build
+      - name: money has one path
+        # 78 is PENDING: the static half always runs; the runtime half needs a reachable
+        # reference database, which CI does not have.
+        run: node scripts/verify/money-one-path.mjs || [ $? -eq 78 ]
       - name: pricing matches the CMS source
         # 78 is PENDING: CI has no reachable reference database. Reported, never
         # swallowed — a real disagreement still exits 1 and fails the build.
