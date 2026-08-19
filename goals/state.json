@@ -295,6 +295,26 @@
         "app_login on the dev branch is a console-created role holding BYPASSRLS. Unused, and should be deleted."
       ],
       "not_yet_done": "An authenticated request. Every route 401s before touching the database, so no agent can exercise the signed-in path."
+    },
+    "N04b-api-and-native-verification": {
+      "status": "pass",
+      "phase": "A1",
+      "pr": 16,
+      "why": "The N04 rewrite touched the exact three routes the iOS app consumes. Nothing verified the wire contract survived.",
+      "verified": [
+        "Response shapes byte-identical before and after the rewrite, across all four routes",
+        "SQL column aliases identical",
+        "neon-http and node-postgres serialise these queries identically \u2014 timestamps, floats, booleans, text arrays \u2014 so the JSON the Swift decoder parses did not move",
+        "27 iOS-decoded fields still produced; guarded going forward by native-contract.mjs",
+        "edge API (the third deployable) up and untouched: /api/v1/reference 401, /api/v1/resolve 405 on GET",
+        "production logs of a real authenticated session: GET exams/store/extra-duty/rates and POST store all 200, every one cache MISS \u2014 real round-trips, not a service-worker illusion"
+      ],
+      "fixed": [
+        "sslmode pinned to verify-full. pg aliases require->verify-full today and warns it will weaken in v9; the warning also filed an ERROR-level Vercel log on every /api/exams request. Measured 1 before, 0 after; confirmed 0 on the new production deployment.",
+        "native-contract.mjs added. tests/route-contracts.test.mjs is source-level and would have watched a column alias get renamed in silence."
+      ],
+      "asymmetry_that_justifies_it": "A renamed field is survivable in the PWA (JavaScript reads undefined) and fatal in Swift (a missing non-optional key throws), stopping cloud sync on every device already installed from TestFlight.",
+      "open": "No evidence the NATIVE app reached the backend during the operator's test \u2014 every API call in the logs followed a browser sign-in. iOS cloud sync is an opt-in toggle in Settings; if it is off, the iOS half of that test exercised local SwiftData only."
     }
   },
   "statuses": {
