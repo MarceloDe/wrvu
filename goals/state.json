@@ -440,6 +440,25 @@
         "existing_data": "Seed UM and JHS as rows per user and link the 887 exams; keep the text column as provenance."
       },
       "blocked_on": "N06 \u2014 the remaining extractions (analytics, tracker, uploads, extra duty, explorer)."
+    },
+    "N06-decompose-dashboard": {
+      "status": "partial",
+      "phase": "A1",
+      "done": [
+        "N06b \u2014 consolidateBaseline + format helpers -> lib/analytics/baseline.js, format.js (10 tests)",
+        "analytics extraction \u2014 INSTITUTIONS/classifyInstitution -> institutions.js, buildTimeline -> timeline.js, buildAnalytics/buildRange -> tracked.js (10 tests)"
+      ],
+      "size": "components/NeuroRVU.jsx 1835 -> 1689 lines",
+      "why_this_order": "The founder chose N06 before N18. institutions.js IS the module N18 replaces, and timeline.js holds the share arithmetic it generalises \u2014 both are now small files under characterisation tests instead of 71 references scattered through a 1,800-line component.",
+      "pinned": "Shares sum to EXACTLY 1 (jhsShare is 1 - umShare, not jhsYTD/denom \u2014 independently computed thirds do not sum to 1 in floating point). The `|| 1` denominator guard keeps shares finite when no YTD figures exist. INV-SITE-NEVER-FAILS: no input to classifyInstitution is rejected.",
+      "remaining": [
+        "N06a extract tracker (UI)",
+        "N06c extract uploads/OCR (UI)",
+        "N06d extract extra duty (UI)",
+        "N06e extract explorer (UI)",
+        "N06g delete the dead users table"
+      ],
+      "note": "The remaining extractions are UI components, not arithmetic. N18's prerequisite \u2014 the money math out of the monolith and under test \u2014 is met."
     }
   },
   "statuses": {
