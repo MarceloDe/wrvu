@@ -100,3 +100,57 @@ test("buildRange percentages are finite when there is nothing to divide by", () 
   assert.ok(Number.isFinite(r.stats.avgPerDay));
   assert.ok(Number.isFinite(r.stats.vsBenchPct));
 });
+
+// ── N18: the same arithmetic, generalised to N institutions ──────────────────
+// Every test above still passes unchanged, which is the real proof: generalising did not
+// alter the two-institution result. These add the N cases.
+import { sharesFor, buildTimeline as buildTimelineN } from "../lib/analytics/timeline.js";
+import { makeClassifier, DEFAULT_INSTITUTIONS } from "../lib/analytics/institutions.js";
+
+const FOUR = [{ key: "A" }, { key: "B" }, { key: "C" }, { key: "Other", isDefault: true }];
+
+test("N-way shares sum to exactly 1, including thirds", () => {
+  const s = sharesFor(FOUR, { A: 1, B: 1, C: 1 });
+  // 1/3 + 1/3 + 1/3 !== 1 in floating point. The remainder-to-last rule is what fixes it.
+  assert.equal(Object.values(s).reduce((a, b) => a + b, 0), 1);
+});
+
+test("the default institution never receives part of the reported split", () => {
+  const s = sharesFor(FOUR, { A: 5, B: 5, C: 0 });
+  assert.equal(s.Other, 0, "unattributed work is not part of what the employer reported");
+});
+
+test("N-way with no YTD figures anywhere stays finite", () => {
+  const s = sharesFor(FOUR, {});
+  for (const [k, v] of Object.entries(s)) assert.ok(Number.isFinite(v), `${k} share is ${v}`);
+  assert.equal(Object.values(s).reduce((a, b) => a + b, 0), 1);
+});
+
+test("two institutions produce byte-identical numbers to the old scalars", () => {
+  const baseline = [{ key: "2026-07", mo: "Jul 2026", bench: 578, base: 900, extra: 100, pay: 0, cfte: 1 }];
+  const legacy = buildTimelineN(baseline, [], { ...settings, umYTD: 750, jhsYTD: 250 });
+  const generalised = buildTimelineN(baseline, [], {
+    ...settings, institutions: DEFAULT_INSTITUTIONS, ytdByInstitution: { UM: 750, JHS: 250 },
+  });
+  assert.equal(legacy.months[0].repUM, generalised.months[0].repUM);
+  assert.equal(legacy.months[0].repJHS, generalised.months[0].repJHS);
+  assert.deepEqual(legacy.months[0].reported_by_institution, generalised.months[0].reported_by_institution);
+});
+
+test("a user-defined site mapping beats every built-in pattern", () => {
+  // "UMBRELLA CLINIC" starts with 'um' and would otherwise be captured by the UM prefix
+  // rule. This is the iOS nrv_sites behaviour, which the PWA did not have.
+  const classify = makeClassifier(DEFAULT_INSTITUTIONS, { "UMBRELLA CLINIC": "JHS" });
+  assert.equal(classify("Umbrella Clinic"), "JHS");
+  assert.equal(classify("UMHC North"), "UM", "unmapped sites still follow the built-in rules");
+});
+
+test("a fourth institution needs no code change", () => {
+  const withLRC = [...DEFAULT_INSTITUTIONS.slice(0, 2),
+                   { key: "LRC", match: /lennar|\blrc\b/i },
+                   DEFAULT_INSTITUTIONS[2]];
+  const classify = makeClassifier(withLRC);
+  assert.equal(classify("Lennar Foundation"), "LRC");
+  assert.equal(classify("Holtz"), "JHS", "existing institutions keep classifying as before");
+  assert.equal(classify("Nowhere"), "Other");
+});
