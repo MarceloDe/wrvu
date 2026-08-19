@@ -33,17 +33,26 @@ const SUSPECT = [
 const files = [...walk("lib"), ...walk("components"), ...walk("app"), ...walk("scripts"), ...walk("tests")];
 if (files.length === 0) fail("walked zero source files — the walker is broken");
 
+// A TABLE is several codes priced together. One code with a price is a fixture — a test
+// asserting that 70553 is worth 2.29, a comment citing a real figure — and flagging those
+// trains people to add exemptions, which is how a check stops being read. Three or more
+// pairs in one file is the shape that actually competes with the reference schema.
+const TABLE_THRESHOLD = 3;
+
 const hits = [];
 let scanned = 0;
 for (const f of files) {
   const r = rel(f);
   if (ALLOWED.some((a) => a.test(r))) continue;
   scanned++;
-  const lines = readFileSync(f, "utf8").split("\n");
-  lines.forEach((line, i) => {
+  const found = [];
+  readFileSync(f, "utf8").split("\n").forEach((line, i) => {
     if (line.trim().startsWith("//") || line.trim().startsWith("*")) return;   // prose may cite figures
-    if (SUSPECT.some((re) => re.test(line))) hits.push(`${r}:${i + 1}  ${line.trim().slice(0, 110)}`);
+    if (SUSPECT.some((re) => re.test(line))) found.push(`${r}:${i + 1}  ${line.trim().slice(0, 100)}`);
   });
+  if (found.length >= TABLE_THRESHOLD) {
+    hits.push(`${r} pairs ${found.length} codes with prices — that is a price table`, ...found.slice(0, 4).map((l) => `    ${l}`));
+  }
 }
 if (scanned === 0) fail("every file was exempt — the allowlist is swallowing the check");
 
