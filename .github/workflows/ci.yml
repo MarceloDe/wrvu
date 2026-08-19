@@ -49,5 +49,11 @@ jobs:
           DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
           DATABASE_URL_UNPOOLED: postgres://ci:ci@127.0.0.1:5432/ci
         run: npx next build
+      - name: shippability parity
+        # The steps above ARE the INV-ALWAYS-SHIPPABLE gate. shippable.mjs is the same
+        # list as one harness, which is what a Validator runs on a node branch. This
+        # asserts the two have not drifted; re-running the harness here would only
+        # double CI time and would lose per-step attribution in the UI.
+        run: node scripts/verify/shippable-parity.mjs
       - name: invariant checks are executable
         run: node scripts/verify/checks-are-executable.mjs
