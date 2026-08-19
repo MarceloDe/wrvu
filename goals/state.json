@@ -222,28 +222,11 @@
       "scope_narrowed_by_D43": "No monorepo. N01 is now TypeScript-in-place for the PWA only \u2014 and N00d/N00f already landed tsconfig.json, .eslintrc.json and several .ts modules, so a good part of it is done."
     },
     "N02-real-migrations": {
-      "status": "blocked_external",
+      "status": "pass",
       "phase": "A1",
-      "priority": 1,
-      "built": "lib/db/migrate.mjs, drizzle/0000_baseline.sql, drizzle/meta/_journal.json, drizzle/0001_llm_usage.down.sql, drizzle/0000_backfill_migrations.sql, plus schema-diff / migration-replay / checksum-guard / _pg.mjs",
-      "verified": [
-        "schema-diff baseline+0001 vs live: identical",
-        "schema-diff baseline ALONE: 13 differences \u2014 the check demonstrably fails as well as passes",
-        "migration-replay on an EMPTY Postgres: 2 applied, 0 differences",
-        "migrator second run: 'nothing to apply'",
-        "checksum-guard: REFUSED and named the file; a bad-URL crash correctly reported NOT REFUSED",
-        "db:migrate:check exit 0",
-        "verify:shippable: all 7 steps green",
-        "checks-are-executable: PASS"
-      ],
-      "design_notes": [
-        "Replay runs on an ephemeral local Postgres 17 (Docker), not a Neon branch \u2014 branch creation needs an API key that does not exist here. Replay asks whether these FILES produce this schema, a property of the SQL, so a real local Postgres answers it fully.",
-        "Migrator uses node-postgres, not Neon's WebSocket driver, which only dials wss://<host>/v2 and cannot reach a local container \u2014 that would have made the migrator untestable by the very check that proves it.",
-        "--stamp records migrations as applied WITHOUT executing them. Needed on dev (schema predates the migrator) and on production (0001 applied by hand 2026-08-18). Explicit rather than silently skipping existing objects, which would hide real divergence.",
-        "Connection is taken by env-var NAME, never inline --url: a URL in argv leaks into process listings and error text. That is not hypothetical \u2014 pg_dump echoed this project's dev URL earlier today.",
-        "No ssl:{rejectUnauthorized:false}. The connection string's sslmode governs, so Neon keeps certificate verification."
-      ],
-      "blocked_external": "Production backfill. No production connection string is reachable ([SENSITIVE] on every integration secret) and the pre-mutation snapshot needs a Neon API key. drizzle/0000_backfill_migrations.sql is ready, checksums embedded, and was PROVEN on an ephemeral database. Operator: snapshot main -> run that file in the Neon SQL console -> confirm two rows -> append one line to prod-audit-log.jsonl."
+      "what": "Production now has _migrations with all three migrations recorded and correct checksums; lib/db/migrate.mjs can take over.",
+      "discovered": "The N02 backfill had NEVER been run \u2014 production had no _migrations table at all. Recording only 0002 would have left the migrator believing the baseline was pending and trying to re-create existing objects. Stamping 0000/0001 was verified truthful first: all six tables from the baseline and 0001 were present.",
+      "verified": "select from _migrations on production: 0000_baseline, 0001_llm_usage, 0002_rls, checksums matching the files on disk"
     },
     "N03-ci": {
       "status": "pass",
@@ -294,29 +277,24 @@
       "verified": "proven to fail in both drift directions locally; CI run 32202708277 green with the new step"
     },
     "N04-rls": {
-      "status": "blocked_external",
+      "status": "pass",
       "phase": "A1",
       "prs": [
         9,
         10,
         11,
-        12
+        12,
+        14
       ],
-      "mechanism": "D-option C: withTenant(userId, fn) opens one transaction, SET LOCAL app.user_id, scoped drizzle + tagged-template sql. getDb()/getSql() renamed to getUnscopedDb()/getUnscopedSql() so all 16 call sites had to be classified and a new one cannot reach tenant data by accident.",
-      "proven": [
-        "INV-TENANT PASSES as app_rls on the real Neon dev branch, FAILS as neondb_owner",
-        "cross-tenant-probe --live: 12/12 on real Neon",
-        "scoped-db-probe: 8/8 \u2014 the application's own data path over a connection with no BYPASSRLS. Scoped access works AND unscoped access sees zero rows.",
-        "verify:shippable 8/8; production 401s with correlation ids on every data route"
+      "live": "PRODUCTION IS RUNNING AS app_rls WITH RLS ENFORCED as of 2026-08-19.",
+      "verified_externally": "GET https://fella.cc/api/health -> 200 {\"dbRole\":\"app_rls\",\"rlsEnforced\":true}",
+      "proof_on_real_data": "SET ROLE app_rls on production: a declared tenant sees 869 of 887 exams, the other tenant's 18 are invisible; with no tenant declared, 0 rows. The application's own lib/db path was then exercised over the real credential: scoped write and read work, the GUC matches, a different tenant sees nothing.",
+      "the_finding": "A role created through the NEON CONSOLE arrives with rolbypassrls=true and neon_superuser membership, and neondb_owner cannot revoke either. Only a SQL-created role is clean. A console PASSWORD RESET on a SQL-created role is safe and leaves it clean \u2014 that is how the production credential reached Vercel without passing through any transcript.",
+      "residual_hazards": [
+        "The Neon integration owns DATABASE_URL; a re-sync will clobber the override and lib/db would silently fall back to POSTGRES_URL, which still points at the owner. /api/health now returns 503 with rlsEnforced=false if that happens.",
+        "app_login on the dev branch is a console-created role holding BYPASSRLS. Unused, and should be deleted."
       ],
-      "the_finding": "A role created through the NEON CONSOLE arrives with rolbypassrls=true and neon_superuser membership, and neondb_owner cannot revoke either. Wiring one up would have turned INV-TENANT green while the connection read every tenant's rows. Only a SQL-created role is clean. goals/runbooks/N04-rls-activation.md.",
-      "dev_state": "0002 applied; app_rls exists with a generated password in .env.local as DATABASE_URL_RLS; app still connects as the owner",
-      "operator_must_close": [
-        "apply 0002_rls to the production branch",
-        "create app_rls on production via SQL (never the console) and grant app_authenticated",
-        "override DATABASE_URL in Vercel to point at app_rls \u2014 the Neon integration owns that variable, so the override must shadow it and a re-sync will clobber it",
-        "authenticated smoke test \u2014 the one check no agent can run without a Clerk session"
-      ]
+      "not_yet_done": "An authenticated request. Every route 401s before touching the database, so no agent can exercise the signed-in path."
     }
   },
   "statuses": {
