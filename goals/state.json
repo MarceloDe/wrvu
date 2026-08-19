@@ -421,6 +421,25 @@
       "derived_not_curated": "Rules in scripts/reference/derive-specialties.mjs, re-runnable against any release, so a new CMS extract never arrives untagged. A hand-typed 828-row mapping is exactly the artifact that drifts \u2014 this codebase has paid for that twice.",
       "guard": "taxonomy-never-restricts.mjs \u2014 static (no query narrows by specialty) plus runtime (the price book still serves every code in the release). Poisoned.",
       "production": "0007 applied and 352 tags derived in production; tagged 352 / 828 codes / 668 served."
+    },
+    "N06b-extract-baseline-consolidation": {
+      "status": "pass",
+      "phase": "A1",
+      "what": "consolidateBaseline, BASELINE_FIELDS and FIELD_LABEL moved to lib/analytics/baseline.js; the shared number/date helpers to lib/analytics/format.js. Behaviour unchanged.",
+      "why_first": "The founder chose N06 before N18. This is the arithmetic N18 disturbs when institutions stop being two hardcoded names, so it is under test BEFORE that rather than after.",
+      "epsilons_pinned": "pay 1, cfte 0.01, everything else 0.5 \u2014 with a test that a difference EXACTLY equal to epsilon does not flag. Too tight and every re-exported report is a wall of false discrepancies, which trains the user to click through the review panel without reading it.",
+      "tests": "10 characterisation tests, written from the pre-extraction behaviour, now part of verify:shippable and CI.",
+      "size": "components/NeuroRVU.jsx 1835 -> 1800 lines"
+    },
+    "N18-n-institution-model": {
+      "status": "blocked",
+      "phase": "B",
+      "decisions_taken": {
+        "reported_split": "Proportional, generalised \u2014 each institution carries a YTD figure and the reported total divides in proportion. Degrades to today's exact numbers with two institutions.",
+        "sequencing": "N06 (decompose) FIRST, then N18.",
+        "existing_data": "Seed UM and JHS as rows per user and link the 887 exams; keep the text column as provenance."
+      },
+      "blocked_on": "N06 \u2014 the remaining extractions (analytics, tracker, uploads, extra duty, explorer)."
     }
   },
   "statuses": {

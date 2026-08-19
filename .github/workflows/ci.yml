@@ -44,6 +44,8 @@ jobs:
         run: npm run test:route-contracts
       - name: npm run test:llm-proxy-contract
         run: npm run test:llm-proxy-contract
+      - name: npm run test:baseline
+        run: npm run test:baseline
       - name: next build
         # A syntactically valid but unreachable URL. The build only needs the driver to
         # construct without throwing at import; it never opens a connection. Using a real

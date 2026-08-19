@@ -31,6 +31,7 @@ export const STEPS = [
   { key: "error-envelope",     ci: "npm run test:error-envelope",     cmd: ["npm", "run", "test:error-envelope"] },
   { key: "route-contracts",    ci: "npm run test:route-contracts",    cmd: ["npm", "run", "test:route-contracts"] },
   { key: "llm-proxy",          ci: "npm run test:llm-proxy-contract", cmd: ["npm", "run", "test:llm-proxy-contract"] },
+  { key: "baseline",           ci: "npm run test:baseline",           cmd: ["npm", "run", "test:baseline"] },
   { key: "build",              ci: "next build",                      cmd: ["__next_build__"] },
 ];
 
