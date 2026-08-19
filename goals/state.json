@@ -315,6 +315,39 @@
       ],
       "asymmetry_that_justifies_it": "A renamed field is survivable in the PWA (JavaScript reads undefined) and fatal in Swift (a missing non-optional key throws), stopping cloud sync on every device already installed from TestFlight.",
       "open": "No evidence the NATIVE app reached the backend during the operator's test \u2014 every API call in the logs followed a browser sign-in. iOS cloud sync is an opt-in toggle in Settings; if it is off, the iOS half of that test exercised local SwiftData only."
+    },
+    "N11-reference-schema": {
+      "status": "pass",
+      "phase": "B",
+      "pr": 18,
+      "what": "Versioned `reference` schema, (hcpcs, modifier) grain, 828 codes / 2164 rows, loaded in dev AND production from CMS RVU26A.",
+      "key": "price_state names the three facts that used to collapse into 0 \u2014 no physician work, contractor-priced, not payable \u2014 and a CHECK constraint makes the invalid shapes unrepresentable. The first draft of that constraint had a hole: a CHECK only rejects FALSE and NULL>0 is NULL, so 'priced with no work RVU' was accepted. Found by trying it."
+    },
+    "N14-pricing-engine": {
+      "status": "pass",
+      "phase": "B",
+      "pr": 19,
+      "what": "resolveValue()/resolveMany() in TypeScript; /api/exams prices server-side and discards the client's number.",
+      "verified": "828/828 against the UNTOUCHED CMS extract, not against this repo's derivation; money-one-path proven static and runtime, poisoned both ways.",
+      "unpriced": "0 for an unpriced code but never a 0 pretending to be a price \u2014 wrvu_state records why. wrvu stays NOT NULL because the dashboard sums it with bare += and a NULL would become NaN."
+    },
+    "N20b-reprice-historical": {
+      "status": "pass",
+      "phase": "B",
+      "what": "All 887 production exams repriced against CMS. 497 changed, net +20.84 wRVU.",
+      "reversible": "exams_reprice_log holds every previous value; one UPDATE ... FROM reverses it.",
+      "note": "This changed numbers already reported. Authorised explicitly by the operator."
+    },
+    "N04c-table-exposure": {
+      "status": "pass",
+      "phase": "A1",
+      "what": "Every table in `public` must be classified tenant, shared or operator; an unclassified one fails the build.",
+      "why": "0002's blanket `alter default privileges` grants every NEW table in public to the app role automatically, and rls-enabled.mjs only inspects tables with a user_id \u2014 so a table without one is exposed AND invisible.",
+      "found": [
+        "exams_reprice_log \u2014 every tenant's before/after wRVU, readable by app_rls",
+        "_migrations \u2014 the app role held INSERT/UPDATE/DELETE and could have rewritten recorded checksums, defeating the migrator's drift guard"
+      ],
+      "fixed": "0005_revoke_operator_tables, applied to dev and production"
     }
   },
   "statuses": {
