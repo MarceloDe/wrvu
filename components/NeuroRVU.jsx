@@ -47,7 +47,7 @@ import RedactionTagger from "./RedactionTagger";
 // INV-SITE-NEVER-FAILS applies to a brand-new account too.
 let institutionsPromise = null;
 function useInstitutions() {
-  const [state, setState] = useState({ institutions: null, siteOverrides: {}, loading: true });
+  const [state, setState] = useState({ institutions: null, siteOverrides: {}, loading: true, error: false });
   // Bumping this busts the module-level cache after a save, so the dashboard reflects a
   // renamed institution immediately instead of on the next full page load.
   const [nonce, setNonce] = useState(0);
@@ -64,9 +64,12 @@ function useInstitutions() {
           prefix: DEFAULT_INSTITUTIONS.find(d => d.key === i.name)?.prefix,
           match: DEFAULT_INSTITUTIONS.find(d => d.key === i.name)?.match ?? null,
         }));
-        setState({ institutions: list.length ? list : null, siteOverrides: d.siteOverrides || {}, loading: false });
+        setState({ institutions: list.length ? list : null, siteOverrides: d.siteOverrides || {}, loading: false, error: false });
       })
-      .catch(() => { if (alive) setState(s => ({ ...s, loading: false })); });
+      // A read that FAILED is not the same as a user with no institutions. Conflating them
+      // put the onboarding wizard in front of an existing user the moment the API blipped —
+      // caught on the preview the first time this shipped (INV-NO-SWALLOW).
+      .catch(() => { if (alive) setState(s => ({ ...s, loading: false, error: true })); });
     return () => { alive = false; };
   }, [nonce]);
   return { ...state, reload: () => { institutionsPromise = null; setNonce(n => n + 1); } };
@@ -202,7 +205,7 @@ export default function NeuroRVU() {
   // their own, and no exams. The two production accounts have all three, so neither is ever
   // interrupted by this.
   const needsOnboarding =
-    onboarding.loaded && !onboarding.done && !inst.loading &&
+    onboarding.loaded && !onboarding.done && !inst.loading && !inst.error &&
     !(inst.institutions?.length) && exams.length === 0;
 
   const finishOnboarding = async ({ institutions, siteOverrides, settings: patch, skipped }) => {

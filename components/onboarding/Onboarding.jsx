@@ -51,6 +51,11 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
   // Step 3 — anywhere else they read, plus the raw site strings that map to each.
   const [others, setOthers] = useState([]);
   const [sites, setSites] = useState(() => existingSites.map((s) => ({ pattern: s, to: "" })));
+  // Which freshly-added row should take focus. Adding a row used to leave focus on the
+  // "Add" button, so the next thing typed went nowhere — and any space in it pressed the
+  // button again, silently adding more empty rows. Keyboard users hit this every time.
+  const [focusOther, setFocusOther] = useState(-1);
+  const [focusSite, setFocusSite] = useState(-1);
   // Steps 4-5.
   const [specialty, setSpecialty] = useState("all");
   const [rate, setRate] = useState("78");
@@ -65,6 +70,12 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
 
   const markSkipped = (k) => setSkipped((prev) => (prev.includes(k) ? prev : [...prev, k]));
   const back = () => setStep((n) => Math.max(0, n - 1));
+  // Rows the user added and left empty are not answers. Prune them on the way out so the
+  // summary and the PUT reflect what they actually said.
+  const pruneBlanks = () => {
+    setOthers((rows) => rows.filter((r) => r.trim()));
+    setSites((rows) => rows.filter((r) => r.pattern.trim()));
+  };
   const next = () => setStep((n) => Math.min(STEPS.length - 1, n + 1));
   const skip = (k) => { markSkipped(k); next(); };
 
@@ -226,6 +237,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
               {others.map((o, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <input aria-label={`Other institution ${i + 1}`} className={`${input} mt-0`} value={o}
+                         autoFocus={focusOther === i}
                          placeholder="University of Miami"
                          onChange={(e) => setOthers(others.map((x, n) => (n === i ? e.target.value : x)))} />
                   <button aria-label={`Remove institution ${i + 1}`} onClick={() => setOthers(others.filter((_, n) => n !== i))}
@@ -234,7 +246,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
                   </button>
                 </div>
               ))}
-              <button onClick={() => setOthers([...others, ""])}
+              <button onClick={() => { setFocusOther(others.length); setOthers([...others, ""]); }}
                       className="w-full py-2 rounded-xl border border-dashed border-slate-500/40 text-xs text-slate-400 hover:border-teal-400/60 hover:text-teal-300 flex items-center justify-center gap-1.5">
                 <Plus className="w-3.5 h-3.5" /> Add another place
               </button>
@@ -248,6 +260,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
                   {sites.map((row, i) => (
                     <div key={i} className="flex items-center gap-2">
                       <input aria-label={`Site spelling ${i + 1}`} className={`${input} mt-0 font-mono uppercase`}
+                             autoFocus={focusSite === i}
                              value={row.pattern} placeholder="JMH"
                              onChange={(e) => setSites(sites.map((r, n) => (n === i ? { ...r, pattern: e.target.value } : r)))} />
                       <span className="text-slate-500 shrink-0" aria-hidden="true">→</span>
@@ -262,7 +275,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
                       </button>
                     </div>
                   ))}
-                  <button onClick={() => setSites([...sites, { pattern: "", to: places[0] ?? "" }])}
+                  <button onClick={() => { setFocusSite(sites.length); setSites([...sites, { pattern: "", to: places[0] ?? "" }]); }}
                           className="w-full py-2 rounded-xl border border-dashed border-slate-500/40 text-xs text-slate-400 hover:border-teal-400/60 hover:text-teal-300 flex items-center justify-center gap-1.5">
                     <Plus className="w-3.5 h-3.5" /> Add a spelling
                   </button>
@@ -270,7 +283,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
               </div>
             )}
 
-            <Nav onBack={back} onSkip={() => skip("sites")} onNext={next} nextLabel="Continue" />
+            <Nav onBack={back} onSkip={() => skip("sites")} onNext={() => { pruneBlanks(); next(); }} nextLabel="Continue" />
           </section>
         )}
 
