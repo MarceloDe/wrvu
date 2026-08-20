@@ -561,6 +561,31 @@
       "safety": "0009 refuses to drop the table if it holds ANY rows, and raises with the count. Applying it to production cannot destroy data \u2014 if the premise of this node is wrong, the migration says so and aborts.",
       "evidence": "No foreign key references users. The only code references were the Drizzle declaration itself and one classification entry in table-exposure.mjs. Identity is Clerk's: /admin reads the user list from Clerk's API and every other table keys on the Clerk user id as text.",
       "rollback": "drizzle/0009_drop_dead_users_table.down.sql recreates the shape; there are no rows to restore because 0009 refuses to run against a non-empty table."
+    },
+    "N18f-ios-pull-institutions": {
+      "status": "pass",
+      "phase": "B",
+      "priority": 18.6,
+      "merged": "neurorvu-ios PR #5, main baf1cac",
+      "what": "CloudSync pulls /api/institutions (same fella.cc backend and Clerk token it already used for exams) and adopts the set into InstitutionRegistry. Before this, replace() had zero call sites outside tests and the phone ran the built-in three regardless of what the user configured.",
+      "ordering": "The pull runs FIRST in sync(): everything after it classifies sites, and classifying against the built-in three then learning there are five would bucket that sync's studies wrongly.",
+      "precedence": "Site mappings were a race over who wrote Institution.overrides last. Now stated: the PWA's institution_sites are the base, the device's own nrv_sites layer on top and win.",
+      "verified": "82 tests in 17 suites. Poisoning the pattern carry-over drops 'umhc' and 'Jackson Memorial' to Other \u2014 all history reclassified \u2014 which is why the test is there."
+    },
+    "N-release-0.2.0": {
+      "status": "pass",
+      "phase": "B",
+      "priority": 18.9,
+      "what": "TestFlight build 0.2.0 (3), the first since build 2 on 2026-08-08. Carries N12, N26, N18d and N18f.",
+      "why_it_mattered": "Everything from N26 was merged but undelivered: the phone was still pricing from the bundled neuro table (55 of 61 values disagreeing with CMS) and reading all 282 contractor-priced codes as a real 0. Reference sync could not fix it \u2014 applyIfChanged only replaces RVU26A, and the neuro table is bundle-only.",
+      "signing_gap_closed": [
+        "The account had no DISTRIBUTION certificate at all \u2014 only DEVELOPMENT \u2014 and Xcode's cloud signing refused to create one ('Cloud signing permission error').",
+        "Created it through the App Store Connect API instead: local RSA-2048 CSR -> POST /v1/certificates -> imported cert and key into the login keychain.",
+        "Then POST /v1/profiles for an IOS_APP_STORE profile including that certificate, installed to ~/Library/MobileDevice/Provisioning Profiles, and exported with manual signing."
+      ],
+      "verified": "Archive proven to carry the fixes before upload: conversion factor 33.4009 (not the stale 33.4), 70496 at 1.71 (not 1.75), zero hand-estimate flags. App Store Connect now reports build 3 VALID.",
+      "repeatable": "scripts/release-testflight.sh in neurorvu-ios \u2014 runs the suite, archives, exports, uploads. Needs ASC_KEY_ID and ASC_ISSUER_ID; neither is a secret and the .p8 is already on the machine.",
+      "remaining": "Distribute build 3 to the internal 'Core' group in TestFlight \u2014 a one-click action in App Store Connect."
     }
   },
   "statuses": {
