@@ -33,9 +33,21 @@ const SPECIALTIES = [
 
 const STEPS = ["Welcome", "Your institution", "Where you read", "Specialty", "Pay", "Ready"];
 
+// "Jackson Memorial Hospital" -> "JMH", "University of Miami" -> "UM", "Baptist" -> "BAPT".
+// A blind slice(0,6) produced "JACKSO" and "UNIVER" in the column headers, which is how it
+// first shipped and how the GUI walk caught it. Joining words is what a person would do.
+const STOPWORDS = new Set(["of", "the", "and", "at", "for", "de", "del"]);
+export function shortLabelFor(name) {
+  const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "";
+  const significant = words.filter((w) => !STOPWORDS.has(w.toLowerCase()));
+  if (significant.length > 1) return significant.map((w) => w[0]).join("").toUpperCase().slice(0, 5);
+  return significant[0].slice(0, 5).toUpperCase();
+}
+
 /** A blank institution row in the shape PUT /api/institutions takes. */
 const newInstitution = (name = "", extra = {}) => ({
-  name: name || "", label: name || "", shortLabel: (name || "").slice(0, 6).toUpperCase(),
+  name: name || "", label: name || "", shortLabel: shortLabelFor(name),
   color: "#0d9488", ytdWrvu: 0, isDefault: false, isPrimary: false,
   practiceState: null, address: null, ...extra,
 });
@@ -84,7 +96,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
     const institutions = [];
     if (named) {
       institutions.push(newInstitution(named, {
-        label: named, shortLabel: named.slice(0, 6).toUpperCase(),
+        label: named, shortLabel: shortLabelFor(named),
         isPrimary: true,
         // The principal institution is also where unmapped sites land. For someone with one
         // workplace that is simply correct, and it avoids inventing an "Other" bucket they

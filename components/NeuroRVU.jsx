@@ -392,7 +392,7 @@ export default function NeuroRVU() {
 
       <footer className="max-w-6xl mx-auto px-5 py-6 text-[11px] text-slate-400 leading-relaxed">
         Two data layers, one tool: <span className="text-slate-500 font-medium">Reported</span> (FY26 monthly baseline, authoritative) and <span className="text-slate-500 font-medium">Tracked</span> (your daily screenshot logs, granular).
-        They measure the same work at different resolutions and are shown side by side — never summed. Institution loop: <span className="font-mono">UM*</span>/UHealth → UM, Jackson/JHS/JHM → JHS. Not official billing advice.
+        They measure the same work at different resolutions and are shown side by side — never summed. A study whose site matches nothing still counts, against {(settingsWithInstitutions.institutions ?? DEFAULT_INSTITUTIONS).find(i => i.isDefault)?.label ?? "your default institution"}. Not official billing advice.
       </footer>
     </div>
   );
