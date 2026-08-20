@@ -58,7 +58,7 @@ export const GET = withErrorEnvelope("/api/reference/codes", async (req, ctx) =>
         // study into a paid CT.
         modality: r.modality,
         // Tags RANK search and quick-add; they never filter. A LEFT JOIN, deliberately:
-        // an untagged code is unranked, not hidden, and 476 of 828 are untagged (D36).
+        // an untagged code is unranked, not hidden, and 353 of the 668 served are untagged (D36).
         specialties: r.specialties ?? [],
       })),
     };
