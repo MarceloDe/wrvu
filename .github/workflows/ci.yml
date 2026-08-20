@@ -70,6 +70,10 @@ jobs:
       - name: specialty tags rank but never restrict
         # 78 is PENDING: the completeness half needs a reachable reference database.
         run: node scripts/verify/taxonomy-never-restricts.mjs || [ $? -eq 78 ]
+      - name: the iOS bundled specialty tags are not stale
+        # 78 is PENDING: needs both a reference database and a sibling ../neurorvu-ios
+        # checkout, and CI for this repo clones neither.
+        run: node scripts/verify/ios-specialty-bundle.mjs || [ $? -eq 78 ]
       - name: onboarding stays skippable
         run: node scripts/verify/onboarding-skip.mjs
       - name: no modality is guessed into a paid bucket
