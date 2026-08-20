@@ -53,12 +53,15 @@
     },
     "Institution": {
       "properties": [
+        "address",
         "color",
         "examCount",
         "id",
         "isDefault",
+        "isPrimary",
         "label",
         "name",
+        "practiceState",
         "shortLabel",
         "sortOrder",
         "ytdWrvu"

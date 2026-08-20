@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { consolidateBaseline, BASELINE_FIELDS, FIELD_LABEL } from "@/lib/analytics/baseline.js";
-import { num, fmt, monthKey, pad2, localDay, localMonth, daysAgo, MONTH_LABEL, weekStartKey, WEEK_LABEL } from "@/lib/analytics/format.js";
+import { num, fmt, monthKey, pad2, localDay, localMonth, daysAgo, MONTH_LABEL, weekStartKey, WEEK_LABEL, hasRate, comp } from "@/lib/analytics/format.js";
 import { classifyInstitution, instMeta, DEFAULT_INSTITUTIONS } from "@/lib/analytics/institutions.js";
 import { buildTimeline } from "@/lib/analytics/timeline.js";
 import { buildAnalytics, buildRange } from "@/lib/analytics/tracked.js";
@@ -88,7 +88,10 @@ function migrateLog(raw) {
    per-user in the database (/api/store, scoped to the Clerk user id). Users
    build their own months in the Timeline tab; nothing is shared across users. */
 
-const DEFAULTS = { ratePerWrvu: 78, cFTE: 1.0, monthlyBenchmark: 578, privateMult: 1.6, umYTD: 0, jhsYTD: 0 };
+// ratePerWrvu starts NULL, not 78. A brand-new user has not told us what they are paid,
+// and showing dollars computed from someone else's rate is worse than showing none (D35).
+// Only new accounts see null: anyone with a saved nrv_settings already has a number.
+const DEFAULTS = { ratePerWrvu: null, cFTE: 1.0, monthlyBenchmark: 578, privateMult: 1.6, umYTD: 0, jhsYTD: 0, specialty: "all" };
 
 
 
@@ -904,7 +907,7 @@ function ExamsView({ log, settings }) {
                       ))}
                       <td className="py-2 px-2 text-right font-mono text-slate-400 text-xs">{r.perStudy.toFixed(2)}</td>
                       <td className="py-2 px-2 text-right font-mono font-semibold">{fmt(showWrvu, 1)}</td>
-                      <td className="py-2 px-4 text-right font-mono text-slate-600">${fmt(showWrvu * settings.ratePerWrvu, 0)}</td>
+                      <td className="py-2 px-4 text-right font-mono text-slate-600">{comp(showWrvu, settings.ratePerWrvu) ?? <span className="text-slate-300">—</span>}</td>
                     </tr>
                   );
                 })}
@@ -912,7 +915,7 @@ function ExamsView({ log, settings }) {
               <tfoot><tr className="border-t-2 border-slate-200 font-mono bg-slate-50/50">
                 <td className="py-2.5 px-4 font-sans font-semibold" colSpan={3}>{rows.length} exam types · {inst === "ALL" ? "all sites" : instMeta(inst).label}</td>
                 <td className="py-2.5 px-2 text-right font-bold">{fmt(totals.count, 0)}</td><td colSpan={3}></td>
-                <td className="py-2.5 px-2 text-right font-bold">{fmt(totals.wrvu, 1)}</td><td className="py-2.5 px-4 text-right font-bold">${fmt(totals.wrvu * settings.ratePerWrvu, 0)}</td>
+                <td className="py-2.5 px-2 text-right font-bold">{fmt(totals.wrvu, 1)}</td><td className="py-2.5 px-4 text-right font-bold">{comp(totals.wrvu, settings.ratePerWrvu) ?? <span className="text-slate-300">—</span>}</td>
               </tr></tfoot>
             </table>
           </div>
@@ -967,7 +970,7 @@ function Reference({ settings }) {
                     // "this study is worth nothing", which is the opposite of the truth
                     // for a contractor-priced code.
                     if (prices.loading || !p || p.workRvu === null) return <span className="text-slate-300">—</span>;
-                    return `$${fmt(p.workRvu * settings.ratePerWrvu, 0)}`; })()}</td>
+                    return comp(p.workRvu, settings.ratePerWrvu) ?? <span className="text-slate-300">—</span>; })()}</td>
                 </tr>
               ))}
             </tbody>
@@ -975,7 +978,9 @@ function Reference({ settings }) {
         </div>
         {!rows.length && <div className="py-10 text-center text-sm text-slate-400">No codes match.</div>}
       </div>
-      <p className="text-[11px] text-slate-400 px-1">Comp $ = wRVU × your ${settings.ratePerWrvu}/wRVU rate.</p>
+      <p className="text-[11px] text-slate-400 px-1">{hasRate(settings.ratePerWrvu)
+        ? `Comp $ = wRVU × your $${settings.ratePerWrvu}/wRVU rate.`
+        : "Set your $/wRVU rate in Settings to see compensation."}</p>
     </div>
   );
 }
@@ -1128,6 +1133,31 @@ function SettingsDrawer({ settings, onSave, extraRates = { perDiemRate: 0, ppcMr
     <div><label className="text-sm font-medium text-slate-700">{label}</label>{sub && <p className="text-[11px] text-slate-400 mb-1">{sub}</p>}
       <input type="number" step={step} value={s[k]} onChange={e => setS({ ...s, [k]: Number(e.target.value) })} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono mt-1" /></div>
   );
+  // The rate is the one field that can legitimately be EMPTY. Clearing it means "I have
+  // not told you what I am paid", and every dollar figure disappears rather than showing a
+  // number derived from a guess (D35). Number("") is 0, which would read as a real rate of
+  // zero, so this deliberately does not go through the shared `field` factory.
+  const rateField = () => (
+    <div>
+      <label htmlFor="rate-per-wrvu" className="text-sm font-medium text-slate-700">Your $/wRVU rate</label>
+      <p className="text-[11px] text-slate-400 mb-1">
+        FY26 extra-coverage rate ≈ $78. Leave this empty and the app shows wRVUs without dollar figures.
+      </p>
+      <input
+        id="rate-per-wrvu" type="number" step={1} min="0" inputMode="decimal"
+        placeholder="not set"
+        value={s.ratePerWrvu ?? ""}
+        onChange={(e) => {
+          const raw = e.target.value.trim();
+          setS({ ...s, ratePerWrvu: raw === "" ? null : Math.max(0, Number(raw) || 0) });
+        }}
+        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono mt-1"
+      />
+      {!hasRate(s.ratePerWrvu) && (
+        <p className="text-[11px] text-amber-600 mt-1">Dollar figures are hidden until you set a rate.</p>
+      )}
+    </div>
+  );
   const erField = (k, label, sub, step = 0.01) => (
     <div><label className="text-sm font-medium text-slate-700">{label}</label>{sub && <p className="text-[11px] text-slate-400 mb-1">{sub}</p>}
       <input type="number" min="0" step={step} value={er[k]} onChange={e => setER({ ...er, [k]: Math.max(0, Number(e.target.value) || 0) })} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono mt-1" /></div>
@@ -1138,7 +1168,7 @@ function SettingsDrawer({ settings, onSave, extraRates = { perDiemRate: 0, ppcMr
       <div className="relative w-full max-w-sm bg-white h-full shadow-xl p-6 overflow-y-auto">
         <div className="flex items-center justify-between mb-5"><h2 className="font-semibold text-lg">Settings</h2><button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"><X className="w-4 h-4" /></button></div>
         <div className="space-y-4">
-          {field("ratePerWrvu", "Your $/wRVU rate", "FY26 extra-coverage rate ≈ $78")}
+          {rateField()}
           {field("monthlyBenchmark", "Monthly benchmark (1.0 cFTE)", "AAARAD 65th ≈ 578 wRVU")}
           {field("cFTE", "Current clinical FTE", "Scales monthly + annual targets", 0.01)}
           {field("privateMult", "Private vs Medicare multiplier", "Commercial ≈ Medicare × this", 0.05)}

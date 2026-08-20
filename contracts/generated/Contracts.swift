@@ -2,7 +2,7 @@
 // DO NOT EDIT. Edit the spec and re-run; contracts-fresh.mjs fails the build if
 // this file and the spec disagree.
 //
-// API version 1.4.0
+// API version 1.5.0
 
 import Foundation
 
@@ -36,6 +36,12 @@ public struct Institution: Codable {
     /// The YTD figure the reported total is split by.
     public var ytdWrvu: Double?
     public var sortOrder: Int?
+    /// Two-letter US state, captured during onboarding. Free text, never validated. It drives nothing today — a future CMS locality derivation (N10) is what it exists for.
+    public var practiceState: String?
+    /// Street address of the institution. Optional and never validated.
+    public var address: String?
+    /// The user's principal institution. AT MOST one per user, and distinct from isDefault, which is where an unmapped site lands.
+    public var isPrimary: Bool?
     /// Exams already attributed to this institution. The editor uses it to refuse a removal before saving, because the error envelope carries a code and nothing else and so cannot explain the refusal afterwards.
     public var examCount: Int?
     /// Exactly one per user. Where an unrecognised site lands (INV-SITE-NEVER-FAILS).

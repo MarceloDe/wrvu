@@ -51,6 +51,11 @@
       "idx": 9,
       "tag": "0009_drop_dead_users_table",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "tag": "0010_institution_profile",
+      "breakpoints": true
     }
   ]
 }

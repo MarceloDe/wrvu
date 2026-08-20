@@ -2,7 +2,7 @@
 // DO NOT EDIT. Edit the spec and re-run; contracts-fresh.mjs fails the build if
 // this file and the spec disagree.
 //
-// API version 1.4.0
+// API version 1.5.0
 
 export interface ErrorEnvelope {
   error: { code: string; correlationId: string; message?: string };
@@ -20,6 +20,12 @@ export interface Institution {
   /** The YTD figure the reported total is split by. */
   ytdWrvu?: number | null;
   sortOrder?: number | null;
+  /** Two-letter US state, captured during onboarding. Free text, never validated. It drives nothing today — a future CMS locality derivation (N10) is what it exists for. */
+  practiceState?: string | null;
+  /** Street address of the institution. Optional and never validated. */
+  address?: string | null;
+  /** The user's principal institution. AT MOST one per user, and distinct from isDefault, which is where an unmapped site lands. */
+  isPrimary?: boolean | null;
   /** Exams already attributed to this institution. The editor uses it to refuse a removal before saving, because the error envelope carries a code and nothing else and so cannot explain the refusal afterwards. */
   examCount?: number | null;
   /** Exactly one per user. Where an unrecognised site lands (INV-SITE-NEVER-FAILS). */

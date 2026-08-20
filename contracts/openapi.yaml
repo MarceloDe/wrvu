@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: RadRVU API
-  version: "1.4.0"
+  version: "1.5.0"
   description: |
     The contract between fella.cc and its two clients: the PWA and the iOS app
     (CloudSyncService.swift). The repos are federated by D43, so nothing links them at
@@ -69,6 +69,9 @@ components:
         color:      { type: string, nullable: true }
         ytdWrvu:    { type: number, nullable: true, description: The YTD figure the reported total is split by. }
         sortOrder:  { type: integer, nullable: true }
+        practiceState: { type: string, nullable: true, description: "Two-letter US state, captured during onboarding. Free text, never validated. It drives nothing today — a future CMS locality derivation (N10) is what it exists for." }
+        address:       { type: string, nullable: true, description: "Street address of the institution. Optional and never validated." }
+        isPrimary:     { type: boolean, nullable: true, description: "The user's principal institution. AT MOST one per user, and distinct from isDefault, which is where an unmapped site lands." }
         examCount:  { type: integer, nullable: true, description: "Exams already attributed to this institution. The editor uses it to refuse a removal before saving, because the error envelope carries a code and nothing else and so cannot explain the refusal afterwards." }
         isDefault:  { type: boolean, description: Exactly one per user. Where an unrecognised site lands (INV-SITE-NEVER-FAILS). }
 

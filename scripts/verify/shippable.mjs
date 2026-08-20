@@ -34,6 +34,7 @@ export const STEPS = [
   { key: "baseline",           ci: "npm run test:baseline",           cmd: ["npm", "run", "test:baseline"] },
   { key: "analytics",          ci: "npm run test:analytics",          cmd: ["npm", "run", "test:analytics"] },
   { key: "extra-duty",         ci: "npm run test:extra-duty",         cmd: ["npm", "run", "test:extra-duty"] },
+  { key: "comp-display",       ci: "npm run test:comp-display",       cmd: ["npm", "run", "test:comp-display"] },
   { key: "build",              ci: "next build",                      cmd: ["__next_build__"] },
 ];
 

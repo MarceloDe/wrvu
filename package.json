@@ -19,7 +19,8 @@
     "db:migrate:check": "node --env-file=.env.local lib/db/migrate.mjs --url-env DATABASE_URL_UNPOOLED --check",
     "test:baseline": "node --test tests/baseline-consolidation.test.mjs",
     "test:analytics": "node --test tests/analytics-extraction.test.mjs",
-    "test:extra-duty": "node --test tests/extra-duty.test.mjs"
+    "test:extra-duty": "node --test tests/extra-duty.test.mjs",
+    "test:comp-display": "node --test tests/comp-display.test.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^5.7.5",
