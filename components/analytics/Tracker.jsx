@@ -263,7 +263,7 @@ export function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate
 
       <div>
         <div className="flex items-center gap-2 mb-2"><Building2 className="w-4 h-4 text-slate-500" /><h2 className="font-semibold">Tracked institution split — accumulated wRVU</h2></div>
-        <InstitutionCards split={a.institution} settings={settingsWithInstitutions} />
+        <InstitutionCards split={a.institution} settings={settings} />
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 p-5">

@@ -723,7 +723,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
               <span>{impStatus}</span>
             </div>
           )}
-          {impPreview && <ImportReview preview={impPreview} syncSettings={syncSettings} setSyncSettings={setSyncSettings} onApply={applyImport} onCancel={cancelImport} settings={settingsWithInstitutions} />}
+          {impPreview && <ImportReview preview={impPreview} syncSettings={syncSettings} setSyncSettings={setSyncSettings} onApply={applyImport} onCancel={cancelImport} settings={settings} />}
           {!impStatus && !impPreview && !impBusy && (
             <p className="mb-3 text-[11px] text-slate-400 flex items-start gap-1.5"><Upload className="w-3.5 h-3.5 mt-px shrink-0" />Upload a monthly wRVU report (PDF or photo) to auto-fill this table. Re-uploading a newer report keeps your existing months and adds the new ones — you&apos;ll be shown any discrepancies before anything changes.</p>
           )}
@@ -831,6 +831,9 @@ function ImportReview({ preview, syncSettings, setSyncSettings, onApply, onCance
 /* ============================================================================ EXAMS DATABASE ============================================================================ */
 function ExamsView({ log, settings }) {
   const [q, setQ] = useState(""); const [mod, setMod] = useState("ALL"); const [inst, setInst] = useState("ALL"); const [sort, setSort] = useState("wrvu");
+  // N18 — the per-institution columns below were hardcoded to UM and JHS, which meant a
+  // third institution's studies were counted in the totals but had no column to appear in.
+  const instList = settings.institutions ?? DEFAULT_INSTITUTIONS;
   const a = useMemo(() => buildAnalytics(log, settings), [log, settings]);
   // Derived, not hardcoded. The old fixed list was ["CT","CTA","MRI","MRA","Add-on"] —
   // five neuro modalities — so an X-ray or ultrasound had no filter to appear under even
@@ -855,7 +858,7 @@ function ExamsView({ log, settings }) {
     <div className="space-y-4">
       <div>
         <div className="flex items-center gap-2 mb-2"><Building2 className="w-4 h-4 text-slate-500" /><h2 className="font-semibold">Tracked wRVU by institution</h2></div>
-        <InstitutionCards split={a.institution} settings={settingsWithInstitutions} />
+        <InstitutionCards split={a.institution} settings={settings} />
       </div>
       <div className="bg-white rounded-2xl border border-slate-200 p-4">
         <div className="flex flex-col lg:flex-row gap-3 lg:items-center">
@@ -863,8 +866,8 @@ function ExamsView({ log, settings }) {
           <div className="flex flex-wrap gap-1">
             {mods.map(m => <button key={m} onClick={() => setMod(m)} className={`px-2.5 py-1.5 rounded-lg text-xs font-medium ${mod === m ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{m}</button>)}
             <span className="w-px bg-slate-200 mx-1" />
-            {["ALL", ...(settings.institutions ?? DEFAULT_INSTITUTIONS).map(i => i.key)].map(k => {
-              const meta = (settings.institutions ?? DEFAULT_INSTITUTIONS).find(i => i.key === k);
+            {["ALL", ...instList.map(i => i.key)].map(k => {
+              const meta = instList.find(i => i.key === k);
               return <button key={k} onClick={() => setInst(k)} className={`px-2.5 py-1.5 rounded-lg text-xs font-medium ${inst === k ? "text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`} style={inst === k ? { background: k === "ALL" ? "#0f172a" : meta?.color } : {}}>{k === "ALL" ? "All sites" : (meta?.short ?? k)}</button>;
             })}
           </div>
@@ -877,7 +880,7 @@ function ExamsView({ log, settings }) {
               <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-200 bg-slate-50/60">
                 <th className="py-2.5 px-4 font-medium">Exam type</th><th className="py-2.5 px-2 font-medium">CPT</th><th className="py-2.5 px-2 font-medium">Mod</th>
                 <th className="py-2.5 px-2 font-medium text-right cursor-pointer" onClick={() => setSort("count")}>Count{sort === "count" && " ↓"}</th>
-                <th className="py-2.5 px-2 font-medium text-right" style={{ color: INSTITUTIONS.UM.color }}>UM</th><th className="py-2.5 px-2 font-medium text-right" style={{ color: INSTITUTIONS.JHS.color }}>JHS</th>
+                {instList.map(i => <th key={i.key} className="py-2.5 px-2 font-medium text-right" style={{ color: i.color }}>{i.short ?? i.key}</th>)}
                 <th className="py-2.5 px-2 font-medium text-right">wRVU/ea</th><th className="py-2.5 px-2 font-medium text-right cursor-pointer" onClick={() => setSort("wrvu")}>Σ wRVU{sort === "wrvu" && " ↓"}</th><th className="py-2.5 px-4 font-medium text-right">Comp $</th>
               </tr></thead>
               <tbody>
@@ -887,8 +890,11 @@ function ExamsView({ log, settings }) {
                       <td className="py-2 px-4"><span className="inline-flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full" style={{ background: MOD_COLORS[r.mod] || "#94a3b8" }} />{r.desc}</span></td>
                       <td className="py-2 px-2 font-mono text-xs">{r.cpt}</td><td className="py-2 px-2 text-xs text-slate-500">{r.mod}</td>
                       <td className="py-2 px-2 text-right font-mono font-semibold">{fmt(showCount, 0)}</td>
-                      <td className="py-2 px-2 text-right font-mono text-xs" style={{ color: INSTITUTIONS.UM.color }}>{r.byInst.UM ? fmt(r.byInst.UM.count, 0) : "—"}</td>
-                      <td className="py-2 px-2 text-right font-mono text-xs" style={{ color: INSTITUTIONS.JHS.color }}>{r.byInst.JHS ? fmt(r.byInst.JHS.count, 0) : "—"}</td>
+                      {instList.map(i => (
+                        <td key={i.key} className="py-2 px-2 text-right font-mono text-xs" style={{ color: i.color }}>
+                          {r.byInst[i.key] ? fmt(r.byInst[i.key].count, 0) : "—"}
+                        </td>
+                      ))}
                       <td className="py-2 px-2 text-right font-mono text-slate-400 text-xs">{r.perStudy.toFixed(2)}</td>
                       <td className="py-2 px-2 text-right font-mono font-semibold">{fmt(showWrvu, 1)}</td>
                       <td className="py-2 px-4 text-right font-mono text-slate-600">${fmt(showWrvu * settings.ratePerWrvu, 0)}</td>
