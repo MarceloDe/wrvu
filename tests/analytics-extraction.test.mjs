@@ -199,3 +199,22 @@ test("an institution with no exams still reports a series rather than vanishing"
   assert.equal(t.months.length, 0);
   assert.equal(t2.months[0].trk_UM, 0, "absent is 0, not undefined — undefined breaks the chart axis");
 });
+
+test("institution rows that exist but carry no YTD must not zero the split", () => {
+  // The production regression: 0008 seeded institutions with ytd_wrvu = 0 while the real
+  // figures were still in settings.umYTD/jhsYTD. Passing the row values anyway made the
+  // denominator 0, so sharesFor reported 0 / 100 — UM's 4,963 wRVU shown next to a 0%
+  // share — while every displayed total stayed correct. The root now omits
+  // ytdByInstitution entirely until a row carries a figure, which is what reaches here.
+  const withRows = buildTimeline([], [], { ...settings, umYTD: 4963, jhsYTD: 1146 });
+  assert.ok(withRows.shares.UM > 0.8, `UM should hold ~81% of the split, got ${withRows.shares.UM}`);
+  assert.equal(withRows.shares.UM + withRows.shares.JHS, 1);
+
+  // And when the rows ARE filled in, they win — including a deliberate zero.
+  const migrated = buildTimeline([], [], {
+    ...settings, umYTD: 4963, jhsYTD: 1146,
+    ytdByInstitution: { UM: 0, JHS: 500 },
+  });
+  assert.equal(migrated.shares.UM, 0, "a deliberate 0 on the row must not fall back to umYTD");
+  assert.equal(migrated.shares.JHS, 1);
+});

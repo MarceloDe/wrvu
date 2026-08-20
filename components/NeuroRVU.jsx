@@ -163,10 +163,18 @@ export default function NeuroRVU() {
           ...settings,
           institutions: inst.institutions,
           siteOverrides: inst.siteOverrides,
-          // The YTD figures now live on the institution rows. umYTD/jhsYTD stay in
-          // settings as the fallback for an account with no rows yet, but once rows
-          // exist they are what the reported split is computed from.
-          ytdByInstitution: Object.fromEntries(inst.institutions.map((i) => [i.key, Number(i.ytd) || 0])),
+          // The YTD figures live on the institution rows — but ONLY once some row
+          // actually carries one. Production seeded the rows with ytd_wrvu = 0 and the
+          // real figures are still in settings.umYTD/jhsYTD, so passing the row values
+          // unconditionally made sharesFor divide by a zero denominator and report the
+          // split as 0 / 100 while the displayed totals stayed correct.
+          //
+          // Omitting the key entirely is what lets buildTimeline fall back to the two
+          // legacy scalars. The rule lives here and nowhere else: every reader takes
+          // settings.ytdByInstitution at face value.
+          ...(inst.institutions.some((i) => Number(i.ytd) > 0)
+            ? { ytdByInstitution: Object.fromEntries(inst.institutions.map((i) => [i.key, Number(i.ytd) || 0])) }
+            : {}),
         }
       : settings),
     [settings, inst.institutions, inst.siteOverrides],
@@ -470,13 +478,12 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
   // and carries no reported YTD figure, so it would render as a 0-width slice.
   const instList = (t.institutions ?? DEFAULT_INSTITUTIONS);
   const reportable = instList.filter((i) => !i.isDefault);
-  // Rows become authoritative the moment ANY of them carries a figure. Falling back
-  // per-key instead would mean a user who deliberately sets UM to 0 keeps seeing the old
-  // umYTD forever, because 0 and "not migrated yet" are indistinguishable one key at a
-  // time. Whole-set is unambiguous, and it self-heals on the first save from Settings.
-  const rowsHaveYtd = reportable.some((i) => Number(settings.ytdByInstitution?.[i.key]) > 0);
+  // settings.ytdByInstitution is present only when the rows have been filled in; the
+  // root decides that. When it is absent the two legacy scalars answer, which is what
+  // buildTimeline does for the share arithmetic — so the number shown and the number
+  // divided by are always the same number.
   const legacyYtd = (k) => Number(k === "UM" ? settings.umYTD : k === "JHS" ? settings.jhsYTD : 0) || 0;
-  const ytdOf = (k) => (rowsHaveYtd ? Number(settings.ytdByInstitution?.[k]) || 0 : legacyYtd(k));
+  const ytdOf = (k) => Number(settings.ytdByInstitution?.[k] ?? legacyYtd(k)) || 0;
   const donut = reportable.map((i) => ({ name: i.label, value: ytdOf(i.key), color: i.color }));
   const instTotal = donut.reduce((sum, d) => sum + d.value, 0);
   const instMismatch = Math.abs(instTotal - t.ytd.total) > 5;
@@ -1094,14 +1101,12 @@ function SettingsDrawer({ settings, onSave, extraRates = { perDiemRate: 0, ppcMr
   // showing what the dashboard is actually using rather than an empty list.
   const [insts, setInsts] = useState(() => {
     const list = settings.institutions ?? DEFAULT_INSTITUTIONS;
-    // Same whole-set rule the Timeline uses: seed from the legacy scalars only while no
-    // row carries a figure, so opening Settings shows what the dashboard is showing.
-    const migrated = list.some((i) => Number(i.ytd) > 0);
+    // Seed from whatever the dashboard is actually using, so opening Settings shows the
+    // figures on screen rather than a column of zeros the user would have to retype.
+    const legacy = (k) => Number(k === "UM" ? settings.umYTD : k === "JHS" ? settings.jhsYTD : 0) || 0;
     return list.map((i) => ({
       name: i.key, label: i.label, shortLabel: i.short, color: i.color,
-      ytdWrvu: migrated
-        ? Number(i.ytd) || 0
-        : Number(i.key === "UM" ? settings.umYTD : i.key === "JHS" ? settings.jhsYTD : 0) || 0,
+      ytdWrvu: Number(settings.ytdByInstitution?.[i.key] ?? legacy(i.key)) || 0,
       isDefault: !!i.isDefault, examCount: i.examCount ?? 0,
     }));
   });
