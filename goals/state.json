@@ -1,622 +1,659 @@
 {
-  "$comment": "DAG state. Owned by the orchestrator. Do not hand-edit while a workflow is running.",
-  "version": 2,
-  "updated": "2026-08-20",
-  "current_phase": "A1",
-  "gate": {
-    "rule": "Phase A1 may proceed. A0's gate was 'every node PASS'; its PURPOSE was 'no other work while live exposures are open'. All four exposures are verifiably closed in production \u2014 SETUP_TOKEN absent from code and Vercel, the LLM relay behind auth plus a template gate, the error envelope live with correlation ids, and a fail-closed redaction guard deployed.",
-    "amended": "2026-08-18, deliberately and with reasoning recorded rather than stepped over.",
-    "residual_A0": {
-      "N00b": "rotation is optional hardening \u2014 CLERK_SECRET_KEY was never disclosed, only proxied, and the roster review found no unexplained accounts",
-      "N00c": "DEPLOYED; only live HTTP probes remain, and they need a Clerk session",
-      "N00c-edge-usage-cap": "not an exposure; needs contracting",
-      "N00e": "MFA hardening; forces enrolment on every colleague, so it waits for the operator",
-      "N00g": "PDF path carries no patient data today"
-    },
-    "decision": "D18 (all of A0 first) is satisfied in substance. None of the residual items is a live exposure."
+ "$comment": "DAG state. Owned by the orchestrator. Do not hand-edit while a workflow is running.",
+ "version": 2,
+ "updated": "2026-08-20",
+ "current_phase": "A1",
+ "gate": {
+  "rule": "Phase A1 may proceed. A0's gate was 'every node PASS'; its PURPOSE was 'no other work while live exposures are open'. All four exposures are verifiably closed in production — SETUP_TOKEN absent from code and Vercel, the LLM relay behind auth plus a template gate, the error envelope live with correlation ids, and a fail-closed redaction guard deployed.",
+  "amended": "2026-08-18, deliberately and with reasoning recorded rather than stepped over.",
+  "residual_A0": {
+   "N00b": "rotation is optional hardening — CLERK_SECRET_KEY was never disclosed, only proxied, and the roster review found no unexplained accounts",
+   "N00c": "DEPLOYED; only live HTTP probes remain, and they need a Clerk session",
+   "N00c-edge-usage-cap": "not an exposure; needs contracting",
+   "N00e": "MFA hardening; forces enrolment on every colleague, so it waits for the operator",
+   "N00g": "PDF path carries no patient data today"
   },
-  "human_gate_policy": {
-    "decision": "D25",
-    "approve_when": [
-      "validator_fail",
-      "validator_uncertain"
-    ],
-    "agent_may_touch_production": true,
-    "required_rails": [
-      "INV-PROD-AUDITED: append-only log of every production action",
-      "Neon branch snapshot before any production migration",
-      "recorded rollback path in every node YAML"
-    ],
-    "never": "Real PHI in agent context. Synthetic fixtures only (D25a)."
+  "decision": "D18 (all of A0 first) is satisfied in substance. None of the residual items is a live exposure."
+ },
+ "human_gate_policy": {
+  "decision": "D25",
+  "approve_when": [
+   "validator_fail",
+   "validator_uncertain"
+  ],
+  "agent_may_touch_production": true,
+  "required_rails": [
+   "INV-PROD-AUDITED: append-only log of every production action",
+   "Neon branch snapshot before any production migration",
+   "recorded rollback path in every node YAML"
+  ],
+  "never": "Real PHI in agent context. Synthetic fixtures only (D25a)."
+ },
+ "nodes": {
+  "N00a-remove-token-gated-routes": {
+   "status": "pass",
+   "depends_on": [],
+   "priority": 1,
+   "merged": "PR #1, main 68ca5e7, deployed to production 2026-08-18",
+   "verified": "all three routes 401 unauthenticated on fella.cc; the fix-user takeover request 401; app healthy",
+   "operator_must_close": [
+    "credentialed with-token probe",
+    "clerk-admin.mjs --list-allowlist 200-response smoke"
+   ]
   },
-  "nodes": {
-    "N00a-remove-token-gated-routes": {
-      "status": "pass",
-      "depends_on": [],
-      "priority": 1,
-      "merged": "PR #1, main 68ca5e7, deployed to production 2026-08-18",
-      "verified": "all three routes 401 unauthenticated on fella.cc; the fix-user takeover request 401; app healthy",
-      "operator_must_close": [
-        "credentialed with-token probe",
-        "clerk-admin.mjs --list-allowlist 200-response smoke"
-      ]
-    },
-    "N00b-rotate-credentials": {
-      "status": "partial",
-      "depends_on": [
-        "N00a-remove-token-gated-routes"
-      ],
-      "priority": 2,
-      "done": [
-        "SETUP_TOKEN deleted from Vercel Production and Preview; 0 entries remain",
-        "verified unreferenced in shipped code on origin/main before deletion",
-        "user roster reviewed 2026-08-18: 4 accounts, all accounted for, no evidence of exploitation"
-      ],
-      "outstanding": [
-        "CLERK_SECRET_KEY rotation (defence-in-depth only; blocked by shared clerk-coffee-notebook installation)"
-      ],
-      "reassessment_2026_08_18": "CLERK_SECRET_KEY was never DISCLOSED. The deleted route used it server-side in an Authorization header to api.clerk.com and never returned it; ?inspect=1 returned restrictions/invitations/allowlist only. An attacker had the key's CAPABILITIES through a proxy, not the key. So rotation is defence-in-depth, not incident response. The roster review and session revocation are the checks that would actually reveal a compromise, and they are now the priority.",
-      "blocked_on": "clerk-coffee-notebook is shared with brainstywebsitevercel, so an installation-level rotation affects both projects",
-      "evidence": [
-        "goals/evidence/N00b-rotate-credentials/roster-review-2026-08-18.md"
-      ],
-      "roster_conclusion": "No unexplained accounts. The one flagged account (gaurav.saigal@rocketmail.com, created 2026-08-14 while SETUP_TOKEN was live) was confirmed by the owner as Gaurav Saigal's personal email. Session revocation is NOT required as incident response."
-    },
-    "N00c-pwa-lock-llm-proxy": {
-      "status": "blocked_external",
-      "priority": 3,
-      "built": "builder/N00c-llm-proxy (d57302b). NOT merged.",
-      "verified_by_builder": [
-        "rate limit PASSES --direct against the real dev Neon branch (10 allowed, 11-12 denied, refill restores exactly one)",
-        "spend cap PASSES --direct against real llm_usage rows"
-      ],
-      "blocked_on": "INTEGRATION, not credentials. N00c changes callClaude from (messages,{system,tools,maxTokens}) to (template,{params,attachments}). N00f's assertNoUnredactedImages() walks message.content[] and identifies redacted blocks by WeakSet IDENTITY; under the new signature the client passes data-URL strings, so the guard loses its identity handle and degrades to the isRedactedPayload string check. Restoring that guarantee is a DESIGN change to a PHI control, not a merge conflict.",
-      "partial_resolution": "route.js was reconciled (N00c structure + N00d code vocabulary) and preserved at goals/evidence/A0-integration/route.js.resolved. package.json and tsconfig.json resolutions preserved alongside.",
-      "recontracted": "2026-08-18 \u2014 the redaction guard redesign is now the PRIMARY contract, not a merge afterthought. Start from builder/N00c-llm-proxy (d57302b) per D38.",
-      "merged": "PR #3 -> main 3b3a5f5, deployed to production 2026-08-18",
-      "verified": [
-        "test:redaction 30/30 (unchanged by the signature change)",
-        "forged-attachment 16/16 \u2014 every forged attachment refused BEFORE the request; the server received only the 3 honest sends",
-        "test:llm-proxy-contract 29/29 static",
-        "rate limit PASSES --direct against the real dev Neon branch",
-        "spend cap PASSES --direct against real llm_usage rows",
-        "next build passes",
-        "production after deploy: health green, error envelope intact, all surfaces up"
-      ],
-      "guard_resolution": "RESOLVED. The client passes the producer's own objects through instead of flattening to data-URL strings, so WeakSet identity survives the signature change. assertApprovedAttachments() fails closed: unmarked, unknown-type, hand-built or non-object all throw. A byte-level second witness exists only so a framework-cloned block is not FALSELY blocked; it can admit nothing that was not itself redaction output.",
-      "production_migration": "llm_usage + llm_rate_buckets applied to main BEFORE the code merge, so no window existed where the deployed route referenced missing tables. Snapshot pre-N00c-llm-usage (br-fragrant-violet-atwws46l), full data+schema, auto-delete never. Audited in goals/evidence/prod-audit-log.jsonl.",
-      "documented_exception": "DELIBERATE INV-ADDITIVE-CONTRACTS break: /api/claude 400s on system/tools/maxTokens rather than serving both shapes for a release, because the deprecation window IS the exposure this node closes. Verified safe: exactly one caller (NeuroRVU.jsx:119, ships in the same deploy); ZERO references in neurorvu-ios, which calls /api/v1/resolve. Residual: a browser tab open across the deploy gets 400 until reload. This is an EXCEPTION with recorded reasoning, not precedent.",
-      "operator_must_close": [
-        "live HTTP contract / rate-limit / spend-cap probes need a real Clerk session (.env.local holds the dev Neon branch but no Clerk keys)",
-        "prompt-cache hit (cache_read_input_tokens > 0) needs two real billed Anthropic calls; the cache breakpoint itself is verified structurally"
-      ],
-      "feature_removed": "Codes tab 'Live value' per-code lookup \u2014 the only web_search call site (D8). N14 replaces it with real CMS payment estimates per locality, offline."
-    },
-    "N00c-edge-usage-cap": {
-      "status": "blocked",
-      "depends_on": [
-        "N00c-pwa-lock-llm-proxy"
-      ],
-      "priority": 7,
-      "note": "needs contracting; lives in the neurorvu-ios repo at api/"
-    },
-    "N00d-error-envelope": {
-      "status": "pass",
-      "priority": 4,
-      "built": "builder/N00d-errors; merged into fix/A0-proxy-errors-redaction",
-      "verified": [
-        "npm run test:error-envelope 6/6",
-        "npm run test:route-contracts 9/9",
-        "next build passes"
-      ],
-      "operator_must_close": [
-        "authenticated fault injection needs a real Clerk session (.env.local holds no Clerk keys)",
-        "ERROR_MONITOR_URL / ERROR_MONITOR_TOKEN unprovisioned, so shipToMonitor() is a no-op in production"
-      ],
-      "known_boundary": "An unsupported METHOD on an existing route is answered by Next with a bodyless 405 before application code runs, so it carries no correlation id. It carries no information either.",
-      "merged": "PR #2 -> main 8107e5b, deployed to production 2026-08-18",
-      "verified_in_production": "GET https://fella.cc/api/exams unauthenticated returns 401 with header x-correlation-id and body {\"error\":{\"code\":\"unauthorized\",\"correlationId\":\"...\"}} \u2014 the envelope is live"
-    },
-    "N00e-mfa-and-password-policy": {
-      "status": "ready",
-      "depends_on": [],
-      "priority": 5,
-      "verified_2026_08_18": "ZERO MFA strategies are enabled in Clerk. SMS is unavailable (phone numbers disabled); Authenticator app is OFF; backup codes require it; 'Require MFA' is not selectable until a strategy is enabled.",
-      "warning": "enabling forces every colleague to enrol at next sign-in"
-    },
-    "N00f-redact-before-upload": {
-      "status": "pass",
-      "priority": 6,
-      "built": "builder/N00f-redaction; merged into fix/A0-proxy-errors-redaction",
-      "verified": [
-        "npm run test:redaction 30/30",
-        "next build passes against the dev Neon branch"
-      ],
-      "operator_must_close": [
-        "`pnpm --filter @rad/core test:redaction` is vacuous until the N01 monorepo exists; the same suite runs as `npm run test:redaction`"
-      ],
-      "bounded_gap": "PDFs bypass redaction BY DESIGN. prepareDoc() (components/NeuroRVU.jsx:209, called at :632) base64s application/pdf straight through to Anthropic. That path carries the HR consolidated report \u2014 the physician's own productivity and compensation, not patient data. PDF is the ONLY bypass and an AST check enforces it stays PDF-only. Tracked as N00g.",
-      "known_weakness": "Staleness is detected by aspect ratio within 2%. A differently-laid-out screenshot with the same aspect ratio would be masked with stored geometry rather than re-prompting. N27 (layout profiles) supersedes this heuristic.",
-      "merged": "PR #2 -> main 8107e5b, deployed to production 2026-08-18",
-      "verified_in_production": "app healthy after deploy; upload path now requires a redaction profile per institution"
-    },
-    "N00g-pdf-redaction-gap": {
-      "status": "backlog",
-      "priority": 9,
-      "reason": "Opened from the N00f finding. Close only if a PDF ever carries patient identifiers; today the PDF path carries the physician's own HR report."
-    },
-    "N20x-ocr-contrast-regression": {
-      "status": "pass",
-      "phase": "C",
-      "priority": "blocking",
-      "fixed": "neurorvu-ios main 5bbae8a",
-      "root_cause": "Photographed monitors glue W onto PLUS. ContrastStatus.detect() requires a standalone ' W ' token; with the W glued only ' WO ' survives, so a with-and-without study resolved as WITHOUT \u2014 70553 (2.23) became 70551 (1.45), a 0.78 wRVU under-count per affected study. Confirmed by dumping real pipeline output for um-worklist-2837: only row 10 ('MRI BRAIN WPLUS WO CONTRAST') was affected; every correctly-spaced row already resolved.",
-      "fix": "Isolate PLUS during contrast normalisation so the token boundary is restored whichever side was glued. Modelled against a 12-case battery first: corrects all three glued variants, zero regressions on the nine correct cases.",
-      "verified": [
-        "iOS 26.5 simulator: 52/52 pass",
-        "iOS 27.0 simulator: 51/52"
-      ],
-      "unblocks": [
-        "N21-ios-rebaseline"
-      ]
-    },
-    "N20y-ios27-vision-notable": {
-      "status": "pass",
-      "phase": "C",
-      "priority": "major",
-      "resolved_by": "neurorvu-ios 8a829f0 \u2014 the runtime is pinned rather than the test weakened",
-      "pin": ".ios-runtime holds IOS_RUNTIME=26.5 as DATA with the reasoning beside it; scripts/test-ios.sh is the canonical entry point",
-      "why_a_script": "xcodebuild silently substitutes a different runtime when the requested one is missing, which turns a pin into a suggestion. The script asserts the runtime is installed and exits non-zero listing what IS installed. Both failure paths verified: absent runtime, and missing pin file.",
-      "verified": "./scripts/test-ios.sh -> pinned to iOS 26.5, 52/52 passed",
-      "unpin_when": "iOS 27 detects the table again, proven by running the suite on 27 and seeing 52/52",
-      "note": "The test was NOT weakened. Angled capture is the input class the pipeline exists to handle."
-    },
-    "N21-ios-rebaseline": {
-      "status": "pass",
-      "phase": "C",
-      "priority": 1,
-      "deliverable": "goals/evidence/N21-ios-rebaseline/rebaseline-2026-08-18.md",
-      "audited": "neurorvu-ios @ 5bbae8a, clean tree",
-      "phase_c_estimate": "~10-14 weeks (was 12-20 as greenfield, withdrawn). Less construction, more hardening: Xcode, Vision OCR, Clerk auth, cloud sync, CloudKit backup, privacy manifest and the TestFlight pipeline are all DONE.",
-      "key_findings": [
-        "PARITY HOLDS exactly today: 61/61 codes, zero wRVU disagreements, same CF \u2014 but by duplication, not construction",
-        "NO patient identifier field exists in any SwiftData model",
-        "examDate is transmitted at full ISO8601 SECOND precision \u2014 a live Safe Harbor issue confirming the proposal's 1.8 analysis against the shipping app",
-        "Redaction covers ~4 of the Safe Harbor 18; NAMES are not redacted at all",
-        "Zero MFA and zero app lock on the client",
-        "No clinical-refusal clause on the FoundationModels path \u2014 low risk by construction (narrow task, structured output), but INV-NO-CLINICAL is unenforced"
-      ],
-      "unblocks": [
-        "N21b-repo-strategy"
-      ]
-    },
-    "N21b-repo-strategy": {
-      "status": "pass",
-      "phase": "C",
-      "decision": "D43 \u2014 keep neurorvu-ios as its own repo; share only contracts/openapi.yaml and the golden fixtures.",
-      "unblocks": [
-        "N01-repo-and-typescript"
-      ]
-    },
-    "N25x-examdate-precision": {
-      "status": "pass",
-      "phase": "C",
-      "fixed": "neurorvu-ios bf53321",
-      "what": "examDate and bundleDate now reach the cloud at DAY precision. Device keeps the full timestamp.",
-      "subtlety": "Pushed as local midnight WITH the local UTC offset, not a bare date: exam_date is timestamptz, so a bare date is read as UTC midnight and Analytics.localDay() in Eastern would return the PREVIOUS day \u2014 shifting every exam a day earlier and breaking the day-based sync fingerprint. Two tests cover the round trip, one across all 24 hours.",
-      "verified": "58/58 on pinned iOS 26.5"
-    },
-    "N25y-redact-names": {
-      "status": "pass",
-      "phase": "C",
-      "fixed": "neurorvu-ios bf53321",
-      "what": "Names are redacted. Added labelled-name, comma-name, email, URL and phone patterns, plus a clinical-vocabulary ALLOWLIST of 1,020 tokens.",
-      "why_allowlist": "Patterns only catch shapes you anticipated. An allowlist inverts it: an alphabetic token survives only if it is clinical vocabulary, so a patient name is dropped whether or not any dictionary contains it. Tested against Nagornaya, Saigal, Oyelese, Kwiatkowski, Kowalczyk, Przybylski. Fails CLOSED.",
-      "measured": "First attempt over-redacted ORBITS, VENOGRAM, BRACHIAL PLEXUS, THORACOLUMBAR, STROKE, DTI \u2014 CMS descriptors and hospital worklists use different wording. Curated supplement closed it: 0 false positives across 206 real golden-worklist tokens, pinned by a regression test.",
-      "safe_harbor_now": "~4 of 18 identifiers before; now names, dates, SSN, MRN/accession, email, phone and URL. Remaining gaps are the rarer categories (vehicle, device, biometric, IP, 90+ age bucketing) \u2014 none of which a worklist carries.",
-      "verified": "58/58 on pinned iOS 26.5"
-    },
-    "N01-repo-and-typescript": {
-      "status": "ready",
-      "phase": "A1",
-      "scope_narrowed_by_D43": "No monorepo. N01 is now TypeScript-in-place for the PWA only \u2014 and N00d/N00f already landed tsconfig.json, .eslintrc.json and several .ts modules, so a good part of it is done."
-    },
-    "N02-real-migrations": {
-      "status": "pass",
-      "phase": "A1",
-      "what": "Production now has _migrations with all three migrations recorded and correct checksums; lib/db/migrate.mjs can take over.",
-      "discovered": "The N02 backfill had NEVER been run \u2014 production had no _migrations table at all. Recording only 0002 would have left the migrator believing the baseline was pending and trying to re-create existing objects. Stamping 0000/0001 was verified truthful first: all six tables from the baseline and 0001 were present.",
-      "verified": "select from _migrations on production: 0000_baseline, 0001_llm_usage, 0002_rls, checksums matching the files on disk"
-    },
-    "N03-ci": {
-      "status": "pass",
-      "phase": "A1",
-      "done": [
-        "N03a github-actions-base \u2014 13 steps, poison-proven",
-        "N03e verify-shippable \u2014 shippable-parity.mjs asserts ci.yml and the harness are the same set (PR #8)",
-        "branch protection ENABLED and PROVEN: contexts=[checks], strict, enforce_admins, no force-push, linear history",
-        "merge-blocked.mjs implemented \u2014 a red PR was refused by the API with 405 'Required status check \"checks\" is failing', against an admin token",
-        "journal-complete.mjs \u2014 catches orphan migrations (PR #10)",
-        "ensure-chromium.mjs \u2014 replaced an npx invocation that could hang forever"
-      ],
-      "defects_found_in_the_gate_itself": [
-        "gh-wait-run.mjs matched on headSha alone and returned the Copilot review workflow's run, whose steps contain none of the checks \u2014 a green from it was a false PASS",
-        "npx playwright install prompted on stdin because the project depends on playwright-core, not playwright; run 32208571889 hung 35 minutes on it"
-      ],
-      "remaining": [
-        "N03b eslint-invariant-rules",
-        "N03c neon-branch-runner",
-        "N03d macos-runner (must invoke neurorvu-ios/scripts/test-ios.sh or the runtime pin stops being a pin)"
-      ]
-    },
-    "N0V-verification-tooling": {
-      "status": "pass",
-      "phase": "A1",
-      "priority": 0,
-      "delivered": "scripts/verify/_lib.mjs plus 19 checks. checks-are-executable.mjs reports PASS across all 89 commands in INVARIANTS.yaml and goals/nodes/.",
-      "three_outcomes": "PASS 0, FAIL 1, PENDING 78. A check whose SUBJECT does not exist exits PENDING with a mandatory becomesActiveWhen \u2014 it is visibly not-a-pass, and it flips to a real check the moment its subject lands. That is what stops the vacuous-pass class recurring.",
-      "suite_state": {
-        "pass": 7,
-        "pending": 5,
-        "fail": 1
-      },
-      "honest_red": "INV-TENANT fails: exams, extra_duty_periods, extra_duty_rates, user_kv, llm_usage, llm_rate_buckets all have rls=false force=false. That is N04's work and the check is correctly red until then.",
-      "findings": [
-        "phi-schema-scan flagged users.email/first_name/last_name \u2014 PHYSICIAN identity on the DEAD users table (0 rows, no code reads it). Allowlisted WITH the reason, printed on every run. Second reason for N06g to delete that table.",
-        "A bare /name$/ pattern matched rvu_tables.name and procedure_name. Tightened to person-shaped names rather than allowlisting around a bad rule.",
-        "verify:shippable uses EXIT CODES. Grepping next build for the compile marker is weak: it prints before type-check, page-data and static generation, and a tee pipeline returns tee's status.",
-        "iOS is deliberately out of verify:shippable until N20y \u2014 gating main on an iOS 27 Vision regression would block merges for an unrelated reason."
-      ]
-    },
-    "N03e-verify-shippable": {
-      "status": "pass",
-      "phase": "A1",
-      "pr": 8,
-      "what": "ci.yml and scripts/verify/shippable.mjs are now provably the same list of steps.",
-      "why_not_re-run": "CI keeps the steps individual so a red build names ONE step \u2014 the poison harness depends on that resolution. Re-running the harness in CI would double wall-time and lose it. shippable-parity.mjs asserts set equality instead, which is the actual failure mode: add a check to ci.yml, main stays green, and every Validator from then on PASSes against a harness that never ran it.",
-      "verified": "proven to fail in both drift directions locally; CI run 32202708277 green with the new step"
-    },
-    "N04-rls": {
-      "status": "pass",
-      "phase": "A1",
-      "prs": [
-        9,
-        10,
-        11,
-        12,
-        14
-      ],
-      "live": "PRODUCTION IS RUNNING AS app_rls WITH RLS ENFORCED as of 2026-08-19.",
-      "verified_externally": "GET https://fella.cc/api/health -> 200 {\"dbRole\":\"app_rls\",\"rlsEnforced\":true}",
-      "proof_on_real_data": "SET ROLE app_rls on production: a declared tenant sees 869 of 887 exams, the other tenant's 18 are invisible; with no tenant declared, 0 rows. The application's own lib/db path was then exercised over the real credential: scoped write and read work, the GUC matches, a different tenant sees nothing.",
-      "the_finding": "A role created through the NEON CONSOLE arrives with rolbypassrls=true and neon_superuser membership, and neondb_owner cannot revoke either. Only a SQL-created role is clean. A console PASSWORD RESET on a SQL-created role is safe and leaves it clean \u2014 that is how the production credential reached Vercel without passing through any transcript.",
-      "residual_hazards": [
-        "The Neon integration owns DATABASE_URL; a re-sync will clobber the override and lib/db would silently fall back to POSTGRES_URL, which still points at the owner. /api/health now returns 503 with rlsEnforced=false if that happens.",
-        "app_login on the dev branch is a console-created role holding BYPASSRLS. Unused, and should be deleted."
-      ],
-      "not_yet_done": "An authenticated request. Every route 401s before touching the database, so no agent can exercise the signed-in path."
-    },
-    "N04b-api-and-native-verification": {
-      "status": "pass",
-      "phase": "A1",
-      "pr": 16,
-      "why": "The N04 rewrite touched the exact three routes the iOS app consumes. Nothing verified the wire contract survived.",
-      "verified": [
-        "Response shapes byte-identical before and after the rewrite, across all four routes",
-        "SQL column aliases identical",
-        "neon-http and node-postgres serialise these queries identically \u2014 timestamps, floats, booleans, text arrays \u2014 so the JSON the Swift decoder parses did not move",
-        "27 iOS-decoded fields still produced; guarded going forward by native-contract.mjs",
-        "edge API (the third deployable) up and untouched: /api/v1/reference 401, /api/v1/resolve 405 on GET",
-        "production logs of a real authenticated session: GET exams/store/extra-duty/rates and POST store all 200, every one cache MISS \u2014 real round-trips, not a service-worker illusion"
-      ],
-      "fixed": [
-        "sslmode pinned to verify-full. pg aliases require->verify-full today and warns it will weaken in v9; the warning also filed an ERROR-level Vercel log on every /api/exams request. Measured 1 before, 0 after; confirmed 0 on the new production deployment.",
-        "native-contract.mjs added. tests/route-contracts.test.mjs is source-level and would have watched a column alias get renamed in silence."
-      ],
-      "asymmetry_that_justifies_it": "A renamed field is survivable in the PWA (JavaScript reads undefined) and fatal in Swift (a missing non-optional key throws), stopping cloud sync on every device already installed from TestFlight.",
-      "open": "No evidence the NATIVE app reached the backend during the operator's test \u2014 every API call in the logs followed a browser sign-in. iOS cloud sync is an opt-in toggle in Settings; if it is off, the iOS half of that test exercised local SwiftData only."
-    },
-    "N11-reference-schema": {
-      "status": "pass",
-      "phase": "B",
-      "pr": 18,
-      "what": "Versioned `reference` schema, (hcpcs, modifier) grain, 828 codes / 2164 rows, loaded in dev AND production from CMS RVU26A.",
-      "key": "price_state names the three facts that used to collapse into 0 \u2014 no physician work, contractor-priced, not payable \u2014 and a CHECK constraint makes the invalid shapes unrepresentable. The first draft of that constraint had a hole: a CHECK only rejects FALSE and NULL>0 is NULL, so 'priced with no work RVU' was accepted. Found by trying it."
-    },
-    "N14-pricing-engine": {
-      "status": "pass",
-      "phase": "B",
-      "pr": 19,
-      "what": "resolveValue()/resolveMany() in TypeScript; /api/exams prices server-side and discards the client's number.",
-      "verified": "828/828 against the UNTOUCHED CMS extract, not against this repo's derivation; money-one-path proven static and runtime, poisoned both ways.",
-      "unpriced": "0 for an unpriced code but never a 0 pretending to be a price \u2014 wrvu_state records why. wrvu stays NOT NULL because the dashboard sums it with bare += and a NULL would become NaN."
-    },
-    "N20b-reprice-historical": {
-      "status": "pass",
-      "phase": "B",
-      "what": "All 887 production exams repriced against CMS. 497 changed, net +20.84 wRVU.",
-      "reversible": "exams_reprice_log holds every previous value; one UPDATE ... FROM reverses it.",
-      "note": "This changed numbers already reported. Authorised explicitly by the operator."
-    },
-    "N04c-table-exposure": {
-      "status": "pass",
-      "phase": "A1",
-      "what": "Every table in `public` must be classified tenant, shared or operator; an unclassified one fails the build.",
-      "why": "0002's blanket `alter default privileges` grants every NEW table in public to the app role automatically, and rls-enabled.mjs only inspects tables with a user_id \u2014 so a table without one is exposed AND invisible.",
-      "found": [
-        "exams_reprice_log \u2014 every tenant's before/after wRVU, readable by app_rls",
-        "_migrations \u2014 the app role held INSERT/UPDATE/DELETE and could have rewritten recorded checksums, defeating the migrator's drift guard"
-      ],
-      "fixed": "0005_revoke_operator_tables, applied to dev and production"
-    },
-    "N17-pwa-reads-reference-api": {
-      "status": "pass",
-      "phase": "B",
-      "deleted": [
-        "lib/data/cms2026-neuro.js (61 codes WITH prices)",
-        "the inline 63-line copy at components/NeuroRVU.jsx:27",
-        "scripts/seed.mjs \u2014 seeded rvu_codes, the third copy, from the first",
-        "app/api/rvu-tables \u2014 served that third copy and had no callers anywhere, including iOS",
-        "const CF_2026 = 33.40 \u2014 declared, never used, and wrong (the schema says 33.4009)",
-        "rvu_tables and rvu_codes dropped from the database (0006) \u2014 the last copy, 61 stale prices in a table whose name suggested it was authoritative"
-      ],
-      "kept": "lib/data/neuro-taxonomy.js \u2014 cpt/modality/region/contrast/display name, NO prices. CMS descriptors read 'Mri brain stem w/o dye', which is not what a radiologist scans a list for, so the curation is worth keeping. It just must not carry money.",
-      "added": "/api/reference/codes serves the price book; usePriceBook() fetches it once per page load.",
-      "guard": "no-second-price-table.mjs \u2014 no code-to-price mapping may exist outside reference/. Poisoned.",
-      "ocr_prompt": "The OCR prompt is Anthropic's cache PREFIX, so it must be a byte-stable synchronous string \u2014 a per-request query would destroy the cache it exists to exploit. Its prices are now GENERATED from the reference into reference/neuro-prompt-prices.json, and prompt-prices-fresh.mjs fails the build if they drift. Previously it was feeding the model the wrong numbers AND caching them.",
-      "drop_safety": "Checked production before writing the migration: 0 user-owned rows, 1 system table, only self-referencing FKs. Snapshot branch pre-drop-legacy-rvu-20260819 (auto-delete Never). Exam data verified unchanged after: 887 exams, 1392.19 wRVU."
-    },
-    "N22-contracts-and-codegen": {
-      "status": "pass",
-      "phase": "C",
-      "what": "contracts/openapi.yaml \u2014 6 paths, 6 schemas \u2014 plus generated TypeScript and Swift clients.",
-      "why_hand_rolled": "A general OpenAPI generator is a large dependency producing code nobody reads. The output here is meant to be read in review, because that is where a breaking change gets noticed by a person.",
-      "guards": [
-        "contracts-fresh.mjs \u2014 the generated clients must match the spec; a generated file nobody regenerates is a stale hand-written file with a misleading header",
-        "contracts-additive.mjs \u2014 removals, renames and newly-required fields are refused against contracts/surface.lock.json; additions pass and re-locking is a deliberate, reviewable act"
-      ],
-      "swift_detail": "Generated enums decode an unknown value to a fallback rather than throwing: the server may add a price_state before an installed build knows it, and a decode failure there stops sync entirely.",
-      "stale_invariants_fixed": [
-        "INV-ADDITIVE-CONTRACTS named contract-compat.mjs and `pnpm test:client-skew`",
-        "INV-CONTRACT-SYNC named `pnpm contracts:regen`",
-        "None existed. Both invariants now run."
-      ]
-    },
-    "N19-unify-modality-vocabulary": {
-      "status": "pass",
-      "phase": "B",
-      "backlog_claim_corrected": "The backlog says this 'mis-prices real money today'. Measured on production: 6 of 887 exams disagree with CMS (5 XR, 1 NM), and NONE of them sit inside a paid PPC bundle. Realised damage: zero dollars. The mechanism was real; the loss had not happened yet.",
-      "the_defect": "PPC_BUCKET was always correct \u2014 an unrecognised modality falls to 'other', which is unpaid. Every CALL SITE defaulted to 'CT' first, so nothing was ever unrecognised and any unknown study was paid at the CT rate. In the July rate snapshot that is $150 instead of $50 per study. The old neuro table contained no XR codes at all; CMS has 236.",
-      "fixed": [
-        "resolveValue() returns CMS modality; /api/reference/codes serves it; /api/exams stores it",
-        "every '|| \"CT\"' default replaced with 'Other', which is unpaid",
-        "the modality filter lists are derived from the data instead of a hardcoded five"
-      ],
-      "guard": "no-guessed-modality.mjs \u2014 fails if any call site defaults into a paid bucket, or if PPC_BUCKET stops failing closed. Poisoned.",
-      "not_touched": "Historical extra-duty pay. amount and rate_snapshot are frozen at save time by deliberate design so editing rates never re-prices past shifts \u2014 and none of the mis-classified exams were in a paid bundle anyway.",
-      "backfilled": "6 production rows aligned with CMS (display/analytics only). Now MRI 467, CT 291, MRA 79, CTA 44, XR 5, NM 1. Total wRVU unchanged at 1392.19. Reversible via exams_modality_log."
-    },
-    "N12-reference-api": {
-      "status": "pass",
-      "phase": "B",
-      "repo": "neurorvu-ios (PR #1)",
-      "what": "The edge API reads the Neon reference schema; the iOS client now APPLIES the payload instead of discarding it.",
-      "found": "The endpoint served a 293 KB static file with TWO tables \u2014 including the stale 61-code neuro table (54 codes disagreeing with CMS) and conversionFactor 33.4 against 33.4009. The seventh copy. Nobody noticed because RemoteTable never decoded `codes`: the client parsed the payload and threw the tables away.",
-      "why_it_matters": "Until now iOS and the PWA agreed only because the bundled seed happened to match. A new CMS release now reaches installed builds by loading a version in Postgres, not by shipping a binary through App Store review.",
-      "d29_enforced": "The service connects as app_rls \u2014 SELECT on reference and nothing else, every tenant table behind FORCE RLS whose GUC it never sets. Verified against the real database: select count(*) from exams returns 0. D29 is enforced rather than asserted.",
-      "care": [
-        "ETag is release + content hash of the CMS source, so it changes when the DATA does",
-        "failure is 503, never a stale fallback \u2014 a failed sync is non-fatal client-side",
-        "the ETag is recorded only AFTER a successful apply; the old order would have marked a device up to date forever after a failed install",
-        "a payload under 500 codes is refused \u2014 a truncated download must not replace a complete local table"
-      ],
-      "tests": "62 in 14 suites on the pinned iOS 26.5 runtime, including four new",
-      "production": "Deployed. Edge API reads Neon; DATABASE_URL set as app_rls on the neurorvu-edge-api project."
-    },
-    "N13-taxonomy-seed": {
-      "status": "pass",
-      "phase": "B",
-      "what": "reference.code_specialties \u2014 352 of 828 codes tagged: neuro 126, body 113, msk 49, breast 23, vascular 21, cardiac 20.",
-      "d36": "Tags RANK; they may never restrict. 476 codes are deliberately untagged (body_region 'other') \u2014 unranked, never hidden. A filter would make most of the schedule unreachable, and the doctor could not log the study.",
-      "derived_not_curated": "Rules in scripts/reference/derive-specialties.mjs, re-runnable against any release, so a new CMS extract never arrives untagged. A hand-typed 828-row mapping is exactly the artifact that drifts \u2014 this codebase has paid for that twice.",
-      "guard": "taxonomy-never-restricts.mjs \u2014 static (no query narrows by specialty) plus runtime (the price book still serves every code in the release). Poisoned.",
-      "production": "0007 applied and 352 tags derived in production; tagged 352 / 828 codes / 668 served."
-    },
-    "N06b-extract-baseline-consolidation": {
-      "status": "pass",
-      "phase": "A1",
-      "what": "consolidateBaseline, BASELINE_FIELDS and FIELD_LABEL moved to lib/analytics/baseline.js; the shared number/date helpers to lib/analytics/format.js. Behaviour unchanged.",
-      "why_first": "The founder chose N06 before N18. This is the arithmetic N18 disturbs when institutions stop being two hardcoded names, so it is under test BEFORE that rather than after.",
-      "epsilons_pinned": "pay 1, cfte 0.01, everything else 0.5 \u2014 with a test that a difference EXACTLY equal to epsilon does not flag. Too tight and every re-exported report is a wall of false discrepancies, which trains the user to click through the review panel without reading it.",
-      "tests": "10 characterisation tests, written from the pre-extraction behaviour, now part of verify:shippable and CI.",
-      "size": "components/NeuroRVU.jsx 1835 -> 1800 lines"
-    },
-    "N18-n-institution-model": {
-      "status": "pass",
-      "phase": "B",
-      "decisions": {
-        "reported_split": "Proportional, generalised N-way",
-        "sequencing": "N06 first (done)",
-        "existing_data": "Seed UM/JHS, link history, keep the text column"
-      },
-      "done": [
-        "0008 \u2014 institutions + institution_sites tables, tenant-scoped with FORCE RLS from the first line; exams.institution_id added",
-        "institutions.js is data-driven: makeClassifier(list, overrides). The default list reproduces the old behaviour exactly.",
-        "timeline.js sharesFor() splits N ways with the remainder to the LAST institution, so shares sum to exactly 1",
-        "seed-institutions.mjs \u2014 dry-run by default",
-        "16 analytics tests: the 10 legacy ones pass UNCHANGED, which is the proof the generalisation altered nothing",
-        "/api/institutions serves the user's rows and site overrides; /api/exams stamps institution_id on new rows",
-        "The PWA reads institutions at the root and injects them into settings, so every builder gets them with no call-site change; falls back to the built-ins when the API returns nothing",
-        "PUT /api/institutions \u2014 the whole set in one transaction; validation refuses a set with no default or duplicate names",
-        "Settings editor: create/rename/recolour institutions, set YTD per institution, choose the default, map sites",
-        "Removal of an institution with exams is refused BEFORE the save, using a count GET now returns \u2014 the error envelope carries a code and nothing else, so a 409 cannot explain itself afterwards",
-        "Every UI surface generalised: InstitutionCards, donut, split KPI, stacked reported chart, amber estimate note, Tracker picker, Exams filter AND the Exams per-institution table columns",
-        "timeline.js emits flat rep_<KEY>/trk_<KEY> series \u2014 a stacked chart cannot read a nested object",
-        "settings.umYTD/jhsYTD superseded: YTD lives on institutions.ytd_wrvu, with the legacy scalars as fallback until a row carries a figure",
-        "N18d \u2014 iOS: InstitutionRegistry holds the set as data; Institution is a String-backed value type over it. allCases follows the registry, so the Exams filter, Tracker split, Settings site picker and the log-row cycle button all generalise at once. ExamsView per-CPT counts keyed by institution (two Int fields named um/jhs had the same defect as the PWA's table). neurorvu-ios PR #4, main 106b7d5, CI run 32325496578: 76 tests in 16 suites."
-      ],
-      "why_remainder_to_last": "Independently computed shares do not sum to 1 in floating point \u2014 1/3+1/3+1/3 is not 1 \u2014 and the difference is wRVU that vanishes from the reported split. The old two-institution code already did this with jhsShare = 1 - umShare; generalising means keeping the habit.",
-      "inv_site_never_fails": "Enforced by a partial unique index: exactly one default institution per user. An unmapped site always has somewhere to land.",
-      "new_capability": "A user-defined site mapping now beats every built-in pattern \u2014 the iOS nrv_sites behaviour, which the PWA lacked.",
-      "remaining": [],
-      "production": "0008 applied and seeded: 6 institutions across 2 users, 887 exams linked. UM 541 / JHS 346 / Other 0 \u2014 identical to the pre-migration distribution.",
-      "fallback": "A user who has never opened Settings has no rows; the client falls back to the built-in UM/JHS/Other so the dashboard still works. INV-SITE-NEVER-FAILS applies to a brand-new account too.",
-      "gui_verified": "Verified end-to-end on fella.cc with real data (869 exams). Created a third institution 'Baptist Health' with YTD 500: the split KPI went 81/19 -> 75/17/8, the donut gained a third slice, the stacked chart gained a third series, the amber note read 'UM 75% / JHS 17% / BAP 8%', the Exams tab gained a fourth card, a BAP filter and a BAP column, and the YTD-vs-baseline mismatch warning fired. Removed it and saved again; every surface returned to the exact prior state.",
-      "complete": "Both apps. The engine, the write API, both UIs, and the classifier on device."
-    },
-    "N06-decompose-dashboard": {
-      "status": "partial",
-      "phase": "A1",
-      "done": [
-        "N06b \u2014 consolidateBaseline + format helpers -> lib/analytics/baseline.js, format.js (10 tests)",
-        "analytics extraction \u2014 INSTITUTIONS/classifyInstitution -> institutions.js, buildTimeline -> timeline.js, buildAnalytics/buildRange -> tracked.js (10 tests)",
-        "N06d \u2014 PPC_BUCKET/bucketCounts/buildExtraDuty -> lib/analytics/extra-duty.js, with the 7 tests they never had",
-        "components/analytics/client.jsx \u2014 price book hook, callClaude, loadKey/saveKey, the two error translators",
-        "components/analytics/primitives.jsx \u2014 TabBtn, Kpi, Empty, StatTile, InstRow, NumCell, InstitutionCards",
-        "N06a \u2014 components/analytics/Tracker.jsx",
-        "N06c \u2014 components/analytics/Uploads.jsx",
-        "N06g \u2014 0009 applied to dev AND production; the dead users table is gone from both."
-      ],
-      "size": "components/NeuroRVU.jsx 1906 -> 1156 lines; /app bundle 142 kB before and after",
-      "why_this_order": "The founder chose N06 before N18. institutions.js IS the module N18 replaces, and timeline.js holds the share arithmetic it generalises \u2014 both are now small files under characterisation tests instead of 71 references scattered through a 1,800-line component.",
-      "pinned": "Shares sum to EXACTLY 1 (jhsShare is 1 - umShare, not jhsYTD/denom \u2014 independently computed thirds do not sum to 1 in floating point). The `|| 1` denominator guard keeps shares finite when no YTD figures exist. INV-SITE-NEVER-FAILS: no input to classifyInstitution is rejected.",
-      "remaining": [
-        "N06e extract explorer (UI)"
-      ],
-      "note": "The remaining extractions are UI components, not arithmetic. N18's prerequisite \u2014 the money math out of the monolith and under test \u2014 is met."
-    },
-    "N26-pricing-parity": {
-      "status": "pass",
-      "depends_on": [
-        "N14-unified-pricing"
-      ],
-      "priority": 26,
-      "merged": "wruvs PR #32 (main 32bb611); neurorvu-ios PR #2 (main 95a7c63)",
-      "found": [
-        "ParserService priced from the 61-code neuro table, 55 of whose 61 work RVUs disagreed with CMS RVU26A; 24 were hand-estimates flagged 2026/add-on",
-        "ReferenceSeeder never set est/flag when seeding RVU26A, so all 282 contractor-priced codes read as a real price of 0 on the bundled offline seed",
-        "Pricing.resolveValue existed with zero callers \u2014 the money path bypassed it entirely"
-      ],
-      "verified": [
-        "69 tests in 15 suites pass on the iOS simulator",
-        "poison (revert seeder fix): 40 of 113 golden vectors disagree; 76390 reads .priced/0",
-        "poison (corrupt one neuro value + re-add a 2026 flag): both drift guards fire, and FixturePipelineTests STAYS GREEN \u2014 proof money no longer flows through the neuro table",
-        "pricing-golden-fresh.mjs against the live reference DB: 113 vectors match, 6 states covered",
-        "CI run 32312048972 success; step 'pricing golden covers every price state' executed"
-      ],
-      "rollback": "revert 32bb611 and 95a7c63; no production data was migrated by this node"
-    },
-    "N26b-ios-ci-gate": {
-      "status": "pass",
-      "depends_on": [
-        "N26-pricing-parity"
-      ],
-      "priority": 26.5,
-      "merged": "neurorvu-ios PR #3 (main 8a3211d)",
-      "found": "neurorvu-ios had no CI workflow and no branch protection at all, while shipping to TestFlight. N26 merged there on locally-run tests only.",
-      "verified": [
-        "run 32312840273 success on macos-26: 'Test run with 69 tests in 15 suites passed', pinned destination iPhone 17 Pro / iOS 26.5, 69 @Test declared",
-        "poison (source file committed without regenerating the pbxproj): run 32313383795 FAILED at 'the checked-in project matches project.yml', tests step skipped \u2014 the gate can go red, and fails before the expensive step",
-        "branch protection applied and probed: a direct push to neurorvu-ios main is rejected with GH006 / 'Required status check \"checks\" is expected' \u2014 identical to wruvs"
-      ],
-      "anti_vacuity": [
-        ".ios-runtime is read by both CI and scripts/test-ios.sh, so the two cannot disagree about what was tested; the script fails loudly rather than letting xcodebuild substitute a runtime",
-        "xcodegen output must match the checked-in pbxproj \u2014 an uncompiled Swift file's tests do not exist and the suite passes without them",
-        "the declared @Test count must not fall below 60"
-      ],
-      "cost": "macOS runners bill at 10x Linux minutes; the suite is ~4 minutes of build+test per run",
-      "rollback": "delete .github/workflows/ci.yml and remove the protection rule"
-    },
-    "N06h-production-crash": {
-      "status": "pass",
-      "phase": "A1",
-      "priority": 6.1,
-      "merged": "PR #35 (8adefb8), PR #36 (afea913), PR #37 (a3d361b)",
-      "found": [
-        "settingsWithInstitutions referenced from Tracker, ExamsView and Timeline's ImportReview, where it was never in scope. Shipped in 48e9e9f at 18:30; production deployed 19:18. The Tracker tab \u2014 the DEFAULT tab \u2014 threw for every signed-in user for roughly an hour.",
-        "eslint extends next/core-web-vitals, which leaves no-undef OFF. Lint passed on #31 and CI was green while a guaranteed runtime crash shipped.",
-        "Turning no-undef on immediately found four more: ExamsView referenced the deleted INSTITUTIONS map for table columns hardcoded to UM and JHS.",
-        "The reported institution split rendered 0 / 100 while its own subtitle read UM 4,963 \u00b7 JHS 1,146 \u2014 0008 seeded ytd_wrvu = 0 and the root passed those zeros to sharesFor, so the denominator was zero. Display had a fallback the arithmetic did not."
-      ],
-      "verified": [
-        "no-undef is on and gated in ci.yml and shippable.mjs; poisoning it back reproduces \"'settingsWithInstitutions' is not defined\"",
-        "no-guessed-modality rewritten to walk the whole client surface and require exactly one PPC_BUCKET; poisoned three ways",
-        "GUI walk of all five tabs plus the Settings drawer on fella.cc: zero application console errors",
-        "reported split measured 0%/100% before, 81%/19% after, on the real production figures"
-      ],
-      "lesson": "Every check was green while the default tab was crashing. The gap was not a missing test but a disabled lint rule, and only opening the app found it."
-    },
-    "N06g-drop-dead-users-table": {
-      "status": "pass",
-      "phase": "A1",
-      "priority": 6.7,
-      "approved_by_founder": "2026-08-19",
-      "done": [
-        "dev branch migrated",
-        "production main migrated: users GONE, 10 migrations recorded, 887 exams intact",
-        "pre-flight on production confirmed the premise: 0 rows, 0 foreign keys",
-        "snapshot branch pre-N06g-drop-users-20260819 (auto-delete Never) taken from main first (INV-PROD-AUDITED)",
-        "table-exposure.mjs caught the now-stale `users: shared` classification and it was removed; poisoned back to confirm the guard fires"
-      ],
-      "safety": "0009 refuses to drop the table if it holds ANY rows, and raises with the count. Applying it to production cannot destroy data \u2014 if the premise of this node is wrong, the migration says so and aborts.",
-      "evidence": "No foreign key references users. The only code references were the Drizzle declaration itself and one classification entry in table-exposure.mjs. Identity is Clerk's: /admin reads the user list from Clerk's API and every other table keys on the Clerk user id as text.",
-      "rollback": "drizzle/0009_drop_dead_users_table.down.sql recreates the shape; there are no rows to restore because 0009 refuses to run against a non-empty table."
-    },
-    "N18f-ios-pull-institutions": {
-      "status": "pass",
-      "phase": "B",
-      "priority": 18.6,
-      "merged": "neurorvu-ios PR #5, main baf1cac",
-      "what": "CloudSync pulls /api/institutions (same fella.cc backend and Clerk token it already used for exams) and adopts the set into InstitutionRegistry. Before this, replace() had zero call sites outside tests and the phone ran the built-in three regardless of what the user configured.",
-      "ordering": "The pull runs FIRST in sync(): everything after it classifies sites, and classifying against the built-in three then learning there are five would bucket that sync's studies wrongly.",
-      "precedence": "Site mappings were a race over who wrote Institution.overrides last. Now stated: the PWA's institution_sites are the base, the device's own nrv_sites layer on top and win.",
-      "verified": "82 tests in 17 suites. Poisoning the pattern carry-over drops 'umhc' and 'Jackson Memorial' to Other \u2014 all history reclassified \u2014 which is why the test is there."
-    },
-    "N-release-0.2.0": {
-      "status": "pass",
-      "phase": "B",
-      "priority": 18.9,
-      "what": "TestFlight build 0.2.0 (3), the first since build 2 on 2026-08-08. Carries N12, N26, N18d and N18f.",
-      "why_it_mattered": "Everything from N26 was merged but undelivered: the phone was still pricing from the bundled neuro table (55 of 61 values disagreeing with CMS) and reading all 282 contractor-priced codes as a real 0. Reference sync could not fix it \u2014 applyIfChanged only replaces RVU26A, and the neuro table is bundle-only.",
-      "signing_gap_closed": [
-        "The account had no DISTRIBUTION certificate at all \u2014 only DEVELOPMENT \u2014 and Xcode's cloud signing refused to create one ('Cloud signing permission error').",
-        "Created it through the App Store Connect API instead: local RSA-2048 CSR -> POST /v1/certificates -> imported cert and key into the login keychain.",
-        "Then POST /v1/profiles for an IOS_APP_STORE profile including that certificate, installed to ~/Library/MobileDevice/Provisioning Profiles, and exported with manual signing."
-      ],
-      "verified": "Archive proven to carry the fixes before upload: conversion factor 33.4009 (not the stale 33.4), 70496 at 1.71 (not 1.75), zero hand-estimate flags. App Store Connect now reports build 3 VALID.",
-      "repeatable": "scripts/release-testflight.sh in neurorvu-ios \u2014 runs the suite, archives, exports, uploads. Needs ASC_KEY_ID and ASC_ISSUER_ID; neither is a secret and the .p8 is already on the machine.",
-      "remaining": "Distribute build 3 to the internal 'Core' group in TestFlight \u2014 a one-click action in App Store Connect."
-    }
+  "N00b-rotate-credentials": {
+   "status": "partial",
+   "depends_on": [
+    "N00a-remove-token-gated-routes"
+   ],
+   "priority": 2,
+   "done": [
+    "SETUP_TOKEN deleted from Vercel Production and Preview; 0 entries remain",
+    "verified unreferenced in shipped code on origin/main before deletion",
+    "user roster reviewed 2026-08-18: 4 accounts, all accounted for, no evidence of exploitation"
+   ],
+   "outstanding": [
+    "CLERK_SECRET_KEY rotation (defence-in-depth only; blocked by shared clerk-coffee-notebook installation)"
+   ],
+   "reassessment_2026_08_18": "CLERK_SECRET_KEY was never DISCLOSED. The deleted route used it server-side in an Authorization header to api.clerk.com and never returned it; ?inspect=1 returned restrictions/invitations/allowlist only. An attacker had the key's CAPABILITIES through a proxy, not the key. So rotation is defence-in-depth, not incident response. The roster review and session revocation are the checks that would actually reveal a compromise, and they are now the priority.",
+   "blocked_on": "clerk-coffee-notebook is shared with brainstywebsitevercel, so an installation-level rotation affects both projects",
+   "evidence": [
+    "goals/evidence/N00b-rotate-credentials/roster-review-2026-08-18.md"
+   ],
+   "roster_conclusion": "No unexplained accounts. The one flagged account (gaurav.saigal@rocketmail.com, created 2026-08-14 while SETUP_TOKEN was live) was confirmed by the owner as Gaurav Saigal's personal email. Session revocation is NOT required as incident response."
   },
-  "statuses": {
-    "ready": "dependencies satisfied, not started",
-    "building": "a Builder holds this node",
-    "validating": "a fresh Validator is re-deriving done_when",
-    "pass": "Validator confirmed with evidence",
-    "fail": "Validator rejected \u2014 human review required",
-    "blocked": "waiting on a dependency",
-    "blocked_external": "work complete and all runnable checks pass; named verifications need operator credentials, a deploy, or infrastructure the agent cannot reach",
-    "blocked_integration": "the node's own work is complete and verified, but landing it requires a design change where it meets another node"
+  "N00c-pwa-lock-llm-proxy": {
+   "status": "blocked_external",
+   "priority": 3,
+   "built": "builder/N00c-llm-proxy (d57302b). NOT merged.",
+   "verified_by_builder": [
+    "rate limit PASSES --direct against the real dev Neon branch (10 allowed, 11-12 denied, refill restores exactly one)",
+    "spend cap PASSES --direct against real llm_usage rows"
+   ],
+   "blocked_on": "INTEGRATION, not credentials. N00c changes callClaude from (messages,{system,tools,maxTokens}) to (template,{params,attachments}). N00f's assertNoUnredactedImages() walks message.content[] and identifies redacted blocks by WeakSet IDENTITY; under the new signature the client passes data-URL strings, so the guard loses its identity handle and degrades to the isRedactedPayload string check. Restoring that guarantee is a DESIGN change to a PHI control, not a merge conflict.",
+   "partial_resolution": "route.js was reconciled (N00c structure + N00d code vocabulary) and preserved at goals/evidence/A0-integration/route.js.resolved. package.json and tsconfig.json resolutions preserved alongside.",
+   "recontracted": "2026-08-18 — the redaction guard redesign is now the PRIMARY contract, not a merge afterthought. Start from builder/N00c-llm-proxy (d57302b) per D38.",
+   "merged": "PR #3 -> main 3b3a5f5, deployed to production 2026-08-18",
+   "verified": [
+    "test:redaction 30/30 (unchanged by the signature change)",
+    "forged-attachment 16/16 — every forged attachment refused BEFORE the request; the server received only the 3 honest sends",
+    "test:llm-proxy-contract 29/29 static",
+    "rate limit PASSES --direct against the real dev Neon branch",
+    "spend cap PASSES --direct against real llm_usage rows",
+    "next build passes",
+    "production after deploy: health green, error envelope intact, all surfaces up"
+   ],
+   "guard_resolution": "RESOLVED. The client passes the producer's own objects through instead of flattening to data-URL strings, so WeakSet identity survives the signature change. assertApprovedAttachments() fails closed: unmarked, unknown-type, hand-built or non-object all throw. A byte-level second witness exists only so a framework-cloned block is not FALSELY blocked; it can admit nothing that was not itself redaction output.",
+   "production_migration": "llm_usage + llm_rate_buckets applied to main BEFORE the code merge, so no window existed where the deployed route referenced missing tables. Snapshot pre-N00c-llm-usage (br-fragrant-violet-atwws46l), full data+schema, auto-delete never. Audited in goals/evidence/prod-audit-log.jsonl.",
+   "documented_exception": "DELIBERATE INV-ADDITIVE-CONTRACTS break: /api/claude 400s on system/tools/maxTokens rather than serving both shapes for a release, because the deprecation window IS the exposure this node closes. Verified safe: exactly one caller (NeuroRVU.jsx:119, ships in the same deploy); ZERO references in neurorvu-ios, which calls /api/v1/resolve. Residual: a browser tab open across the deploy gets 400 until reload. This is an EXCEPTION with recorded reasoning, not precedent.",
+   "operator_must_close": [
+    "live HTTP contract / rate-limit / spend-cap probes need a real Clerk session (.env.local holds the dev Neon branch but no Clerk keys)",
+    "prompt-cache hit (cache_read_input_tokens > 0) needs two real billed Anthropic calls; the cache breakpoint itself is verified structurally"
+   ],
+   "feature_removed": "Codes tab 'Live value' per-code lookup — the only web_search call site (D8). N14 replaces it with real CMS payment estimates per locality, offline."
   },
-  "backlog_ref": "goals/BACKLOG.yaml",
-  "evidence_dir": "goals/evidence",
-  "dev_database": {
-    "provider": "Neon branch on neon-almond-leaf",
-    "branch": "dev",
-    "branch_id": "br-late-paper-at5h75si",
-    "parent": "main",
-    "type": "SCHEMA-ONLY \u2014 15 tables, zero rows, verified writable",
-    "auto_delete": "Never",
-    "postgres": "17.10",
-    "created": "2026-08-18",
-    "local_env": ".env.local (mode 600, gitignored) \u2014 pooled DATABASE_URL + unpooled DATABASE_URL_UNPOOLED",
-    "verified": [
-      "pooled connect ok",
-      "unpooled connect ok",
-      "drizzle-kit check ok",
-      "drizzle-kit pull ok",
-      "write/read/drop ok"
-    ],
-    "note": "Contains no production rows, so it is safe for agent use and satisfies D25a."
+  "N00c-edge-usage-cap": {
+   "status": "blocked",
+   "depends_on": [
+    "N00c-pwa-lock-llm-proxy"
+   ],
+   "priority": 7,
+   "note": "needs contracting; lives in the neurorvu-ios repo at api/"
+  },
+  "N00d-error-envelope": {
+   "status": "pass",
+   "priority": 4,
+   "built": "builder/N00d-errors; merged into fix/A0-proxy-errors-redaction",
+   "verified": [
+    "npm run test:error-envelope 6/6",
+    "npm run test:route-contracts 9/9",
+    "next build passes"
+   ],
+   "operator_must_close": [
+    "authenticated fault injection needs a real Clerk session (.env.local holds no Clerk keys)",
+    "ERROR_MONITOR_URL / ERROR_MONITOR_TOKEN unprovisioned, so shipToMonitor() is a no-op in production"
+   ],
+   "known_boundary": "An unsupported METHOD on an existing route is answered by Next with a bodyless 405 before application code runs, so it carries no correlation id. It carries no information either.",
+   "merged": "PR #2 -> main 8107e5b, deployed to production 2026-08-18",
+   "verified_in_production": "GET https://fella.cc/api/exams unauthenticated returns 401 with header x-correlation-id and body {\"error\":{\"code\":\"unauthorized\",\"correlationId\":\"...\"}} — the envelope is live"
+  },
+  "N00e-mfa-and-password-policy": {
+   "status": "ready",
+   "depends_on": [],
+   "priority": 5,
+   "verified_2026_08_18": "ZERO MFA strategies are enabled in Clerk. SMS is unavailable (phone numbers disabled); Authenticator app is OFF; backup codes require it; 'Require MFA' is not selectable until a strategy is enabled.",
+   "warning": "enabling forces every colleague to enrol at next sign-in"
+  },
+  "N00f-redact-before-upload": {
+   "status": "pass",
+   "priority": 6,
+   "built": "builder/N00f-redaction; merged into fix/A0-proxy-errors-redaction",
+   "verified": [
+    "npm run test:redaction 30/30",
+    "next build passes against the dev Neon branch"
+   ],
+   "operator_must_close": [
+    "`pnpm --filter @rad/core test:redaction` is vacuous until the N01 monorepo exists; the same suite runs as `npm run test:redaction`"
+   ],
+   "bounded_gap": "PDFs bypass redaction BY DESIGN. prepareDoc() (components/NeuroRVU.jsx:209, called at :632) base64s application/pdf straight through to Anthropic. That path carries the HR consolidated report — the physician's own productivity and compensation, not patient data. PDF is the ONLY bypass and an AST check enforces it stays PDF-only. Tracked as N00g.",
+   "known_weakness": "Staleness is detected by aspect ratio within 2%. A differently-laid-out screenshot with the same aspect ratio would be masked with stored geometry rather than re-prompting. N27 (layout profiles) supersedes this heuristic.",
+   "merged": "PR #2 -> main 8107e5b, deployed to production 2026-08-18",
+   "verified_in_production": "app healthy after deploy; upload path now requires a redaction profile per institution"
+  },
+  "N00g-pdf-redaction-gap": {
+   "status": "backlog",
+   "priority": 9,
+   "reason": "Opened from the N00f finding. Close only if a PDF ever carries patient identifiers; today the PDF path carries the physician's own HR report."
+  },
+  "N20x-ocr-contrast-regression": {
+   "status": "pass",
+   "phase": "C",
+   "priority": "blocking",
+   "fixed": "neurorvu-ios main 5bbae8a",
+   "root_cause": "Photographed monitors glue W onto PLUS. ContrastStatus.detect() requires a standalone ' W ' token; with the W glued only ' WO ' survives, so a with-and-without study resolved as WITHOUT — 70553 (2.23) became 70551 (1.45), a 0.78 wRVU under-count per affected study. Confirmed by dumping real pipeline output for um-worklist-2837: only row 10 ('MRI BRAIN WPLUS WO CONTRAST') was affected; every correctly-spaced row already resolved.",
+   "fix": "Isolate PLUS during contrast normalisation so the token boundary is restored whichever side was glued. Modelled against a 12-case battery first: corrects all three glued variants, zero regressions on the nine correct cases.",
+   "verified": [
+    "iOS 26.5 simulator: 52/52 pass",
+    "iOS 27.0 simulator: 51/52"
+   ],
+   "unblocks": [
+    "N21-ios-rebaseline"
+   ]
+  },
+  "N20y-ios27-vision-notable": {
+   "status": "pass",
+   "phase": "C",
+   "priority": "major",
+   "resolved_by": "neurorvu-ios 8a829f0 — the runtime is pinned rather than the test weakened",
+   "pin": ".ios-runtime holds IOS_RUNTIME=26.5 as DATA with the reasoning beside it; scripts/test-ios.sh is the canonical entry point",
+   "why_a_script": "xcodebuild silently substitutes a different runtime when the requested one is missing, which turns a pin into a suggestion. The script asserts the runtime is installed and exits non-zero listing what IS installed. Both failure paths verified: absent runtime, and missing pin file.",
+   "verified": "./scripts/test-ios.sh -> pinned to iOS 26.5, 52/52 passed",
+   "unpin_when": "iOS 27 detects the table again, proven by running the suite on 27 and seeing 52/52",
+   "note": "The test was NOT weakened. Angled capture is the input class the pipeline exists to handle."
+  },
+  "N21-ios-rebaseline": {
+   "status": "pass",
+   "phase": "C",
+   "priority": 1,
+   "deliverable": "goals/evidence/N21-ios-rebaseline/rebaseline-2026-08-18.md",
+   "audited": "neurorvu-ios @ 5bbae8a, clean tree",
+   "phase_c_estimate": "~10-14 weeks (was 12-20 as greenfield, withdrawn). Less construction, more hardening: Xcode, Vision OCR, Clerk auth, cloud sync, CloudKit backup, privacy manifest and the TestFlight pipeline are all DONE.",
+   "key_findings": [
+    "PARITY HOLDS exactly today: 61/61 codes, zero wRVU disagreements, same CF — but by duplication, not construction",
+    "NO patient identifier field exists in any SwiftData model",
+    "examDate is transmitted at full ISO8601 SECOND precision — a live Safe Harbor issue confirming the proposal's 1.8 analysis against the shipping app",
+    "Redaction covers ~4 of the Safe Harbor 18; NAMES are not redacted at all",
+    "Zero MFA and zero app lock on the client",
+    "No clinical-refusal clause on the FoundationModels path — low risk by construction (narrow task, structured output), but INV-NO-CLINICAL is unenforced"
+   ],
+   "unblocks": [
+    "N21b-repo-strategy"
+   ]
+  },
+  "N21b-repo-strategy": {
+   "status": "pass",
+   "phase": "C",
+   "decision": "D43 — keep neurorvu-ios as its own repo; share only contracts/openapi.yaml and the golden fixtures.",
+   "unblocks": [
+    "N01-repo-and-typescript"
+   ]
+  },
+  "N25x-examdate-precision": {
+   "status": "pass",
+   "phase": "C",
+   "fixed": "neurorvu-ios bf53321",
+   "what": "examDate and bundleDate now reach the cloud at DAY precision. Device keeps the full timestamp.",
+   "subtlety": "Pushed as local midnight WITH the local UTC offset, not a bare date: exam_date is timestamptz, so a bare date is read as UTC midnight and Analytics.localDay() in Eastern would return the PREVIOUS day — shifting every exam a day earlier and breaking the day-based sync fingerprint. Two tests cover the round trip, one across all 24 hours.",
+   "verified": "58/58 on pinned iOS 26.5"
+  },
+  "N25y-redact-names": {
+   "status": "pass",
+   "phase": "C",
+   "fixed": "neurorvu-ios bf53321",
+   "what": "Names are redacted. Added labelled-name, comma-name, email, URL and phone patterns, plus a clinical-vocabulary ALLOWLIST of 1,020 tokens.",
+   "why_allowlist": "Patterns only catch shapes you anticipated. An allowlist inverts it: an alphabetic token survives only if it is clinical vocabulary, so a patient name is dropped whether or not any dictionary contains it. Tested against Nagornaya, Saigal, Oyelese, Kwiatkowski, Kowalczyk, Przybylski. Fails CLOSED.",
+   "measured": "First attempt over-redacted ORBITS, VENOGRAM, BRACHIAL PLEXUS, THORACOLUMBAR, STROKE, DTI — CMS descriptors and hospital worklists use different wording. Curated supplement closed it: 0 false positives across 206 real golden-worklist tokens, pinned by a regression test.",
+   "safe_harbor_now": "~4 of 18 identifiers before; now names, dates, SSN, MRN/accession, email, phone and URL. Remaining gaps are the rarer categories (vehicle, device, biometric, IP, 90+ age bucketing) — none of which a worklist carries.",
+   "verified": "58/58 on pinned iOS 26.5"
+  },
+  "N01-repo-and-typescript": {
+   "status": "ready",
+   "phase": "A1",
+   "scope_narrowed_by_D43": "No monorepo. N01 is now TypeScript-in-place for the PWA only — and N00d/N00f already landed tsconfig.json, .eslintrc.json and several .ts modules, so a good part of it is done."
+  },
+  "N02-real-migrations": {
+   "status": "pass",
+   "phase": "A1",
+   "what": "Production now has _migrations with all three migrations recorded and correct checksums; lib/db/migrate.mjs can take over.",
+   "discovered": "The N02 backfill had NEVER been run — production had no _migrations table at all. Recording only 0002 would have left the migrator believing the baseline was pending and trying to re-create existing objects. Stamping 0000/0001 was verified truthful first: all six tables from the baseline and 0001 were present.",
+   "verified": "select from _migrations on production: 0000_baseline, 0001_llm_usage, 0002_rls, checksums matching the files on disk"
+  },
+  "N03-ci": {
+   "status": "pass",
+   "phase": "A1",
+   "done": [
+    "N03a github-actions-base — 13 steps, poison-proven",
+    "N03e verify-shippable — shippable-parity.mjs asserts ci.yml and the harness are the same set (PR #8)",
+    "branch protection ENABLED and PROVEN: contexts=[checks], strict, enforce_admins, no force-push, linear history",
+    "merge-blocked.mjs implemented — a red PR was refused by the API with 405 'Required status check \"checks\" is failing', against an admin token",
+    "journal-complete.mjs — catches orphan migrations (PR #10)",
+    "ensure-chromium.mjs — replaced an npx invocation that could hang forever"
+   ],
+   "defects_found_in_the_gate_itself": [
+    "gh-wait-run.mjs matched on headSha alone and returned the Copilot review workflow's run, whose steps contain none of the checks — a green from it was a false PASS",
+    "npx playwright install prompted on stdin because the project depends on playwright-core, not playwright; run 32208571889 hung 35 minutes on it"
+   ],
+   "remaining": [
+    "N03b eslint-invariant-rules",
+    "N03c neon-branch-runner",
+    "N03d macos-runner (must invoke neurorvu-ios/scripts/test-ios.sh or the runtime pin stops being a pin)"
+   ]
+  },
+  "N0V-verification-tooling": {
+   "status": "pass",
+   "phase": "A1",
+   "priority": 0,
+   "delivered": "scripts/verify/_lib.mjs plus 19 checks. checks-are-executable.mjs reports PASS across all 89 commands in INVARIANTS.yaml and goals/nodes/.",
+   "three_outcomes": "PASS 0, FAIL 1, PENDING 78. A check whose SUBJECT does not exist exits PENDING with a mandatory becomesActiveWhen — it is visibly not-a-pass, and it flips to a real check the moment its subject lands. That is what stops the vacuous-pass class recurring.",
+   "suite_state": {
+    "pass": 7,
+    "pending": 5,
+    "fail": 1
+   },
+   "honest_red": "INV-TENANT fails: exams, extra_duty_periods, extra_duty_rates, user_kv, llm_usage, llm_rate_buckets all have rls=false force=false. That is N04's work and the check is correctly red until then.",
+   "findings": [
+    "phi-schema-scan flagged users.email/first_name/last_name — PHYSICIAN identity on the DEAD users table (0 rows, no code reads it). Allowlisted WITH the reason, printed on every run. Second reason for N06g to delete that table.",
+    "A bare /name$/ pattern matched rvu_tables.name and procedure_name. Tightened to person-shaped names rather than allowlisting around a bad rule.",
+    "verify:shippable uses EXIT CODES. Grepping next build for the compile marker is weak: it prints before type-check, page-data and static generation, and a tee pipeline returns tee's status.",
+    "iOS is deliberately out of verify:shippable until N20y — gating main on an iOS 27 Vision regression would block merges for an unrelated reason."
+   ]
+  },
+  "N03e-verify-shippable": {
+   "status": "pass",
+   "phase": "A1",
+   "pr": 8,
+   "what": "ci.yml and scripts/verify/shippable.mjs are now provably the same list of steps.",
+   "why_not_re-run": "CI keeps the steps individual so a red build names ONE step — the poison harness depends on that resolution. Re-running the harness in CI would double wall-time and lose it. shippable-parity.mjs asserts set equality instead, which is the actual failure mode: add a check to ci.yml, main stays green, and every Validator from then on PASSes against a harness that never ran it.",
+   "verified": "proven to fail in both drift directions locally; CI run 32202708277 green with the new step"
+  },
+  "N04-rls": {
+   "status": "pass",
+   "phase": "A1",
+   "prs": [
+    9,
+    10,
+    11,
+    12,
+    14
+   ],
+   "live": "PRODUCTION IS RUNNING AS app_rls WITH RLS ENFORCED as of 2026-08-19.",
+   "verified_externally": "GET https://fella.cc/api/health -> 200 {\"dbRole\":\"app_rls\",\"rlsEnforced\":true}",
+   "proof_on_real_data": "SET ROLE app_rls on production: a declared tenant sees 869 of 887 exams, the other tenant's 18 are invisible; with no tenant declared, 0 rows. The application's own lib/db path was then exercised over the real credential: scoped write and read work, the GUC matches, a different tenant sees nothing.",
+   "the_finding": "A role created through the NEON CONSOLE arrives with rolbypassrls=true and neon_superuser membership, and neondb_owner cannot revoke either. Only a SQL-created role is clean. A console PASSWORD RESET on a SQL-created role is safe and leaves it clean — that is how the production credential reached Vercel without passing through any transcript.",
+   "residual_hazards": [
+    "The Neon integration owns DATABASE_URL; a re-sync will clobber the override and lib/db would silently fall back to POSTGRES_URL, which still points at the owner. /api/health now returns 503 with rlsEnforced=false if that happens.",
+    "app_login on the dev branch is a console-created role holding BYPASSRLS. Unused, and should be deleted."
+   ],
+   "not_yet_done": "An authenticated request. Every route 401s before touching the database, so no agent can exercise the signed-in path."
+  },
+  "N04b-api-and-native-verification": {
+   "status": "pass",
+   "phase": "A1",
+   "pr": 16,
+   "why": "The N04 rewrite touched the exact three routes the iOS app consumes. Nothing verified the wire contract survived.",
+   "verified": [
+    "Response shapes byte-identical before and after the rewrite, across all four routes",
+    "SQL column aliases identical",
+    "neon-http and node-postgres serialise these queries identically — timestamps, floats, booleans, text arrays — so the JSON the Swift decoder parses did not move",
+    "27 iOS-decoded fields still produced; guarded going forward by native-contract.mjs",
+    "edge API (the third deployable) up and untouched: /api/v1/reference 401, /api/v1/resolve 405 on GET",
+    "production logs of a real authenticated session: GET exams/store/extra-duty/rates and POST store all 200, every one cache MISS — real round-trips, not a service-worker illusion"
+   ],
+   "fixed": [
+    "sslmode pinned to verify-full. pg aliases require->verify-full today and warns it will weaken in v9; the warning also filed an ERROR-level Vercel log on every /api/exams request. Measured 1 before, 0 after; confirmed 0 on the new production deployment.",
+    "native-contract.mjs added. tests/route-contracts.test.mjs is source-level and would have watched a column alias get renamed in silence."
+   ],
+   "asymmetry_that_justifies_it": "A renamed field is survivable in the PWA (JavaScript reads undefined) and fatal in Swift (a missing non-optional key throws), stopping cloud sync on every device already installed from TestFlight.",
+   "open": "No evidence the NATIVE app reached the backend during the operator's test — every API call in the logs followed a browser sign-in. iOS cloud sync is an opt-in toggle in Settings; if it is off, the iOS half of that test exercised local SwiftData only."
+  },
+  "N11-reference-schema": {
+   "status": "pass",
+   "phase": "B",
+   "pr": 18,
+   "what": "Versioned `reference` schema, (hcpcs, modifier) grain, 828 codes / 2164 rows, loaded in dev AND production from CMS RVU26A.",
+   "key": "price_state names the three facts that used to collapse into 0 — no physician work, contractor-priced, not payable — and a CHECK constraint makes the invalid shapes unrepresentable. The first draft of that constraint had a hole: a CHECK only rejects FALSE and NULL>0 is NULL, so 'priced with no work RVU' was accepted. Found by trying it."
+  },
+  "N14-pricing-engine": {
+   "status": "pass",
+   "phase": "B",
+   "pr": 19,
+   "what": "resolveValue()/resolveMany() in TypeScript; /api/exams prices server-side and discards the client's number.",
+   "verified": "828/828 against the UNTOUCHED CMS extract, not against this repo's derivation; money-one-path proven static and runtime, poisoned both ways.",
+   "unpriced": "0 for an unpriced code but never a 0 pretending to be a price — wrvu_state records why. wrvu stays NOT NULL because the dashboard sums it with bare += and a NULL would become NaN."
+  },
+  "N20b-reprice-historical": {
+   "status": "pass",
+   "phase": "B",
+   "what": "All 887 production exams repriced against CMS. 497 changed, net +20.84 wRVU.",
+   "reversible": "exams_reprice_log holds every previous value; one UPDATE ... FROM reverses it.",
+   "note": "This changed numbers already reported. Authorised explicitly by the operator."
+  },
+  "N04c-table-exposure": {
+   "status": "pass",
+   "phase": "A1",
+   "what": "Every table in `public` must be classified tenant, shared or operator; an unclassified one fails the build.",
+   "why": "0002's blanket `alter default privileges` grants every NEW table in public to the app role automatically, and rls-enabled.mjs only inspects tables with a user_id — so a table without one is exposed AND invisible.",
+   "found": [
+    "exams_reprice_log — every tenant's before/after wRVU, readable by app_rls",
+    "_migrations — the app role held INSERT/UPDATE/DELETE and could have rewritten recorded checksums, defeating the migrator's drift guard"
+   ],
+   "fixed": "0005_revoke_operator_tables, applied to dev and production"
+  },
+  "N17-pwa-reads-reference-api": {
+   "status": "pass",
+   "phase": "B",
+   "deleted": [
+    "lib/data/cms2026-neuro.js (61 codes WITH prices)",
+    "the inline 63-line copy at components/NeuroRVU.jsx:27",
+    "scripts/seed.mjs — seeded rvu_codes, the third copy, from the first",
+    "app/api/rvu-tables — served that third copy and had no callers anywhere, including iOS",
+    "const CF_2026 = 33.40 — declared, never used, and wrong (the schema says 33.4009)",
+    "rvu_tables and rvu_codes dropped from the database (0006) — the last copy, 61 stale prices in a table whose name suggested it was authoritative"
+   ],
+   "kept": "lib/data/neuro-taxonomy.js — cpt/modality/region/contrast/display name, NO prices. CMS descriptors read 'Mri brain stem w/o dye', which is not what a radiologist scans a list for, so the curation is worth keeping. It just must not carry money.",
+   "added": "/api/reference/codes serves the price book; usePriceBook() fetches it once per page load.",
+   "guard": "no-second-price-table.mjs — no code-to-price mapping may exist outside reference/. Poisoned.",
+   "ocr_prompt": "The OCR prompt is Anthropic's cache PREFIX, so it must be a byte-stable synchronous string — a per-request query would destroy the cache it exists to exploit. Its prices are now GENERATED from the reference into reference/neuro-prompt-prices.json, and prompt-prices-fresh.mjs fails the build if they drift. Previously it was feeding the model the wrong numbers AND caching them.",
+   "drop_safety": "Checked production before writing the migration: 0 user-owned rows, 1 system table, only self-referencing FKs. Snapshot branch pre-drop-legacy-rvu-20260819 (auto-delete Never). Exam data verified unchanged after: 887 exams, 1392.19 wRVU."
+  },
+  "N22-contracts-and-codegen": {
+   "status": "pass",
+   "phase": "C",
+   "what": "contracts/openapi.yaml — 6 paths, 6 schemas — plus generated TypeScript and Swift clients.",
+   "why_hand_rolled": "A general OpenAPI generator is a large dependency producing code nobody reads. The output here is meant to be read in review, because that is where a breaking change gets noticed by a person.",
+   "guards": [
+    "contracts-fresh.mjs — the generated clients must match the spec; a generated file nobody regenerates is a stale hand-written file with a misleading header",
+    "contracts-additive.mjs — removals, renames and newly-required fields are refused against contracts/surface.lock.json; additions pass and re-locking is a deliberate, reviewable act"
+   ],
+   "swift_detail": "Generated enums decode an unknown value to a fallback rather than throwing: the server may add a price_state before an installed build knows it, and a decode failure there stops sync entirely.",
+   "stale_invariants_fixed": [
+    "INV-ADDITIVE-CONTRACTS named contract-compat.mjs and `pnpm test:client-skew`",
+    "INV-CONTRACT-SYNC named `pnpm contracts:regen`",
+    "None existed. Both invariants now run."
+   ]
+  },
+  "N19-unify-modality-vocabulary": {
+   "status": "pass",
+   "phase": "B",
+   "backlog_claim_corrected": "The backlog says this 'mis-prices real money today'. Measured on production: 6 of 887 exams disagree with CMS (5 XR, 1 NM), and NONE of them sit inside a paid PPC bundle. Realised damage: zero dollars. The mechanism was real; the loss had not happened yet.",
+   "the_defect": "PPC_BUCKET was always correct — an unrecognised modality falls to 'other', which is unpaid. Every CALL SITE defaulted to 'CT' first, so nothing was ever unrecognised and any unknown study was paid at the CT rate. In the July rate snapshot that is $150 instead of $50 per study. The old neuro table contained no XR codes at all; CMS has 236.",
+   "fixed": [
+    "resolveValue() returns CMS modality; /api/reference/codes serves it; /api/exams stores it",
+    "every '|| \"CT\"' default replaced with 'Other', which is unpaid",
+    "the modality filter lists are derived from the data instead of a hardcoded five"
+   ],
+   "guard": "no-guessed-modality.mjs — fails if any call site defaults into a paid bucket, or if PPC_BUCKET stops failing closed. Poisoned.",
+   "not_touched": "Historical extra-duty pay. amount and rate_snapshot are frozen at save time by deliberate design so editing rates never re-prices past shifts — and none of the mis-classified exams were in a paid bundle anyway.",
+   "backfilled": "6 production rows aligned with CMS (display/analytics only). Now MRI 467, CT 291, MRA 79, CTA 44, XR 5, NM 1. Total wRVU unchanged at 1392.19. Reversible via exams_modality_log."
+  },
+  "N12-reference-api": {
+   "status": "pass",
+   "phase": "B",
+   "repo": "neurorvu-ios (PR #1)",
+   "what": "The edge API reads the Neon reference schema; the iOS client now APPLIES the payload instead of discarding it.",
+   "found": "The endpoint served a 293 KB static file with TWO tables — including the stale 61-code neuro table (54 codes disagreeing with CMS) and conversionFactor 33.4 against 33.4009. The seventh copy. Nobody noticed because RemoteTable never decoded `codes`: the client parsed the payload and threw the tables away.",
+   "why_it_matters": "Until now iOS and the PWA agreed only because the bundled seed happened to match. A new CMS release now reaches installed builds by loading a version in Postgres, not by shipping a binary through App Store review.",
+   "d29_enforced": "The service connects as app_rls — SELECT on reference and nothing else, every tenant table behind FORCE RLS whose GUC it never sets. Verified against the real database: select count(*) from exams returns 0. D29 is enforced rather than asserted.",
+   "care": [
+    "ETag is release + content hash of the CMS source, so it changes when the DATA does",
+    "failure is 503, never a stale fallback — a failed sync is non-fatal client-side",
+    "the ETag is recorded only AFTER a successful apply; the old order would have marked a device up to date forever after a failed install",
+    "a payload under 500 codes is refused — a truncated download must not replace a complete local table"
+   ],
+   "tests": "62 in 14 suites on the pinned iOS 26.5 runtime, including four new",
+   "production": "Deployed. Edge API reads Neon; DATABASE_URL set as app_rls on the neurorvu-edge-api project."
+  },
+  "N13-taxonomy-seed": {
+   "status": "pass",
+   "phase": "B",
+   "what": "reference.code_specialties — 352 of 828 codes tagged: neuro 126, body 113, msk 49, breast 23, vascular 21, cardiac 20.",
+   "d36": "Tags RANK; they may never restrict. 476 codes are deliberately untagged (body_region 'other') — unranked, never hidden. A filter would make most of the schedule unreachable, and the doctor could not log the study.",
+   "derived_not_curated": "Rules in scripts/reference/derive-specialties.mjs, re-runnable against any release, so a new CMS extract never arrives untagged. A hand-typed 828-row mapping is exactly the artifact that drifts — this codebase has paid for that twice.",
+   "guard": "taxonomy-never-restricts.mjs — static (no query narrows by specialty) plus runtime (the price book still serves every code in the release). Poisoned.",
+   "production": "0007 applied and 352 tags derived in production; tagged 352 / 828 codes / 668 served."
+  },
+  "N06b-extract-baseline-consolidation": {
+   "status": "pass",
+   "phase": "A1",
+   "what": "consolidateBaseline, BASELINE_FIELDS and FIELD_LABEL moved to lib/analytics/baseline.js; the shared number/date helpers to lib/analytics/format.js. Behaviour unchanged.",
+   "why_first": "The founder chose N06 before N18. This is the arithmetic N18 disturbs when institutions stop being two hardcoded names, so it is under test BEFORE that rather than after.",
+   "epsilons_pinned": "pay 1, cfte 0.01, everything else 0.5 — with a test that a difference EXACTLY equal to epsilon does not flag. Too tight and every re-exported report is a wall of false discrepancies, which trains the user to click through the review panel without reading it.",
+   "tests": "10 characterisation tests, written from the pre-extraction behaviour, now part of verify:shippable and CI.",
+   "size": "components/NeuroRVU.jsx 1835 -> 1800 lines"
+  },
+  "N18-n-institution-model": {
+   "status": "pass",
+   "phase": "B",
+   "decisions": {
+    "reported_split": "Proportional, generalised N-way",
+    "sequencing": "N06 first (done)",
+    "existing_data": "Seed UM/JHS, link history, keep the text column"
+   },
+   "done": [
+    "0008 — institutions + institution_sites tables, tenant-scoped with FORCE RLS from the first line; exams.institution_id added",
+    "institutions.js is data-driven: makeClassifier(list, overrides). The default list reproduces the old behaviour exactly.",
+    "timeline.js sharesFor() splits N ways with the remainder to the LAST institution, so shares sum to exactly 1",
+    "seed-institutions.mjs — dry-run by default",
+    "16 analytics tests: the 10 legacy ones pass UNCHANGED, which is the proof the generalisation altered nothing",
+    "/api/institutions serves the user's rows and site overrides; /api/exams stamps institution_id on new rows",
+    "The PWA reads institutions at the root and injects them into settings, so every builder gets them with no call-site change; falls back to the built-ins when the API returns nothing",
+    "PUT /api/institutions — the whole set in one transaction; validation refuses a set with no default or duplicate names",
+    "Settings editor: create/rename/recolour institutions, set YTD per institution, choose the default, map sites",
+    "Removal of an institution with exams is refused BEFORE the save, using a count GET now returns — the error envelope carries a code and nothing else, so a 409 cannot explain itself afterwards",
+    "Every UI surface generalised: InstitutionCards, donut, split KPI, stacked reported chart, amber estimate note, Tracker picker, Exams filter AND the Exams per-institution table columns",
+    "timeline.js emits flat rep_<KEY>/trk_<KEY> series — a stacked chart cannot read a nested object",
+    "settings.umYTD/jhsYTD superseded: YTD lives on institutions.ytd_wrvu, with the legacy scalars as fallback until a row carries a figure",
+    "N18d — iOS: InstitutionRegistry holds the set as data; Institution is a String-backed value type over it. allCases follows the registry, so the Exams filter, Tracker split, Settings site picker and the log-row cycle button all generalise at once. ExamsView per-CPT counts keyed by institution (two Int fields named um/jhs had the same defect as the PWA's table). neurorvu-ios PR #4, main 106b7d5, CI run 32325496578: 76 tests in 16 suites."
+   ],
+   "why_remainder_to_last": "Independently computed shares do not sum to 1 in floating point — 1/3+1/3+1/3 is not 1 — and the difference is wRVU that vanishes from the reported split. The old two-institution code already did this with jhsShare = 1 - umShare; generalising means keeping the habit.",
+   "inv_site_never_fails": "Enforced by a partial unique index: exactly one default institution per user. An unmapped site always has somewhere to land.",
+   "new_capability": "A user-defined site mapping now beats every built-in pattern — the iOS nrv_sites behaviour, which the PWA lacked.",
+   "remaining": [],
+   "production": "0008 applied and seeded: 6 institutions across 2 users, 887 exams linked. UM 541 / JHS 346 / Other 0 — identical to the pre-migration distribution.",
+   "fallback": "A user who has never opened Settings has no rows; the client falls back to the built-in UM/JHS/Other so the dashboard still works. INV-SITE-NEVER-FAILS applies to a brand-new account too.",
+   "gui_verified": "Verified end-to-end on fella.cc with real data (869 exams). Created a third institution 'Baptist Health' with YTD 500: the split KPI went 81/19 -> 75/17/8, the donut gained a third slice, the stacked chart gained a third series, the amber note read 'UM 75% / JHS 17% / BAP 8%', the Exams tab gained a fourth card, a BAP filter and a BAP column, and the YTD-vs-baseline mismatch warning fired. Removed it and saved again; every surface returned to the exact prior state.",
+   "complete": "Both apps. The engine, the write API, both UIs, and the classifier on device."
+  },
+  "N06-decompose-dashboard": {
+   "status": "pass",
+   "phase": "A1",
+   "done": [
+    "N06b — consolidateBaseline + format helpers -> lib/analytics/baseline.js, format.js (10 tests)",
+    "analytics extraction — INSTITUTIONS/classifyInstitution -> institutions.js, buildTimeline -> timeline.js, buildAnalytics/buildRange -> tracked.js (10 tests)",
+    "N06d — PPC_BUCKET/bucketCounts/buildExtraDuty -> lib/analytics/extra-duty.js, with the 7 tests they never had",
+    "components/analytics/client.jsx — price book hook, callClaude, loadKey/saveKey, the two error translators",
+    "components/analytics/primitives.jsx — TabBtn, Kpi, Empty, StatTile, InstRow, NumCell, InstitutionCards",
+    "N06a — components/analytics/Tracker.jsx",
+    "N06c — components/analytics/Uploads.jsx",
+    "N06g — 0009 applied to dev AND production; the dead users table is gone from both.",
+    "N06e — components/analytics/Explorer.jsx: TrackedExplorer, the Tracked-explorer panel plus the extra-duty earnings panel that shares its date range"
+   ],
+   "size": "components/NeuroRVU.jsx 1906 -> 1139 lines across the whole N06 series; /app bundle 148 kB (271 kB first load)",
+   "why_this_order": "The founder chose N06 before N18. institutions.js IS the module N18 replaces, and timeline.js holds the share arithmetic it generalises — both are now small files under characterisation tests instead of 71 references scattered through a 1,800-line component.",
+   "pinned": "Shares sum to EXACTLY 1 (jhsShare is 1 - umShare, not jhsYTD/denom — independently computed thirds do not sum to 1 in floating point). The `|| 1` denominator guard keeps shares finite when no YTD figures exist. INV-SITE-NEVER-FAILS: no input to classifyInstitution is rejected.",
+   "remaining": [],
+   "note": "Complete. The arithmetic left the monolith first (N06b/d + institutions/timeline/tracked), then the views (Tracker, Uploads, Explorer). What deliberately stayed in the root is selection state that is persisted per user — nrv_explorer — and the writers that own it, because a child that owned its own date range would lose it on every tab switch.",
+   "verified_gui": "Preview 2026-08-20: Timeline renders both panels; the YTD preset moved Start to 2026-01-01 through updateExplorer in the parent and the value survived a Tracker->Timeline round trip. No console errors. The preset chips have no active state — pre-existing, unchanged by the extraction.",
+   "caught": "no-undef (enabled by N06h) failed the extraction immediately on four imports the move left behind — localMonth, daysAgo, AlertTriangle. Before the build, and before a browser."
+  },
+  "N26-pricing-parity": {
+   "status": "pass",
+   "depends_on": [
+    "N14-unified-pricing"
+   ],
+   "priority": 26,
+   "merged": "wruvs PR #32 (main 32bb611); neurorvu-ios PR #2 (main 95a7c63)",
+   "found": [
+    "ParserService priced from the 61-code neuro table, 55 of whose 61 work RVUs disagreed with CMS RVU26A; 24 were hand-estimates flagged 2026/add-on",
+    "ReferenceSeeder never set est/flag when seeding RVU26A, so all 282 contractor-priced codes read as a real price of 0 on the bundled offline seed",
+    "Pricing.resolveValue existed with zero callers — the money path bypassed it entirely"
+   ],
+   "verified": [
+    "69 tests in 15 suites pass on the iOS simulator",
+    "poison (revert seeder fix): 40 of 113 golden vectors disagree; 76390 reads .priced/0",
+    "poison (corrupt one neuro value + re-add a 2026 flag): both drift guards fire, and FixturePipelineTests STAYS GREEN — proof money no longer flows through the neuro table",
+    "pricing-golden-fresh.mjs against the live reference DB: 113 vectors match, 6 states covered",
+    "CI run 32312048972 success; step 'pricing golden covers every price state' executed"
+   ],
+   "rollback": "revert 32bb611 and 95a7c63; no production data was migrated by this node"
+  },
+  "N26b-ios-ci-gate": {
+   "status": "pass",
+   "depends_on": [
+    "N26-pricing-parity"
+   ],
+   "priority": 26.5,
+   "merged": "neurorvu-ios PR #3 (main 8a3211d)",
+   "found": "neurorvu-ios had no CI workflow and no branch protection at all, while shipping to TestFlight. N26 merged there on locally-run tests only.",
+   "verified": [
+    "run 32312840273 success on macos-26: 'Test run with 69 tests in 15 suites passed', pinned destination iPhone 17 Pro / iOS 26.5, 69 @Test declared",
+    "poison (source file committed without regenerating the pbxproj): run 32313383795 FAILED at 'the checked-in project matches project.yml', tests step skipped — the gate can go red, and fails before the expensive step",
+    "branch protection applied and probed: a direct push to neurorvu-ios main is rejected with GH006 / 'Required status check \"checks\" is expected' — identical to wruvs"
+   ],
+   "anti_vacuity": [
+    ".ios-runtime is read by both CI and scripts/test-ios.sh, so the two cannot disagree about what was tested; the script fails loudly rather than letting xcodebuild substitute a runtime",
+    "xcodegen output must match the checked-in pbxproj — an uncompiled Swift file's tests do not exist and the suite passes without them",
+    "the declared @Test count must not fall below 60"
+   ],
+   "cost": "macOS runners bill at 10x Linux minutes; the suite is ~4 minutes of build+test per run",
+   "rollback": "delete .github/workflows/ci.yml and remove the protection rule"
+  },
+  "N06h-production-crash": {
+   "status": "pass",
+   "phase": "A1",
+   "priority": 6.1,
+   "merged": "PR #35 (8adefb8), PR #36 (afea913), PR #37 (a3d361b)",
+   "found": [
+    "settingsWithInstitutions referenced from Tracker, ExamsView and Timeline's ImportReview, where it was never in scope. Shipped in 48e9e9f at 18:30; production deployed 19:18. The Tracker tab — the DEFAULT tab — threw for every signed-in user for roughly an hour.",
+    "eslint extends next/core-web-vitals, which leaves no-undef OFF. Lint passed on #31 and CI was green while a guaranteed runtime crash shipped.",
+    "Turning no-undef on immediately found four more: ExamsView referenced the deleted INSTITUTIONS map for table columns hardcoded to UM and JHS.",
+    "The reported institution split rendered 0 / 100 while its own subtitle read UM 4,963 · JHS 1,146 — 0008 seeded ytd_wrvu = 0 and the root passed those zeros to sharesFor, so the denominator was zero. Display had a fallback the arithmetic did not."
+   ],
+   "verified": [
+    "no-undef is on and gated in ci.yml and shippable.mjs; poisoning it back reproduces \"'settingsWithInstitutions' is not defined\"",
+    "no-guessed-modality rewritten to walk the whole client surface and require exactly one PPC_BUCKET; poisoned three ways",
+    "GUI walk of all five tabs plus the Settings drawer on fella.cc: zero application console errors",
+    "reported split measured 0%/100% before, 81%/19% after, on the real production figures"
+   ],
+   "lesson": "Every check was green while the default tab was crashing. The gap was not a missing test but a disabled lint rule, and only opening the app found it."
+  },
+  "N06g-drop-dead-users-table": {
+   "status": "pass",
+   "phase": "A1",
+   "priority": 6.7,
+   "approved_by_founder": "2026-08-19",
+   "done": [
+    "dev branch migrated",
+    "production main migrated: users GONE, 10 migrations recorded, 887 exams intact",
+    "pre-flight on production confirmed the premise: 0 rows, 0 foreign keys",
+    "snapshot branch pre-N06g-drop-users-20260819 (auto-delete Never) taken from main first (INV-PROD-AUDITED)",
+    "table-exposure.mjs caught the now-stale `users: shared` classification and it was removed; poisoned back to confirm the guard fires"
+   ],
+   "safety": "0009 refuses to drop the table if it holds ANY rows, and raises with the count. Applying it to production cannot destroy data — if the premise of this node is wrong, the migration says so and aborts.",
+   "evidence": "No foreign key references users. The only code references were the Drizzle declaration itself and one classification entry in table-exposure.mjs. Identity is Clerk's: /admin reads the user list from Clerk's API and every other table keys on the Clerk user id as text.",
+   "rollback": "drizzle/0009_drop_dead_users_table.down.sql recreates the shape; there are no rows to restore because 0009 refuses to run against a non-empty table."
+  },
+  "N18f-ios-pull-institutions": {
+   "status": "pass",
+   "phase": "B",
+   "priority": 18.6,
+   "merged": "neurorvu-ios PR #5, main baf1cac",
+   "what": "CloudSync pulls /api/institutions (same fella.cc backend and Clerk token it already used for exams) and adopts the set into InstitutionRegistry. Before this, replace() had zero call sites outside tests and the phone ran the built-in three regardless of what the user configured.",
+   "ordering": "The pull runs FIRST in sync(): everything after it classifies sites, and classifying against the built-in three then learning there are five would bucket that sync's studies wrongly.",
+   "precedence": "Site mappings were a race over who wrote Institution.overrides last. Now stated: the PWA's institution_sites are the base, the device's own nrv_sites layer on top and win.",
+   "verified": "82 tests in 17 suites. Poisoning the pattern carry-over drops 'umhc' and 'Jackson Memorial' to Other — all history reclassified — which is why the test is there."
+  },
+  "N-release-0.2.0": {
+   "status": "pass",
+   "phase": "B",
+   "priority": 18.9,
+   "what": "TestFlight build 0.2.0 (3), the first since build 2 on 2026-08-08. Carries N12, N26, N18d and N18f.",
+   "why_it_mattered": "Everything from N26 was merged but undelivered: the phone was still pricing from the bundled neuro table (55 of 61 values disagreeing with CMS) and reading all 282 contractor-priced codes as a real 0. Reference sync could not fix it — applyIfChanged only replaces RVU26A, and the neuro table is bundle-only.",
+   "signing_gap_closed": [
+    "The account had no DISTRIBUTION certificate at all — only DEVELOPMENT — and Xcode's cloud signing refused to create one ('Cloud signing permission error').",
+    "Created it through the App Store Connect API instead: local RSA-2048 CSR -> POST /v1/certificates -> imported cert and key into the login keychain.",
+    "Then POST /v1/profiles for an IOS_APP_STORE profile including that certificate, installed to ~/Library/MobileDevice/Provisioning Profiles, and exported with manual signing."
+   ],
+   "verified": "Archive proven to carry the fixes before upload: conversion factor 33.4009 (not the stale 33.4), 70496 at 1.71 (not 1.75), zero hand-estimate flags. App Store Connect now reports build 3 VALID.",
+   "repeatable": "scripts/release-testflight.sh in neurorvu-ios — runs the suite, archives, exports, uploads. Needs ASC_KEY_ID and ASC_ISSUER_ID; neither is a secret and the .p8 is already on the machine.",
+   "remaining": "Distribute build 3 to the internal 'Core' group in TestFlight — a one-click action in App Store Connect."
+  },
+  "N33-onboarding-wizard": {
+   "status": "pass",
+   "phase": "D",
+   "what": "First-run onboarding in both clients: six skippable steps capturing principal institution (name, state, address), sites of exams, specialty and pay. Plus the change that makes it honest — a brand-new account has NO rate, and every dollar on screen goes through one function that returns nothing when the rate is unset.",
+   "why": "A new sign-in previously landed on a Tracker showing five zeroes, three institutions that were hardcoded fallbacks rather than theirs, and a comp tile computed from a $78 rate they had never entered. Someone else's numbers, presented as their own.",
+   "schema": "0010_institution_profile.sql — practice_state, address, is_primary on institutions, with a partial unique index for at-most-one primary per user. Applied to dev AND production (11 migrations, 6 institutions and 887 exams intact). practice_state, not state: reference.code_rvus.price_state already exists and means priced/not_payable.",
+   "two_flags": "is_default is where an unmapped site lands (exactly one per user, INV-SITE-NEVER-FAILS). is_primary is the user's principal employer (at most one, optional). Conflating them would have made 'my main hospital' silently also the fallback bucket.",
+   "founder_decisions": [
+    "rate field left EMPTY, not pre-filled 78 (changed from the earlier answer mid-build)",
+    "specialty step included and skippable",
+    "the app is RadRVU, not NeuroRVU, in every user-visible string"
+   ],
+   "gui_verified": {
+    "pwa": "Preview 2026-08-20, both passes: complete-everything and skip-everything. Skip reaches a working Tracker whose comp tile reads '—' / 'Set your rate in Settings'. Production shows no wizard for the existing user (institutions present).",
+    "ios": "Simulator iPhone 17 Pro / iOS 26.5, fresh install, 2026-08-20. 'Welcome to RadRVU', pay field empty, Tracker subtitle 'Radiology productivity · CMS 2026'. Screenshots per step attached by OnboardingUITests. Also installed and launched on the physical iPhone."
+   },
+   "vacuity_found": [
+    "INVARIANTS.yaml named pnpm test:onboarding-skip, which did not exist. scripts/verify/onboarding-skip.mjs now makes it real and is wired into ci.yml + shippable-parity.",
+    "XCUITest mounts all six pages at once, so a shared continueButton query matched six elements and every existence assertion passed trivially. Fixed with per-step continue_<step> identifiers and isHittable rather than exists.",
+    "The rate field is a 22pt LabeledContent trailing strip; a centre tap missed it and focus never arrived, so 'typed the rate' was a lie. Now taps a normalized offset and asserts the keyboard exists.",
+    "The skip test's dollars-hidden loop exempted the string \"$0\" -- exactly what a regressed comp tile renders. It permitted the only thing it existed to forbid. Now exempts the extra-duty tile by identity (tile:<label>) and forbids every $ elsewhere; poisoned to confirm it fails."
+   ],
+   "open": [
+    "G4.4 stays open: onboarding CAPTURES state and address but derives no CMS locality. Blocked on N10 (GPCI addendum). Deferred to v2 by the founder, after Phases C and D.",
+    "Bundle ID, iCloud container and CKRecord names still say neurorvu. Renaming them is a data migration, not a string change — a separate decision.",
+    "The app icon and onboarding hero are still brain.head.profile. Off-brand for RadRVU; a design call, not a build one."
+   ],
+   "prs": "wruvs #43; neurorvu-ios #7",
+   "goal_criteria": {
+    "G4.1": "pass",
+    "G4.2": "pass",
+    "G4.3": "pass",
+    "G4.5": "pass",
+    "G4.4": "open — needs N10 locality data"
+   }
   }
+ },
+ "statuses": {
+  "ready": "dependencies satisfied, not started",
+  "building": "a Builder holds this node",
+  "validating": "a fresh Validator is re-deriving done_when",
+  "pass": "Validator confirmed with evidence",
+  "fail": "Validator rejected — human review required",
+  "blocked": "waiting on a dependency",
+  "blocked_external": "work complete and all runnable checks pass; named verifications need operator credentials, a deploy, or infrastructure the agent cannot reach",
+  "blocked_integration": "the node's own work is complete and verified, but landing it requires a design change where it meets another node"
+ },
+ "backlog_ref": "goals/BACKLOG.yaml",
+ "evidence_dir": "goals/evidence",
+ "dev_database": {
+  "provider": "Neon branch on neon-almond-leaf",
+  "branch": "dev",
+  "branch_id": "br-late-paper-at5h75si",
+  "parent": "main",
+  "type": "SCHEMA-ONLY — 15 tables, zero rows, verified writable",
+  "auto_delete": "Never",
+  "postgres": "17.10",
+  "created": "2026-08-18",
+  "local_env": ".env.local (mode 600, gitignored) — pooled DATABASE_URL + unpooled DATABASE_URL_UNPOOLED",
+  "verified": [
+   "pooled connect ok",
+   "unpooled connect ok",
+   "drizzle-kit check ok",
+   "drizzle-kit pull ok",
+   "write/read/drop ok"
+  ],
+  "note": "Contains no production rows, so it is safe for agent use and satisfies D25a."
+ }
 }

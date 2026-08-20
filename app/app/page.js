@@ -18,7 +18,7 @@ export default async function AppPage() {
             <span className="grid place-items-center w-7 h-7 rounded-lg bg-slate-900">
               <Brain className="w-4 h-4 text-teal-300" />
             </span>
-            NeuroRVU
+            RadRVU
           </Link>
           <div className="flex items-center gap-3">
             {admin && (
