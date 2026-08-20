@@ -587,6 +587,42 @@
    "verified": "Archive proven to carry the fixes before upload: conversion factor 33.4009 (not the stale 33.4), 70496 at 1.71 (not 1.75), zero hand-estimate flags. App Store Connect now reports build 3 VALID.",
    "repeatable": "scripts/release-testflight.sh in neurorvu-ios — runs the suite, archives, exports, uploads. Needs ASC_KEY_ID and ASC_ISSUER_ID; neither is a secret and the .p8 is already on the machine.",
    "remaining": "Distribute build 3 to the internal 'Core' group in TestFlight — a one-click action in App Store Connect."
+  },
+  "N33-onboarding-wizard": {
+   "status": "pass",
+   "phase": "D",
+   "what": "First-run onboarding in both clients: six skippable steps capturing principal institution (name, state, address), sites of exams, specialty and pay. Plus the change that makes it honest — a brand-new account has NO rate, and every dollar on screen goes through one function that returns nothing when the rate is unset.",
+   "why": "A new sign-in previously landed on a Tracker showing five zeroes, three institutions that were hardcoded fallbacks rather than theirs, and a comp tile computed from a $78 rate they had never entered. Someone else's numbers, presented as their own.",
+   "schema": "0010_institution_profile.sql — practice_state, address, is_primary on institutions, with a partial unique index for at-most-one primary per user. Applied to dev AND production (11 migrations, 6 institutions and 887 exams intact). practice_state, not state: reference.code_rvus.price_state already exists and means priced/not_payable.",
+   "two_flags": "is_default is where an unmapped site lands (exactly one per user, INV-SITE-NEVER-FAILS). is_primary is the user's principal employer (at most one, optional). Conflating them would have made 'my main hospital' silently also the fallback bucket.",
+   "founder_decisions": [
+    "rate field left EMPTY, not pre-filled 78 (changed from the earlier answer mid-build)",
+    "specialty step included and skippable",
+    "the app is RadRVU, not NeuroRVU, in every user-visible string"
+   ],
+   "gui_verified": {
+    "pwa": "Preview 2026-08-20, both passes: complete-everything and skip-everything. Skip reaches a working Tracker whose comp tile reads '—' / 'Set your rate in Settings'. Production shows no wizard for the existing user (institutions present).",
+    "ios": "Simulator iPhone 17 Pro / iOS 26.5, fresh install, 2026-08-20. 'Welcome to RadRVU', pay field empty, Tracker subtitle 'Radiology productivity · CMS 2026'. Screenshots per step attached by OnboardingUITests. Also installed and launched on the physical iPhone."
+   },
+   "vacuity_found": [
+    "INVARIANTS.yaml named pnpm test:onboarding-skip, which did not exist. scripts/verify/onboarding-skip.mjs now makes it real and is wired into ci.yml + shippable-parity.",
+    "XCUITest mounts all six pages at once, so a shared continueButton query matched six elements and every existence assertion passed trivially. Fixed with per-step continue_<step> identifiers and isHittable rather than exists.",
+    "The rate field is a 22pt LabeledContent trailing strip; a centre tap missed it and focus never arrived, so 'typed the rate' was a lie. Now taps a normalized offset and asserts the keyboard exists.",
+    "The skip test's dollars-hidden loop exempted the string \"$0\" -- exactly what a regressed comp tile renders. It permitted the only thing it existed to forbid. Now exempts the extra-duty tile by identity (tile:<label>) and forbids every $ elsewhere; poisoned to confirm it fails."
+   ],
+   "open": [
+    "G4.4 stays open: onboarding CAPTURES state and address but derives no CMS locality. Blocked on N10 (GPCI addendum). Deferred to v2 by the founder, after Phases C and D.",
+    "Bundle ID, iCloud container and CKRecord names still say neurorvu. Renaming them is a data migration, not a string change — a separate decision.",
+    "The app icon and onboarding hero are still brain.head.profile. Off-brand for RadRVU; a design call, not a build one."
+   ],
+   "prs": "wruvs #43; neurorvu-ios #7",
+   "goal_criteria": {
+    "G4.1": "pass",
+    "G4.2": "pass",
+    "G4.3": "pass",
+    "G4.5": "pass",
+    "G4.4": "open — needs N10 locality data"
+   }
   }
  },
  "statuses": {
