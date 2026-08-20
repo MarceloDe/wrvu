@@ -46,6 +46,11 @@
       "idx": 8,
       "tag": "0008_institutions",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "tag": "0009_drop_dead_users_table",
+      "breakpoints": true
     }
   ]
 }
