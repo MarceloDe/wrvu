@@ -1,8 +1,16 @@
 {
   "root": true,
   "extends": "next/core-web-vitals",
+  "env": { "browser": true, "node": true, "es2022": true },
   "rules": {
-    "no-empty": ["error", { "allowEmptyCatch": false }]
+    "no-empty": ["error", { "allowEmptyCatch": false }],
+    "no-undef": "error"
   },
+  "overrides": [
+    {
+      "files": ["**/*.ts", "**/*.tsx"],
+      "rules": { "no-undef": "off" }
+    }
+  ],
   "ignorePatterns": ["node_modules/", ".next/", "out/", "public/sw.js"]
 }

@@ -154,3 +154,48 @@ test("a fourth institution needs no code change", () => {
   assert.equal(classify("Holtz"), "JHS", "existing institutions keep classifying as before");
   assert.equal(classify("Nowhere"), "Other");
 });
+
+// ── N18: N institutions, driven by rows rather than two scalars ────────────────
+test("ytdByInstitution drives the split for an arbitrary number of institutions", () => {
+  const three = [
+    { key: "A", label: "A", short: "A", color: "#111" },
+    { key: "B", label: "B", short: "B", color: "#222" },
+    { key: "C", label: "C", short: "C", color: "#333" },
+    { key: "Other", label: "Other", short: "Other", isDefault: true },
+  ];
+  const t = buildTimeline(
+    [{ key: "2026-01", mo: "Jan", bench: 100, base: 300, extra: 0, pay: 0, cfte: 1 }],
+    [],
+    { ...settings, institutions: three, ytdByInstitution: { A: 100, B: 100, C: 100 } },
+  );
+  const sum = ["A", "B", "C"].reduce((s, k) => s + t.shares[k], 0);
+  assert.equal(sum, 1, "three independently computed thirds must still sum to exactly 1");
+  assert.equal(t.shares.Other, 0, "the default institution carries no reported share");
+  // The reported total must be conserved: nothing lost to rounding drift.
+  const m = t.months[0];
+  assert.equal(m.rep_A + m.rep_B + m.rep_C, 300);
+});
+
+test("flat rep_/trk_ series keys exist for every institution", () => {
+  const t = buildTimeline(
+    [{ key: "2026-01", mo: "Jan", bench: 100, base: 200, extra: 0, pay: 0, cfte: 1 }],
+    [{ date: "2026-01-15", items: [{ count: 2, wrvu: 5, inst: "JMH", cpt: "70551", desc: "x", mod: "MRI" }] }],
+    { ...settings, umYTD: 100, jhsYTD: 100 },
+  );
+  const m = t.months[0];
+  // A stacked chart needs one dataKey per series and cannot reach into a nested object.
+  assert.equal(typeof m.rep_UM, "number");
+  assert.equal(typeof m.trk_JHS, "number");
+  assert.equal(m.trk_JHS, 10, "JMH classifies to JHS, so its 10 wRVU land in trk_JHS");
+  assert.equal(m.trk_UM, 0);
+});
+
+test("an institution with no exams still reports a series rather than vanishing", () => {
+  const t = buildTimeline([], [], { ...settings, umYTD: 1, jhsYTD: 1 });
+  const t2 = buildTimeline(
+    [{ key: "2026-02", mo: "Feb", bench: 10, base: 10, extra: 0, pay: 0, cfte: 1 }],
+    [], { ...settings, umYTD: 1, jhsYTD: 1 },
+  );
+  assert.equal(t.months.length, 0);
+  assert.equal(t2.months[0].trk_UM, 0, "absent is 0, not undefined — undefined breaks the chart axis");
+});

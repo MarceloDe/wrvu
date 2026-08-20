@@ -57,7 +57,13 @@ for (const [n, sc] of Object.entries(now.schemas)) {
   if (!old) { added.push(`new schema ${n}`); continue; }
   for (const f of sc.properties) if (!old.properties.includes(f)) added.push(`${n}.${f}`);
 }
-for (const p of Object.keys(now.paths)) if (!was.paths[p]) added.push(`new path ${p}`);
+for (const [p, methods] of Object.entries(now.paths)) {
+  if (!was.paths[p]) { added.push(`new path ${p}`); continue; }
+  // A new METHOD on an existing path is an addition too. Reporting it as "no change"
+  // was wrong: the whole point of the lock is that somebody looks at a surface change
+  // deliberately, and a PUT appearing on a path that already had a GET is exactly that.
+  for (const m of methods) if (!was.paths[p].includes(m)) added.push(`new method ${m.toUpperCase()} ${p}`);
+}
 
 problems.length
   ? fail(`${problems.length} non-additive contract change(s)`, [...problems, "", "If this removal is intended, it needs a coordinated client release — not a re-lock."])

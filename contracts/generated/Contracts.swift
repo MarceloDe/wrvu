@@ -36,6 +36,8 @@ public struct Institution: Codable {
     /// The YTD figure the reported total is split by.
     public var ytdWrvu: Double?
     public var sortOrder: Int?
+    /// Exams already attributed to this institution. The editor uses it to refuse a removal before saving, because the error envelope carries a code and nothing else and so cannot explain the refusal afterwards.
+    public var examCount: Int?
     /// Exactly one per user. Where an unrecognised site lands (INV-SITE-NEVER-FAILS).
     public var isDefault: Bool
 }

@@ -33,6 +33,7 @@ export const STEPS = [
   { key: "llm-proxy",          ci: "npm run test:llm-proxy-contract", cmd: ["npm", "run", "test:llm-proxy-contract"] },
   { key: "baseline",           ci: "npm run test:baseline",           cmd: ["npm", "run", "test:baseline"] },
   { key: "analytics",          ci: "npm run test:analytics",          cmd: ["npm", "run", "test:analytics"] },
+  { key: "extra-duty",         ci: "npm run test:extra-duty",         cmd: ["npm", "run", "test:extra-duty"] },
   { key: "build",              ci: "next build",                      cmd: ["__next_build__"] },
 ];
 

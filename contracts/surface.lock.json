@@ -23,7 +23,8 @@
       "post"
     ],
     "/api/institutions": [
-      "get"
+      "get",
+      "put"
     ],
     "/api/reference/codes": [
       "get"
@@ -53,6 +54,7 @@
     "Institution": {
       "properties": [
         "color",
+        "examCount",
         "id",
         "isDefault",
         "label",

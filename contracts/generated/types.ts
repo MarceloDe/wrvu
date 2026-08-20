@@ -20,6 +20,8 @@ export interface Institution {
   /** The YTD figure the reported total is split by. */
   ytdWrvu?: number | null;
   sortOrder?: number | null;
+  /** Exams already attributed to this institution. The editor uses it to refuse a removal before saving, because the error envelope carries a code and nothing else and so cannot explain the refusal afterwards. */
+  examCount?: number | null;
   /** Exactly one per user. Where an unrecognised site lands (INV-SITE-NEVER-FAILS). */
   isDefault: boolean;
 }
