@@ -651,6 +651,36 @@
     "not_done": "Ranking on the phone. cms2026-neuro.json bundles 61 codes with no specialty tags, so the tags must reach the device first. This also closes a real parity gap: the PWA now searches 668 codes, the phone still searches 61."
    },
    "deliberately_excluded": "The PWA Codes tab still browses the 61-code taxonomy. It is a reference table ordered by CPT, where specialty ranking would fight the ordering people expect; widening it to 668 rows is a UI change of its own."
+  },
+  "N36b-specialty-tags-on-device": {
+   "status": "pass",
+   "phase": "D",
+   "what": "Specialty tags reach the phone, and quick-add ranks by the user's choice instead of a hardcoded neuro-first rule.",
+   "correction_to_N36": "An earlier note said the phone searched only 61 codes and that this was a parity gap against the PWA's 668. Wrong on both counts: the device bundles rvu26a.jsonl (2,164 rows at hcpcs+modifier grain), syncs that table from the same Neon schema, and quick-add already searched all of it. The PWA's 668 is the modifier='26' subset. Only the TAGS were missing.",
+   "delivery": [
+    "edge api/v1/reference.js: specialties per code via array_agg, served for every row including untagged ones as []",
+    "PAYLOAD_SHAPE token added to the ETag. The hash covers the SOURCE DATA, not the payload shape, so adding a field without bumping it would 304 every device that already held the old ETag — forever, and it would have looked like 'ranking does nothing on my phone' rather than a caching bug",
+    "ReferenceSyncClient decodes specialties as optional, so a server predating the field cannot fail the whole sync",
+    "code-specialties.json (7 KB, 352 codes) bundled, so a device that has never reached the network ranks identically"
+   ],
+   "the_upgrade_trap": "Both delivery paths short-circuit on 'nothing changed': seedIfNeeded only seeds when a system table is ABSENT, so an upgrade keeps rows carrying the empty default; and applyIfChanged returns early when the stored referenceVersion still matches, which adding a payload field does not alter. The feature would have worked on a fresh install and been PERMANENTLY INERT on every phone that already had the app. backfillSpecialtyTagsIfNeeded fixes it: idempotent, stands down the moment any tagged code exists, never overwrites tags a later sync delivered.",
+   "found_by": "The UI test. Unit tests seed a fresh store, so they structurally cannot see the upgrade path — the simulator still held codes seeded by an older build, which is exactly the user's situation.",
+   "model_choice": "RVUCode.specialtyTags is a String, not [String]. There is no VersionedSchema and NeuroRVUApp calls fatalError if the store will not open, so the least ambiguous additive change SwiftData can migrate was the right bet on an app already installed on the founder's phone.",
+   "d36": {
+    "property": "SpecialtyRanking.rank REORDERS and returns every element it was given; it has no filtering branch.",
+    "unit": "Set equality across all four settings, plus untagged-never-hidden and exact-code-wins. Poisoned with a filter: 3 fail, and a body user sees 1 of 6 codes.",
+    "gui": "Two probes with queries chosen for the job: 'ct' for ORDER (far more than the 7-row cap, so only sequence is testable) and 'sella' for REACHABILITY (exactly 3 matches, all neuro-tagged, so the full set fits under the cap and a filter would show a body radiologist nothing)."
+   },
+   "test_mistakes_worth_remembering": [
+    "Stacking a second accessibilityIdentifier silently overrides the first. The rows already had codeResult-<cpt> (used by ExamPersistenceUITests), so the added codeResult_<index> never existed and the helper found nothing. Reverted the product change; the test reads TREE ORDER instead.",
+    "The first restriction assertion compared the visible top-7 across two specialties and demanded they match — which correct ranking makes impossible. A test that can only pass when the feature is broken: the mirror image of vacuity.",
+    "Tapping Done instead of 'Save settings' discarded the change, and the test then reported ranking as unwired when it was not."
+   ],
+   "bug_fixed_on_the_way": "SettingsSheet's Done sat in .confirmationAction — the placement that reads as commit — with no Cancel anywhere, and only dismissed. Any edit not followed by tapping the mid-form 'Save settings' button was silently discarded, including the pay rate. Done now calls saveAll().",
+   "also_added": "A specialty picker in Settings: onboarding asks once and is skippable, so the value was otherwise write-once.",
+   "open": "The PWA Codes tab still browses the 61-code taxonomy (a CPT-ordered reference table; widening it to 668 rows is its own UI change). The bundled tag file goes stale on a new CMS release — the sync path delivers fresh tags then, and the backfill stands down once any tag exists.",
+   "merged": "neurorvu-ios PR #9; edge API deployed to production 2026-08-20",
+   "evidence": "115 iOS tests green. GUI: same query \"ct\" returns head/brain CTs under Neuroradiology and thoracic-spine CTs under Body; \"sella\" returns all 3 neuro-tagged matches to a body radiologist."
   }
  },
  "statuses": {
