@@ -309,8 +309,13 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
             </span>
             <h1 id="onboarding-heading" className="text-2xl font-bold metal-text tracking-tight">What do you read?</h1>
             <p className="mt-3 text-slate-400 text-sm">
-              This only changes the order things appear in. Every one of the 828 codes stays
-              searchable whichever you pick.
+              {/* No count here on purpose. It said 828, which is the number of distinct
+                  HCPCS in the release — but this client searches the professional-component
+                  subset, which is 668. A figure in onboarding copy that nobody can check
+                  drifts the moment the fee schedule does; "every code" is true either way
+                  and is the claim that actually matters (D36). */}
+              This only changes the order things appear in. Every code stays searchable
+              whichever you pick.
             </p>
             <div className="mt-6 grid gap-2">
               {SPECIALTIES.map(([key, title, body]) => (
