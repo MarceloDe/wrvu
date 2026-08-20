@@ -623,6 +623,34 @@
     "G4.5": "pass",
     "G4.4": "open — needs N10 locality data"
    }
+  },
+  "N06i-quickadd-crash": {
+   "status": "pass",
+   "phase": "A1",
+   "merged": "PR #44 (6bb3e39), deployed to production 2026-08-20",
+   "found": "Typing anything into the Tracker quick-add box, or the assign-code box on an unpriced upload row, took the whole page to the client-side error screen: TypeError: Cannot read properties of undefined (reading 'toFixed'). Both dropdowns rendered c.wrvu.toFixed(2) over the display taxonomy, which carries no price at all and says so in its own header. The FIRST result of ANY query threw.",
+   "how_found": "Reading the search code while scoping the specialty node, then reproducing it in the browser on fella.cc rather than assuming. no-undef could not catch it — it is a property access on a defined object.",
+   "scope": "Only the two dropdowns. The Codes tab reads prices.byCpt and is fully null-safe already (n/a / not priced / —), which is what confirmed the blast radius.",
+   "verified": "fella.cc after deploy: 70450 renders 'CT Head/Brain W/O' at 0.83, no error screen, 1,353 exams and the $166,708 comp tile intact."
+  },
+  "N36-specialty-ranking": {
+   "status": "partial",
+   "phase": "D",
+   "merged": "wruvs PR #44; neurorvu-ios PR #8 open",
+   "correction": "An earlier read of this claimed the edge API does not serve specialties. It does, and always did: /api/reference/codes aggregates reference.code_specialties per code. The gap was entirely client-side.",
+   "what": "lib/analytics/search.js merges the price book with the display taxonomy — curated name where one exists, numbers/coverage/tags from the server — and ranks by settings.specialty. Wired into both PWA search boxes.",
+   "why_it_mattered": "Onboarding promises 'first in search and quick-add' and wrote settings.specialty, which nothing read. It could not have: both boxes searched the 61-code neuro taxonomy, so 607 of the 668 served codes could not be found by any query and a body radiologist had nothing to rank.",
+   "d36": {
+    "property": "searchCodes returns the SAME SET for every specialty; only the ORDER changes. 353 of 668 served codes are untagged, so a filter would hide more than half the schedule.",
+    "test": "tests/search.test.mjs compares SETS across all four settings — a filter passes every 'neuro user sees neuro first' assertion anyone would write. Poisoned with a filter: 5 of 13 fail.",
+    "guard": "taxonomy-never-restricts.mjs had SQL-shaped regexes only, so it watched the one place the mistake could no longer be made. Extended to the client and poisoned. Its first client regex used [^\\n)] and silently missed because '.filter((c) =>' has a ')' immediately; fixed and re-poisoned."
+   },
+   "counts_corrected": "Three comments claimed '476 of 828 untagged'. Verified 2026-08-20: the price book serves 668 professional-component codes, 315 tagged, 353 untagged. The guard's own runtime count had the same error and reported 352 by counting tags on codes it never serves.",
+   "ios": {
+    "done": "AnalyticsSettings.specialty added and settingsPatch now writes it — the step used to collect an answer and discard it. Stored as String, not the enum, so an unrecognised value round-trips instead of overwriting a PWA choice on the shared nrv_settings blob.",
+    "not_done": "Ranking on the phone. cms2026-neuro.json bundles 61 codes with no specialty tags, so the tags must reach the device first. This also closes a real parity gap: the PWA now searches 668 codes, the phone still searches 61."
+   },
+   "deliberately_excluded": "The PWA Codes tab still browses the 61-code taxonomy. It is a reference table ordered by CPT, where specialty ranking would fight the ordering people expect; widening it to 668 rows is a UI change of its own."
   }
  },
  "statuses": {
