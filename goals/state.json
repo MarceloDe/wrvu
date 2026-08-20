@@ -452,17 +452,17 @@
         "Removal of an institution with exams is refused BEFORE the save, using a count GET now returns \u2014 the error envelope carries a code and nothing else, so a 409 cannot explain itself afterwards",
         "Every UI surface generalised: InstitutionCards, donut, split KPI, stacked reported chart, amber estimate note, Tracker picker, Exams filter AND the Exams per-institution table columns",
         "timeline.js emits flat rep_<KEY>/trk_<KEY> series \u2014 a stacked chart cannot read a nested object",
-        "settings.umYTD/jhsYTD superseded: YTD lives on institutions.ytd_wrvu, with the legacy scalars as fallback until a row carries a figure"
+        "settings.umYTD/jhsYTD superseded: YTD lives on institutions.ytd_wrvu, with the legacy scalars as fallback until a row carries a figure",
+        "N18d \u2014 iOS: InstitutionRegistry holds the set as data; Institution is a String-backed value type over it. allCases follows the registry, so the Exams filter, Tracker split, Settings site picker and the log-row cycle button all generalise at once. ExamsView per-CPT counts keyed by institution (two Int fields named um/jhs had the same defect as the PWA's table). neurorvu-ios PR #4, main 106b7d5, CI run 32325496578: 76 tests in 16 suites."
       ],
       "why_remainder_to_last": "Independently computed shares do not sum to 1 in floating point \u2014 1/3+1/3+1/3 is not 1 \u2014 and the difference is wRVU that vanishes from the reported split. The old two-institution code already did this with jhsShare = 1 - umShare; generalising means keeping the habit.",
       "inv_site_never_fails": "Enforced by a partial unique index: exactly one default institution per user. An unmapped site always has somewhere to land.",
       "new_capability": "A user-defined site mapping now beats every built-in pattern \u2014 the iOS nrv_sites behaviour, which the PWA lacked.",
-      "remaining": [
-        "iOS Institution enum becomes data-driven (N18d)"
-      ],
+      "remaining": [],
       "production": "0008 applied and seeded: 6 institutions across 2 users, 887 exams linked. UM 541 / JHS 346 / Other 0 \u2014 identical to the pre-migration distribution.",
       "fallback": "A user who has never opened Settings has no rows; the client falls back to the built-in UM/JHS/Other so the dashboard still works. INV-SITE-NEVER-FAILS applies to a brand-new account too.",
-      "gui_verified": "Verified end-to-end on fella.cc with real data (869 exams). Created a third institution 'Baptist Health' with YTD 500: the split KPI went 81/19 -> 75/17/8, the donut gained a third slice, the stacked chart gained a third series, the amber note read 'UM 75% / JHS 17% / BAP 8%', the Exams tab gained a fourth card, a BAP filter and a BAP column, and the YTD-vs-baseline mismatch warning fired. Removed it and saved again; every surface returned to the exact prior state."
+      "gui_verified": "Verified end-to-end on fella.cc with real data (869 exams). Created a third institution 'Baptist Health' with YTD 500: the split KPI went 81/19 -> 75/17/8, the donut gained a third slice, the stacked chart gained a third series, the amber note read 'UM 75% / JHS 17% / BAP 8%', the Exams tab gained a fourth card, a BAP filter and a BAP column, and the YTD-vs-baseline mismatch warning fired. Removed it and saved again; every surface returned to the exact prior state.",
+      "complete": "Both apps. The engine, the write API, both UIs, and the classifier on device."
     },
     "N06-decompose-dashboard": {
       "status": "partial",
@@ -474,14 +474,14 @@
         "components/analytics/client.jsx \u2014 price book hook, callClaude, loadKey/saveKey, the two error translators",
         "components/analytics/primitives.jsx \u2014 TabBtn, Kpi, Empty, StatTile, InstRow, NumCell, InstitutionCards",
         "N06a \u2014 components/analytics/Tracker.jsx",
-        "N06c \u2014 components/analytics/Uploads.jsx"
+        "N06c \u2014 components/analytics/Uploads.jsx",
+        "N06g \u2014 0009_drop_dead_users_table applied to the dev branch; users is gone and 10 migrations are recorded. Production still pending: the apply needs the production DATABASE_URL, which is a sensitive Vercel variable this machine cannot pull."
       ],
       "size": "components/NeuroRVU.jsx 1906 -> 1156 lines; /app bundle 142 kB before and after",
       "why_this_order": "The founder chose N06 before N18. institutions.js IS the module N18 replaces, and timeline.js holds the share arithmetic it generalises \u2014 both are now small files under characterisation tests instead of 71 references scattered through a 1,800-line component.",
       "pinned": "Shares sum to EXACTLY 1 (jhsShare is 1 - umShare, not jhsYTD/denom \u2014 independently computed thirds do not sum to 1 in floating point). The `|| 1` denominator guard keeps shares finite when no YTD figures exist. INV-SITE-NEVER-FAILS: no input to classifyInstitution is rejected.",
       "remaining": [
-        "N06e extract explorer (UI)",
-        "N06g delete the dead users table \u2014 migration 0009 written with a refuse-if-non-empty guard; apply blocked by the permission classifier, needs operator approval"
+        "N06e extract explorer (UI)"
       ],
       "note": "The remaining extractions are UI components, not arithmetic. N18's prerequisite \u2014 the money math out of the monolith and under test \u2014 is met."
     },
@@ -545,6 +545,21 @@
         "reported split measured 0%/100% before, 81%/19% after, on the real production figures"
       ],
       "lesson": "Every check was green while the default tab was crashing. The gap was not a missing test but a disabled lint rule, and only opening the app found it."
+    },
+    "N06g-drop-dead-users-table": {
+      "status": "partial",
+      "phase": "A1",
+      "priority": 6.7,
+      "approved_by_founder": "2026-08-19",
+      "done": [
+        "dev branch migrated; public.users dropped; db:migrate:check reports nothing to apply"
+      ],
+      "safety": "0009 refuses to drop the table if it holds ANY rows, and raises with the count. Applying it to production cannot destroy data \u2014 if the premise of this node is wrong, the migration says so and aborts.",
+      "evidence": "No foreign key references users. The only code references were the Drizzle declaration itself and one classification entry in table-exposure.mjs. Identity is Clerk's: /admin reads the user list from Clerk's API and every other table keys on the Clerk user id as text.",
+      "remaining": [
+        "apply to production: npm run db:migrate with the production DATABASE_URL_UNPOOLED"
+      ],
+      "rollback": "drizzle/0009_drop_dead_users_table.down.sql recreates the shape; there are no rows to restore because 0009 refuses to run against a non-empty table."
     }
   },
   "statuses": {
