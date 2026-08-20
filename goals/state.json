@@ -681,6 +681,40 @@
    "open": "The PWA Codes tab still browses the 61-code taxonomy (a CPT-ordered reference table; widening it to 668 rows is its own UI change). The bundled tag file goes stale on a new CMS release — the sync path delivers fresh tags then, and the backfill stands down once any tag exists.",
    "merged": "neurorvu-ios PR #9; edge API deployed to production 2026-08-20",
    "evidence": "115 iOS tests green. GUI: same query \"ct\" returns head/brain CTs under Neuroradiology and thoracic-spine CTs under Body; \"sella\" returns all 3 neuro-tagged matches to a body radiologist."
+  },
+  "N56-phi-posture": {
+   "status": "pass",
+   "phase": "F",
+   "merged": "wrvu PR #49 (c8e3cd3), deployed to production; neurorvu-ios PR #12 (da2c5ef)",
+   "target": "External TestFlight / Beta App Review (D10). NOT a public App Store listing (D1).",
+   "premise_checked": "The founder's position was that no PHI caution is needed and that users are already instructed not to enter MRN/patient data. Half held. The database half was true and verified: 103 columns across public + reference, zero patient identifiers, no image or blob column, no patient dimension. The instruction half was false — no screen in either app said it, and the only guidance was the redaction tagger's 'Mark the patient-name and MRN columns', which PRESUMES PHI is present.",
+   "claim_breaker_found": "iOS wrote every picked worklist screenshot, unmodified, to Application Support/uploads/ and NOTHING ever deleted it — the only removeItem in the app was a CloudKit temp file, and 'Delete cluster' removed Exam rows while leaving the UploadBatch record and the JPEGs. Nothing ever read them back either (no view, no UIImage), so they were retained patient-identifiable pixels with zero product purpose. 'Stores no patient information' was false as written until this was fixed.",
+   "built": [
+    "iOS: screenshots are no longer written at all; ImageUploadSweeper deletes what earlier builds left, on every launch, for the installed population that is the only one that matters",
+    "iOS: deleteBatch also removes the UploadBatch row, so 'deleted' means what the user was told",
+    "Both clients: onboarding step 'Patient privacy' at position 2 of 7, before any question is asked, restated at the point of capture on every use (G4.5)",
+    "privacyAcknowledgedAt is a TIMESTAMP, null when skipped — never a fabricated acknowledgement, because a compliance record that is not true is worse than none",
+    "PrivacyInfo.xcprivacy: NSPrivacyCollectedDataTypes was an EMPTY array while the app sends an email to Clerk and exam rows to Neon. Populated accurately (G8.3)",
+    "docs/PHI-POSTURE.md — the distribution statement, every claim naming the code behind it",
+    "README privacy sections in both repos; neurorvu-ios had no README at all"
+   ],
+   "control_gap_found": "phi-schema-scan.mjs — the primary check behind INV-NO-PHI-IN-CLOUD — was NEVER IN ci.yml and had gated zero PRs. It cannot run in CI: it introspects a live schema and deliberately FAILS rather than skipping without a database, which is correct and was not weakened. phi-columns-static.mjs now reads the migrations, where a column is born, so a patient-shaped column fails in the PR that introduces it. Poisoned with patient_name and mrn: both caught.",
+   "latent_failure_found": "institutions.address (migration 0010, added during N33a) had been FAILING phi-schema-scan on developer machines ever since, gating nothing. Allowlisted with a printed reason — it is a hospital street address about the physician's own workplace — rather than renamed to practice_address, which would dodge the regex without changing what the column holds.",
+   "limits_stated_in_the_document": [
+    "PWA masking covers only the two columns the user marks; a DOB or accession column elsewhere on the image is not masked",
+    "PDFs bypass masking by design (they carry the physician's own HR report)",
+    "PWA exam_date is second precision, so the cloud store is a LIMITED DATA SET, not de-identified data under Safe Harbor. iOS truncates to day; the PWA does not",
+    "No BAA is executed with Anthropic, Neon, Vercel or Clerk",
+    "A physician could still photograph an identifier despite being told not to; the four layers are controls, not guarantees"
+   ],
+   "evidence": "123 iOS tests. GUI: the privacy step and the capture-point notice screenshotted on iPhone 17 Pro / iOS 26.5, the latter captured deliberately AFTER skipping onboarding — the person who skipped the instruction is exactly who needs it at capture time.",
+   "still_open": [
+    "DECISIONS.md D6 still reads 'PHI is in scope. Patient names and MRNs are stored, in an encrypted on-device vault.' That vault was never built and the sentence contradicts this node. Scoped out by the founder; a two-line fix.",
+    "INV-NO-CLINICAL requires a persistent non-clinical disclaimer (G8.6). It does not exist in any UI and Beta App Review will look for it.",
+    "CloudSync pushes raw OCR procedureText without the allowlist redactor (CloudSyncService.swift:317).",
+    "PWA redaction profile is never restored — loadKey() envelope bug at Tracker.jsx:49-50 reads the wrapper instead of .value. Fails closed, no leak, but users re-tag every session.",
+    "No privacy policy document or hosted URL. Not required for TestFlight; required for any public listing."
+   ]
   }
  },
  "statuses": {
