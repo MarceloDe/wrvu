@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { TAXONOMY } from "@/lib/data/neuro-taxonomy.js";
 import { consolidateBaseline, BASELINE_FIELDS, FIELD_LABEL } from "@/lib/analytics/baseline.js";
 import { num, fmt, monthKey, pad2, localDay, localMonth, daysAgo, MONTH_LABEL, weekStartKey, WEEK_LABEL } from "@/lib/analytics/format.js";
-import { INSTITUTIONS, classifyInstitution, instMeta, DEFAULT_INSTITUTIONS } from "@/lib/analytics/institutions.js";
+import { classifyInstitution, instMeta, DEFAULT_INSTITUTIONS } from "@/lib/analytics/institutions.js";
 import { buildTimeline } from "@/lib/analytics/timeline.js";
 import { buildAnalytics, buildRange } from "@/lib/analytics/tracked.js";
 import {
@@ -45,6 +45,9 @@ const CODES = TAXONOMY;   // display taxonomy only — carries NO wRVU. See the 
 let institutionsPromise = null;
 function useInstitutions() {
   const [state, setState] = useState({ institutions: null, siteOverrides: {}, loading: true });
+  // Bumping this busts the module-level cache after a save, so the dashboard reflects a
+  // renamed institution immediately instead of on the next full page load.
+  const [nonce, setNonce] = useState(0);
   useEffect(() => {
     let alive = true;
     institutionsPromise = institutionsPromise || fetch("/api/institutions").then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status))));
@@ -52,7 +55,7 @@ function useInstitutions() {
       .then(d => { if (!alive) return;
         const list = (d.institutions || []).map(i => ({
           key: i.name, label: i.label, short: i.shortLabel, color: i.color,
-          ytd: i.ytdWrvu, isDefault: i.isDefault,
+          ytd: i.ytdWrvu, isDefault: i.isDefault, examCount: i.examCount ?? 0,
           // Patterns stay in code for the seeded three; a user-created institution is
           // matched by its explicit site mappings, not by a regex nobody wrote.
           prefix: DEFAULT_INSTITUTIONS.find(d => d.key === i.name)?.prefix,
@@ -62,8 +65,8 @@ function useInstitutions() {
       })
       .catch(() => { if (alive) setState(s => ({ ...s, loading: false })); });
     return () => { alive = false; };
-  }, []);
-  return state;
+  }, [nonce]);
+  return { ...state, reload: () => { institutionsPromise = null; setNonce(n => n + 1); } };
 }
 
 let priceBookPromise = null;   // one fetch per page load, shared by every caller
@@ -361,8 +364,46 @@ export default function NeuroRVU() {
   const inst = useInstitutions();
   // Injected, not stored. Every builder reads settings.institutions, so threading them
   // here means no call site changes and nothing can forget to pass them.
+  // Returns null on success, or a message the drawer shows without closing. The server
+  // is the authority on whether a set is valid (one default, unique names, no removal
+  // that would orphan exams), so its message is surfaced verbatim rather than guessed at.
+  const saveInstitutions = async (institutions, siteOverrides) => {
+    try {
+      const r = await fetch("/api/institutions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ institutions, siteOverrides }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => null);
+        const code = body?.error?.code;
+        // The envelope is `{error:{code,correlationId}}` and nothing else, so the wording
+        // lives here. The correlation id is shown because it is the only thing that ties
+        // what the user saw to the server log.
+        const why = code === "validation_failed"
+          ? "That set was rejected: it needs exactly one default institution, unique names, and no institution removed while exams still point at it."
+          : code === "unauthorized" ? "Your session expired — sign in again."
+          : `Could not save institutions (${r.status}).`;
+        return body?.error?.correlationId ? `${why} (ref ${body.error.correlationId.slice(0, 8)})` : why;
+      }
+      inst.reload();
+      return null;
+    } catch {
+      return networkFailure("save your institutions");
+    }
+  };
   const settingsWithInstitutions = useMemo(
-    () => (inst.institutions ? { ...settings, institutions: inst.institutions, siteOverrides: inst.siteOverrides } : settings),
+    () => (inst.institutions
+      ? {
+          ...settings,
+          institutions: inst.institutions,
+          siteOverrides: inst.siteOverrides,
+          // The YTD figures now live on the institution rows. umYTD/jhsYTD stay in
+          // settings as the fallback for an account with no rows yet, but once rows
+          // exist they are what the reported split is computed from.
+          ytdByInstitution: Object.fromEntries(inst.institutions.map((i) => [i.key, Number(i.ytd) || 0])),
+        }
+      : settings),
     [settings, inst.institutions, inst.siteOverrides],
   );
   const [ready, setReady] = useState(false);
@@ -512,7 +553,7 @@ export default function NeuroRVU() {
         </div>
       </nav>
 
-      {showSettings && <SettingsDrawer settings={settingsWithInstitutions} onSave={updateSettings} extraRates={extraRates} onSaveExtraRates={saveExtraRates} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsDrawer settings={settingsWithInstitutions} onSave={updateSettings} extraRates={extraRates} onSaveExtraRates={saveExtraRates} onSaveInstitutions={saveInstitutions} onClose={() => setShowSettings(false)} />}
 
       <footer className="max-w-6xl mx-auto px-5 py-6 text-[11px] text-slate-400 leading-relaxed">
         Two data layers, one tool: <span className="text-slate-500 font-medium">Reported</span> (FY26 monthly baseline, authoritative) and <span className="text-slate-500 font-medium">Tracked</span> (your daily screenshot logs, granular).
@@ -528,12 +569,14 @@ function TabBtn({ active, onClick, icon: Icon, children }) {
 
 /* ============================== SHARED ============================== */
 function InstitutionCards({ split, settings }) {
-  const order = ["UM", "JHS", "Other"];
-  const total = order.reduce((s, k) => s + split[k].wrvu, 0) || 1;
+  const list = settings.institutions ?? DEFAULT_INSTITUTIONS;
+  const order = list.map((i) => i.key);
+  const meta = Object.fromEntries(list.map((i) => [i.key, i]));
+  const total = order.reduce((s, k) => s + (split[k]?.wrvu ?? 0), 0) || 1;
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
       {order.map(k => {
-        const inst = INSTITUTIONS[k], d = split[k], pct = (d.wrvu / total) * 100;
+        const inst = meta[k] ?? instMeta(k), d = split[k] ?? { wrvu: 0, studies: 0 }, pct = (d.wrvu / total) * 100;
         return (
           <div key={k} className="rounded-2xl border border-slate-200 bg-white p-4">
             <div className="flex items-center justify-between">
@@ -596,7 +639,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
   // N00f/D8 — a PHOTO of a report is an image reaching /api/claude, so it needs
   // its own redaction profile for (this user, this institution). PDFs are sent
   // as document blocks and are out of this node's scope.
-  const [impInst, setImpInst] = useState("UM");
+  const [impInst, setImpInst] = useState(() => (settings.institutions ?? DEFAULT_INSTITUTIONS)[0]?.key ?? "UM");
   const [reportProfile, setReportProfile] = useState(null);
   const [impTagger, setImpTagger] = useState(null);
   useEffect(() => {
@@ -710,8 +753,19 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
     } catch { setDelError(networkFailure("Couldn't delete that shift")); }
   }
   const preset = (s, e) => updateExplorer({ ...explorer, start: s, end: e });
-  const donut = [{ name: "UHealth / UM", value: settings.umYTD, color: C.um }, { name: "Jackson / JHS", value: settings.jhsYTD, color: C.jhs }];
-  const instTotal = settings.umYTD + settings.jhsYTD;
+  // Every institution except the default: the default is where unattributed work lands
+  // and carries no reported YTD figure, so it would render as a 0-width slice.
+  const instList = (t.institutions ?? DEFAULT_INSTITUTIONS);
+  const reportable = instList.filter((i) => !i.isDefault);
+  // Rows become authoritative the moment ANY of them carries a figure. Falling back
+  // per-key instead would mean a user who deliberately sets UM to 0 keeps seeing the old
+  // umYTD forever, because 0 and "not migrated yet" are indistinguishable one key at a
+  // time. Whole-set is unambiguous, and it self-heals on the first save from Settings.
+  const rowsHaveYtd = reportable.some((i) => Number(settings.ytdByInstitution?.[i.key]) > 0);
+  const legacyYtd = (k) => Number(k === "UM" ? settings.umYTD : k === "JHS" ? settings.jhsYTD : 0) || 0;
+  const ytdOf = (k) => (rowsHaveYtd ? Number(settings.ytdByInstitution?.[k]) || 0 : legacyYtd(k));
+  const donut = reportable.map((i) => ({ name: i.label, value: ytdOf(i.key), color: i.color }));
+  const instTotal = donut.reduce((sum, d) => sum + d.value, 0);
   const instMismatch = Math.abs(instTotal - t.ytd.total) > 5;
 
   function editMonth(key, field, val) {
@@ -734,7 +788,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
         <RedactionTagger
           file={impTagger.file}
           institution={impInst}
-          institutions={["UM", "JHS", "Other"]}
+          institutions={instList.map((i) => i.key)}
           onInstitutionChange={setImpInst}
           reasonMessage={impTagger.reasonMessage}
           onCancel={() => { setImpTagger(null); setImpStatus("Import cancelled — nothing was sent."); }}
@@ -859,7 +913,9 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
         <Kpi icon={TrendingUp} label="YTD reported vs benchmark" value={fmt(t.ytd.base)} sub={`vs ${fmt(t.ytd.bench)} · +${fmt(t.ytd.variancePct, 0)}%`} good />
         <Kpi icon={Calendar} label="Total incl. extra coverage" value={fmt(t.ytd.total)} sub={`${fmt(t.ytd.base)} base + ${fmt(t.ytd.extra)} extra`} />
         <Kpi icon={DollarSign} label="Extra pay YTD (all sources)" value={`$${fmt(t.ytd.pay + extraDutyYtd)}`} sub={`reported $${fmt(t.ytd.pay)} + extra-duty $${fmt(extraDutyYtd)}`} accent />
-        <Kpi icon={Building2} label="Institution split (YTD)" value={`${fmt(t.umShare * 100, 0)} / ${fmt(t.jhsShare * 100, 0)}`} sub={`UM ${fmt(settings.umYTD)} · JHS ${fmt(settings.jhsYTD)}`} />
+        <Kpi icon={Building2} label="Institution split (YTD)"
+             value={reportable.map((i) => fmt((t.shares?.[i.key] ?? 0) * 100, 0)).join(" / ")}
+             sub={reportable.map((i) => `${i.short} ${fmt(ytdOf(i.key))}`).join(" · ")} />
       </div>
 
       {/* Chart */}
@@ -894,8 +950,10 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
                 <Line yAxisId="r" type="monotone" dataKey="cumReported" name="Cumulative" stroke={C.cum} strokeWidth={2} dot={{ r: 2.5 }} />
               </>}
               {view === "institution" && <>
-                <Bar yAxisId="l" dataKey="repUM" name="UHealth / UM*" stackId="a" fill={C.um} />
-                <Bar yAxisId="l" dataKey="repJHS" name="Jackson / JHS*" stackId="a" fill={C.jhs} radius={[5, 5, 0, 0]} />
+                {reportable.map((i, n) => (
+                  <Bar key={i.key} yAxisId="l" dataKey={`rep_${i.key}`} name={`${i.label}*`} stackId="a"
+                       fill={i.color} radius={n === reportable.length - 1 ? [5, 5, 0, 0] : undefined} />
+                ))}
                 <Line yAxisId="r" type="monotone" dataKey="cumReported" name="Cumulative" stroke={C.cum} strokeWidth={2} dot={{ r: 2.5 }} />
               </>}
               {view === "reconcile" && <>
@@ -906,7 +964,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-        {view === "institution" && <p className="text-[11px] text-amber-600 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />* Monthly UM/JHS bars are a proportional estimate ({fmt(t.umShare * 100, 0)}% / {fmt(t.jhsShare * 100, 0)}%). The source reports the split only as a YTD total — only those totals (UM {fmt(settings.umYTD)} / JHS {fmt(settings.jhsYTD)}) are exact.</p>}
+        {view === "institution" && <p className="text-[11px] text-amber-600 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />* Monthly bars are a proportional estimate ({reportable.map(i => `${i.short} ${fmt((t.shares?.[i.key] ?? 0) * 100, 0)}%`).join(" / ")}). The source reports the split only as a YTD total — only those totals ({reportable.map(i => `${i.short} ${fmt(ytdOf(i.key))}`).join(" · ")}) are exact.</p>}
         {view === "reconcile" && <p className="text-[11px] text-slate-500 mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-px shrink-0" />Capture completeness = tracked ÷ reported. As you log more daily screenshots, the amber bars rise toward the official reported bars — the gap is what your self-tracking hasn&apos;t captured yet.</p>}
       </div>
 
@@ -922,11 +980,13 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
             </ResponsiveContainer>
           </div>
           <div className="space-y-1.5 mt-1">
-            <InstRow dot={C.um} label="UHealth / UM" v={`${fmt(settings.umYTD)} · ${fmt(t.umShare * 100, 0)}%`} />
-            <InstRow dot={C.jhs} label="Jackson / JHS" v={`${fmt(settings.jhsYTD)} · ${fmt(t.jhsShare * 100, 0)}%`} />
+            {reportable.map((i) => (
+              <InstRow key={i.key} dot={i.color} label={i.label}
+                       v={`${fmt(ytdOf(i.key))} · ${fmt((t.shares?.[i.key] ?? 0) * 100, 0)}%`} />
+            ))}
             <InstRow dot="#0f172a" label="Total" v={fmt(instTotal)} bold />
           </div>
-          {instMismatch && <p className="text-[11px] text-amber-600 mt-2 flex items-start gap-1.5"><AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />UM+JHS ({fmt(instTotal)}) ≠ baseline total ({fmt(t.ytd.total)}). Update the YTD split in Settings when new months are added.</p>}
+          {instMismatch && <p className="text-[11px] text-amber-600 mt-2 flex items-start gap-1.5"><AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />Institution YTD total ({fmt(instTotal)}) ≠ baseline total ({fmt(t.ytd.total)}). Update the YTD figures in Settings when new months are added.</p>}
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 p-5 lg:col-span-2 overflow-x-auto">
@@ -1062,7 +1122,12 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
   const [status, setStatus] = useState("");
   const [draft, setDraft] = useState(null);
   const [manualDate, setManualDate] = useState(localDay());
-  const [curInst, setCurInst] = useState("UM");
+  // The configured set, not three literals. A user with four institutions gets four
+  // buttons; one who has never opened Settings gets the built-in three.
+  const instList = settings.institutions ?? DEFAULT_INSTITUTIONS;
+  const instKeys = instList.map((i) => i.key);
+  const instBy = Object.fromEntries(instList.map((i) => [i.key, i]));
+  const [curInst, setCurInst] = useState(instKeys[0] ?? "UM");
   const fileRef = useRef();
   // N00f/D8 — redaction profile for (this user, curInst). Loaded per institution;
   // `tagger` holds the upload that is BLOCKED until the columns are marked.
@@ -1238,7 +1303,11 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
     });
   }
   function removeDraftItem(it) { setDraft(d => { const items = d.items.filter(i => i.uid !== it.uid); return items.length ? { ...d, items } : null; }); }
-  function cycleInst(it) { const order = ["UM", "JHS", "Other"]; setDraft(d => ({ ...d, items: d.items.map(i => i.uid === it.uid ? { ...i, inst: order[(order.indexOf(i.inst) + 1) % 3] } : i) })); }
+  function cycleInst(it) {
+    const order = instKeys;
+    setDraft(d => ({ ...d, items: d.items.map(i => i.uid === it.uid
+      ? { ...i, inst: order[(order.indexOf(i.inst) + 1) % order.length] } : i) }));
+  }
   function assignCode(it, code) {
     const p = prices.byCpt[code.cpt];   // preview; the server re-prices on commit
     setDraft(d => ({ ...d, items: d.items.map(i => i.uid === it.uid
@@ -1299,7 +1368,7 @@ function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, pp
           <div className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-teal-600" /><h2 className="font-semibold">Log a session</h2></div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
-              {["UM", "JHS", "Other"].map(k => <button key={k} onClick={() => setCurInst(k)} className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${curInst === k ? "bg-white shadow-sm" : "text-slate-500"}`} style={curInst === k ? { color: INSTITUTIONS[k].color } : {}}>{INSTITUTIONS[k].short}</button>)}
+              {instKeys.map(k => <button key={k} onClick={() => setCurInst(k)} className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${curInst === k ? "bg-white shadow-sm" : "text-slate-500"}`} style={curInst === k ? { color: instBy[k]?.color } : {}}>{instBy[k]?.short ?? k}</button>)}
             </div>
             <label className="text-xs text-slate-500 flex items-center gap-2">Date<input type="date" value={manualDate} onChange={e => setManualDate(e.target.value)} className="border border-slate-200 rounded-md px-2 py-1 text-xs font-mono" /></label>
           </div>
@@ -1587,7 +1656,10 @@ function ExamsView({ log, settings }) {
           <div className="flex flex-wrap gap-1">
             {mods.map(m => <button key={m} onClick={() => setMod(m)} className={`px-2.5 py-1.5 rounded-lg text-xs font-medium ${mod === m ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{m}</button>)}
             <span className="w-px bg-slate-200 mx-1" />
-            {["ALL", "UM", "JHS", "Other"].map(k => <button key={k} onClick={() => setInst(k)} className={`px-2.5 py-1.5 rounded-lg text-xs font-medium ${inst === k ? "text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`} style={inst === k ? { background: k === "ALL" ? "#0f172a" : INSTITUTIONS[k].color } : {}}>{k === "ALL" ? "All sites" : INSTITUTIONS[k].short}</button>)}
+            {["ALL", ...(settings.institutions ?? DEFAULT_INSTITUTIONS).map(i => i.key)].map(k => {
+              const meta = (settings.institutions ?? DEFAULT_INSTITUTIONS).find(i => i.key === k);
+              return <button key={k} onClick={() => setInst(k)} className={`px-2.5 py-1.5 rounded-lg text-xs font-medium ${inst === k ? "text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`} style={inst === k ? { background: k === "ALL" ? "#0f172a" : meta?.color } : {}}>{k === "ALL" ? "All sites" : (meta?.short ?? k)}</button>;
+            })}
           </div>
         </div>
       </div>
@@ -1689,9 +1761,151 @@ function Reference({ settings }) {
 }
 
 /* ============================================================================ SETTINGS ============================================================================ */
-function SettingsDrawer({ settings, onSave, extraRates = { perDiemRate: 0, ppcMri: 0, ppcCt: 0, ppcXr: 0 }, onSaveExtraRates, onClose }) {
+// N18 — the institutions editor. Until this existed the set was whatever seed-institutions
+// had written, and the two YTD figures were scalars called umYTD/jhsYTD hardcoded into
+// Settings, so a third institution was unreachable from the UI.
+//
+// The whole set saves in ONE PUT: the default institution, the YTD figures and the site
+// mappings are interdependent, and saving them piecemeal would leave the classifier
+// pointing at an institution that no longer exists.
+function InstitutionsEditor({ value, overrides, onChange, onOverrides }) {
+  const setAt = (idx, patch) => onChange(value.map((i, n) => (n === idx ? { ...i, ...patch } : i)));
+  // Exactly one default, always: choosing a new one clears the old rather than toggling,
+  // because a set with none has nowhere to put an unmapped site (INV-SITE-NEVER-FAILS).
+  const makeDefault = (idx) => onChange(value.map((i, n) => ({ ...i, isDefault: n === idx })));
+  const add = () => onChange([...value, {
+    name: `INST${value.length + 1}`, label: "New institution", shortLabel: `I${value.length + 1}`,
+    color: "#64748b", ytdWrvu: 0, isDefault: false,
+  }]);
+  const remove = (idx) => {
+    // An institution with exams behind it is history. The server refuses this too, but
+    // its envelope carries a code and nothing else, so the reason has to be visible here.
+    if (value.length <= 1 || value[idx].examCount > 0) return;
+    const next = value.filter((_, n) => n !== idx);
+    if (!next.some((i) => i.isDefault)) next[next.length - 1].isDefault = true;
+    onChange(next);
+    // Drop mappings that pointed at it, or the save would silently discard them anyway.
+    const gone = value[idx].name;
+    onOverrides(Object.fromEntries(Object.entries(overrides).filter(([, v]) => v !== gone)));
+  };
+  const rows = Object.entries(overrides);
+  return (
+    <div className="space-y-3">
+      <div className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+        <Building2 className="w-3.5 h-3.5 text-teal-600" />Institutions
+      </div>
+      <p className="text-[11px] text-slate-400 -mt-2">
+        Your reported YTD wRVU per institution. The reported monthly split is divided by these shares.
+        One institution is the default — anything whose site does not match lands there rather than being dropped.
+      </p>
+      {value.map((i, idx) => (
+        <div key={idx} className="rounded-xl border border-slate-200 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <input aria-label={`Institution ${idx + 1} colour`} type="color" value={i.color || "#64748b"}
+                   onChange={e => setAt(idx, { color: e.target.value })}
+                   className="w-7 h-7 rounded border border-slate-200 shrink-0 bg-white" />
+            <input aria-label={`Institution ${idx + 1} name`} value={i.label} placeholder="Display name"
+                   onChange={e => setAt(idx, { label: e.target.value })}
+                   className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-sm" />
+            <button type="button" onClick={() => remove(idx)}
+                    disabled={value.length <= 1 || i.examCount > 0}
+                    aria-label={`Remove ${i.label}`}
+                    title={i.examCount > 0
+                      ? `${i.label} has ${i.examCount} exams attributed to it and cannot be removed`
+                      : `Remove ${i.label}`}
+                    className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30 disabled:hover:bg-transparent">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <input aria-label={`Institution ${idx + 1} short label`} value={i.shortLabel} placeholder="Short"
+                   onChange={e => setAt(idx, { shortLabel: e.target.value })}
+                   className="w-20 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono" />
+            <input aria-label={`Institution ${idx + 1} YTD wRVU`} type="number" step="1" value={i.ytdWrvu}
+                   onChange={e => setAt(idx, { ytdWrvu: Math.max(0, Number(e.target.value) || 0) })}
+                   className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono" />
+            <label className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
+              <input type="radio" name="default-institution" checked={!!i.isDefault}
+                     onChange={() => makeDefault(idx)} aria-label={`Make ${i.label} the default`} />
+              default
+            </label>
+          </div>
+          {i.examCount > 0 && (
+            <p className="text-[10px] text-slate-400">{i.examCount} exams attributed — cannot be removed</p>
+          )}
+        </div>
+      ))}
+      <button type="button" onClick={add}
+              className="w-full py-1.5 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:border-teal-400 hover:text-teal-600">
+        + Add institution
+      </button>
+
+      <div className="pt-2 border-t border-slate-100" />
+      <div className="text-sm font-semibold text-slate-700">Site mappings</div>
+      <p className="text-[11px] text-slate-400 -mt-2">
+        Send a specific site string to an institution. A mapping you write here beats every built-in pattern.
+      </p>
+      {rows.map(([pattern, name], idx) => (
+        <div key={idx} className="flex items-center gap-2">
+          <input aria-label={`Site pattern ${idx + 1}`} value={pattern} placeholder="e.g. UMBRELLA CLINIC"
+                 onChange={e => {
+                   const next = { ...overrides }; delete next[pattern];
+                   next[e.target.value] = name; onOverrides(next);
+                 }}
+                 className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono uppercase" />
+          <select aria-label={`Institution for ${pattern}`} value={name}
+                  onChange={e => onOverrides({ ...overrides, [pattern]: e.target.value })}
+                  className="w-24 border border-slate-200 rounded-lg px-1 py-1.5 text-xs bg-white">
+            {value.map(i => <option key={i.name} value={i.name}>{i.shortLabel || i.name}</option>)}
+          </select>
+          <button type="button" aria-label={`Remove mapping ${pattern}`}
+                  onClick={() => { const next = { ...overrides }; delete next[pattern]; onOverrides(next); }}
+                  className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ))}
+      <button type="button" onClick={() => onOverrides({ ...overrides, "": value[0]?.name ?? "" })}
+              className="w-full py-1.5 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:border-teal-400 hover:text-teal-600">
+        + Add site mapping
+      </button>
+    </div>
+  );
+}
+
+function SettingsDrawer({ settings, onSave, extraRates = { perDiemRate: 0, ppcMri: 0, ppcCt: 0, ppcXr: 0 }, onSaveExtraRates, onSaveInstitutions, onClose }) {
   const [s, setS] = useState(settings);
   const [er, setER] = useState(extraRates);
+  // The API shape, not the classifier shape: this is what PUT /api/institutions takes.
+  // Seeded from the built-ins when the user has never saved a set, so the editor opens
+  // showing what the dashboard is actually using rather than an empty list.
+  const [insts, setInsts] = useState(() => {
+    const list = settings.institutions ?? DEFAULT_INSTITUTIONS;
+    // Same whole-set rule the Timeline uses: seed from the legacy scalars only while no
+    // row carries a figure, so opening Settings shows what the dashboard is showing.
+    const migrated = list.some((i) => Number(i.ytd) > 0);
+    return list.map((i) => ({
+      name: i.key, label: i.label, shortLabel: i.short, color: i.color,
+      ytdWrvu: migrated
+        ? Number(i.ytd) || 0
+        : Number(i.key === "UM" ? settings.umYTD : i.key === "JHS" ? settings.jhsYTD : 0) || 0,
+      isDefault: !!i.isDefault, examCount: i.examCount ?? 0,
+    }));
+  });
+  const [overrides, setOverrides] = useState(settings.siteOverrides ?? {});
+  const [saving, setSaving] = useState(false);
+  const [instError, setInstError] = useState(null);
+
+  const save = async () => {
+    setSaving(true); setInstError(null);
+    // Institutions save first and to a real endpoint, so a rejected set (no default, a
+    // duplicate name, a removal that would orphan exams) keeps the drawer open with the
+    // reason visible instead of closing over a silent failure.
+    const problem = await onSaveInstitutions?.(insts, overrides);
+    setSaving(false);
+    if (problem) { setInstError(problem); return; }
+    onSave(s); onSaveExtraRates?.(er); onClose();
+  };
   const field = (k, label, sub, step = 1) => (
     <div><label className="text-sm font-medium text-slate-700">{label}</label>{sub && <p className="text-[11px] text-slate-400 mb-1">{sub}</p>}
       <input type="number" step={step} value={s[k]} onChange={e => setS({ ...s, [k]: Number(e.target.value) })} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono mt-1" /></div>
@@ -1711,8 +1925,12 @@ function SettingsDrawer({ settings, onSave, extraRates = { perDiemRate: 0, ppcMr
           {field("cFTE", "Current clinical FTE", "Scales monthly + annual targets", 0.01)}
           {field("privateMult", "Private vs Medicare multiplier", "Commercial ≈ Medicare × this", 0.05)}
           <div className="pt-2 border-t border-slate-100" />
-          {field("umYTD", "UHealth / UM — YTD wRVU", "Reported institution total")}
-          {field("jhsYTD", "Jackson / JHS — YTD wRVU", "Reported institution total")}
+          <InstitutionsEditor value={insts} overrides={overrides} onChange={setInsts} onOverrides={setOverrides} />
+          {instError && (
+            <p role="alert" className="text-[11px] text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-2.5 py-2">
+              {instError}
+            </p>
+          )}
           <div className="pt-2 border-t border-slate-100" />
           <div className="text-sm font-semibold text-slate-700 flex items-center gap-1.5"><Zap className="w-3.5 h-3.5 text-amber-600" />Extra-duty pay</div>
           <p className="text-[11px] text-slate-400 -mt-2">Rates used to price extra-duty shifts. Per-diem is a default you can override per shift; PPC pays per exam by modality.</p>
@@ -1721,8 +1939,10 @@ function SettingsDrawer({ settings, onSave, extraRates = { perDiemRate: 0, ppcMr
           {erField("ppcCt", "Pay-per-click — CT ($ / exam)")}
           {erField("ppcXr", "Pay-per-click — XR ($ / exam)")}
         </div>
-        <div className="mt-6 rounded-xl bg-slate-50 p-3 text-[11px] text-slate-500 leading-relaxed"><strong className="text-slate-700">Your data only:</strong> set your reported institution YTD wRVUs above, then add your monthly reported baseline in the Timeline tab. Everything here is private to your account.</div>
-        <button onClick={() => { onSave(s); onSaveExtraRates?.(er); onClose(); }} className="mt-6 w-full py-2.5 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800">Save settings</button>
+        <div className="mt-6 rounded-xl bg-slate-50 p-3 text-[11px] text-slate-500 leading-relaxed"><strong className="text-slate-700">Your data only:</strong> set each institution&apos;s reported YTD wRVU above, then add your monthly reported baseline in the Timeline tab. Everything here is private to your account.</div>
+        <button onClick={save} disabled={saving} className="mt-6 w-full py-2.5 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-60">
+          {saving ? "Saving…" : "Save settings"}
+        </button>
       </div>
     </div>
   );

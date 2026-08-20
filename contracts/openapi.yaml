@@ -69,6 +69,7 @@ components:
         color:      { type: string, nullable: true }
         ytdWrvu:    { type: number, nullable: true, description: The YTD figure the reported total is split by. }
         sortOrder:  { type: integer, nullable: true }
+        examCount:  { type: integer, nullable: true, description: "Exams already attributed to this institution. The editor uses it to refuse a removal before saving, because the error envelope carries a code and nothing else and so cannot explain the refusal afterwards." }
         isDefault:  { type: boolean, description: Exactly one per user. Where an unrecognised site lands (INV-SITE-NEVER-FAILS). }
 
     Exam:
@@ -360,6 +361,49 @@ paths:
                     description: Uppercased site string to institution name. A user mapping beats every built-in pattern.
                     additionalProperties: { type: string }
         "401": { $ref: '#/components/responses/Unauthorized' }
+    put:
+      summary: Replace the user's institutions and site mappings in one transaction
+      description: >
+        The Settings drawer edits institutions, their YTD figures and their site mappings
+        together and saves once. Granular CRUD would create windows where the set is
+        half-valid — no default institution, or a mapping pointing at an institution that
+        no longer exists. Exactly one institution must be the default, because that is
+        where an unmapped site lands (INV-SITE-NEVER-FAILS). Removing an institution that
+        still has exams behind it is refused rather than silently re-pointing that history.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [institutions]
+              properties:
+                institutions: { type: array, minItems: 1, items: { $ref: '#/components/schemas/Institution' } }
+                siteOverrides:
+                  type: object
+                  description: Site string to institution name. Uppercased server-side.
+                  additionalProperties: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:    { type: boolean }
+                  saved: { type: integer, description: How many institutions the set now has }
+        "400":
+          description: The set is not valid — no institutions, a blank or duplicate name, or not exactly one default.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "409":
+          description: An institution still has exams behind it, so the set was not changed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   /api/reference/codes:
     get:
