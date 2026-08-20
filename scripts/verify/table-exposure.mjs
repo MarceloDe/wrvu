@@ -33,7 +33,9 @@ const CLASSIFICATION = {
   exams: "tenant", extra_duty_periods: "tenant", extra_duty_rates: "tenant",
   user_kv: "tenant", llm_usage: "tenant", llm_rate_buckets: "tenant",
   institutions: "tenant", institution_sites: "tenant",
-  users: "shared",   // rvu_tables/rvu_codes dropped in 0006 — the reference schema replaced them
+  // Dropped, and deliberately absent rather than left here as a stale entry:
+  // rvu_tables/rvu_codes in 0006 (the reference schema replaced them), and `users`
+  // in 0009 (identity is Clerk's; the table never held a row).
   _migrations: "operator",
   exams_reprice_log: "operator",
   exams_modality_log: "operator",

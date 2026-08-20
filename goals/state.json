@@ -1,7 +1,7 @@
 {
   "$comment": "DAG state. Owned by the orchestrator. Do not hand-edit while a workflow is running.",
   "version": 2,
-  "updated": "2026-08-19",
+  "updated": "2026-08-20",
   "current_phase": "A1",
   "gate": {
     "rule": "Phase A1 may proceed. A0's gate was 'every node PASS'; its PURPOSE was 'no other work while live exposures are open'. All four exposures are verifiably closed in production \u2014 SETUP_TOKEN absent from code and Vercel, the LLM relay behind auth plus a template gate, the error envelope live with correlation ids, and a fail-closed redaction guard deployed.",
@@ -475,7 +475,7 @@
         "components/analytics/primitives.jsx \u2014 TabBtn, Kpi, Empty, StatTile, InstRow, NumCell, InstitutionCards",
         "N06a \u2014 components/analytics/Tracker.jsx",
         "N06c \u2014 components/analytics/Uploads.jsx",
-        "N06g \u2014 0009_drop_dead_users_table applied to the dev branch; users is gone and 10 migrations are recorded. Production still pending: the apply needs the production DATABASE_URL, which is a sensitive Vercel variable this machine cannot pull."
+        "N06g \u2014 0009 applied to dev AND production; the dead users table is gone from both."
       ],
       "size": "components/NeuroRVU.jsx 1906 -> 1156 lines; /app bundle 142 kB before and after",
       "why_this_order": "The founder chose N06 before N18. institutions.js IS the module N18 replaces, and timeline.js holds the share arithmetic it generalises \u2014 both are now small files under characterisation tests instead of 71 references scattered through a 1,800-line component.",
@@ -547,18 +547,19 @@
       "lesson": "Every check was green while the default tab was crashing. The gap was not a missing test but a disabled lint rule, and only opening the app found it."
     },
     "N06g-drop-dead-users-table": {
-      "status": "partial",
+      "status": "pass",
       "phase": "A1",
       "priority": 6.7,
       "approved_by_founder": "2026-08-19",
       "done": [
-        "dev branch migrated; public.users dropped; db:migrate:check reports nothing to apply"
+        "dev branch migrated",
+        "production main migrated: users GONE, 10 migrations recorded, 887 exams intact",
+        "pre-flight on production confirmed the premise: 0 rows, 0 foreign keys",
+        "snapshot branch pre-N06g-drop-users-20260819 (auto-delete Never) taken from main first (INV-PROD-AUDITED)",
+        "table-exposure.mjs caught the now-stale `users: shared` classification and it was removed; poisoned back to confirm the guard fires"
       ],
       "safety": "0009 refuses to drop the table if it holds ANY rows, and raises with the count. Applying it to production cannot destroy data \u2014 if the premise of this node is wrong, the migration says so and aborts.",
       "evidence": "No foreign key references users. The only code references were the Drizzle declaration itself and one classification entry in table-exposure.mjs. Identity is Clerk's: /admin reads the user list from Clerk's API and every other table keys on the Clerk user id as text.",
-      "remaining": [
-        "apply to production: npm run db:migrate with the production DATABASE_URL_UNPOOLED"
-      ],
       "rollback": "drizzle/0009_drop_dead_users_table.down.sql recreates the shape; there are no rows to restore because 0009 refuses to run against a non-empty table."
     }
   },
