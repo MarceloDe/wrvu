@@ -336,7 +336,7 @@ export default function NeuroRVU() {
         <div className="max-w-6xl mx-auto px-5 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-teal-500 to-indigo-600 flex items-center justify-center"><Brain className="w-5 h-5 text-white" /></div>
-            <div><div className="font-semibold tracking-tight leading-none">NeuroRVU</div><div className="text-[11px] text-slate-500 mt-0.5 font-mono">Neuroradiology productivity · CMS 2026</div></div>
+            <div><div className="font-semibold tracking-tight leading-none">RadRVU</div><div className="text-[11px] text-slate-500 mt-0.5 font-mono">Radiology productivity · CMS 2026</div></div>
           </div>
           <div className="flex items-center gap-1">
             {/* Desktop: inline tabs. Mobile uses the bottom bar below. */}

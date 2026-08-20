@@ -36,7 +36,7 @@ export default function Landing({ isSignedIn = false, adminEmail = "" }) {
             <span className="grid place-items-center w-8 h-8 rounded-xl metal-card">
               <Brain className="w-4.5 h-4.5 text-teal-300" />
             </span>
-            <span className="font-semibold tracking-tight metal-text">NeuroRVU</span>
+            <span className="font-semibold tracking-tight metal-text">RadRVU</span>
           </div>
           <a
             href={isSignedIn ? "/app" : "/sign-in"}
@@ -50,7 +50,7 @@ export default function Landing({ isSignedIn = false, adminEmail = "" }) {
       {/* ---- Hero ---- */}
       <section className="snap-start min-h-[calc(100dvh-3.5rem)] flex flex-col items-center justify-center text-center px-6 py-16">
         <span className="inline-flex items-center gap-1.5 rounded-full metal-card px-3 py-1 text-xs text-slate-300 mb-6">
-          <Sparkles className="w-3.5 h-3.5 text-teal-300" /> CMS 2026 · Neuroradiology
+          <Sparkles className="w-3.5 h-3.5 text-teal-300" /> CMS 2026 · All radiology
         </span>
         <h1 className="text-4xl sm:text-6xl font-bold tracking-tight metal-text leading-[1.05] max-w-3xl">
           Your wRVUs, captured the moment you read.
@@ -67,7 +67,7 @@ export default function Landing({ isSignedIn = false, adminEmail = "" }) {
             {isSignedIn ? "Open the app" : "Sign in"} <ArrowRight className="w-4 h-4" />
           </a>
           <a
-            href={adminEmail ? `mailto:${adminEmail}?subject=NeuroRVU%20access%20request` : "/sign-in"}
+            href={adminEmail ? `mailto:${adminEmail}?subject=RadRVU%20access%20request` : "/sign-in"}
             className="metal-btn-ghost w-full sm:w-auto rounded-xl px-6 py-3 font-medium flex items-center justify-center gap-2"
           >
             <Lock className="w-4 h-4" /> Request access
@@ -117,7 +117,7 @@ export default function Landing({ isSignedIn = false, adminEmail = "" }) {
         </span>
         <h2 className="text-2xl sm:text-3xl font-bold metal-text">Install it like a native app</h2>
         <p className="mt-3 text-slate-400">
-          Add NeuroRVU to your home screen for full-screen, offline-capable access and
+          Add RadRVU to your home screen for full-screen, offline-capable access and
           one-tap camera capture straight into the OCR.
         </p>
       </section>
@@ -132,7 +132,7 @@ export default function Landing({ isSignedIn = false, adminEmail = "" }) {
         >
           {isSignedIn ? "Open the app" : "Sign in"} <ArrowRight className="w-4 h-4" />
         </a>
-        <p className="mt-8 text-xs text-slate-600">© NeuroRVU · For productivity tracking only — not a billing system of record.</p>
+        <p className="mt-8 text-xs text-slate-600">© RadRVU · For productivity tracking only — not a billing system of record.</p>
       </footer>
     </main>
   );

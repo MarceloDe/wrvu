@@ -70,7 +70,10 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
   const [focusSite, setFocusSite] = useState(-1);
   // Steps 4-5.
   const [specialty, setSpecialty] = useState("all");
-  const [rate, setRate] = useState("78");
+  // Empty, not "78". A value pre-filled into a field the user never looked at is
+  // indistinguishable from an answer once it is saved — which is exactly how
+  // "$0 @ $78/wRVU" reached a new user's screen. They type it, or it stays unset.
+  const [rate, setRate] = useState("");
   const [benchmark, setBenchmark] = useState("578");
   const [cfte, setCfte] = useState("1");
 
@@ -167,7 +170,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
             <span className="grid place-items-center w-12 h-12 rounded-2xl bg-teal-400/10 border border-teal-300/20 mb-5">
               <Brain className="w-6 h-6 text-teal-300" />
             </span>
-            <h1 id="onboarding-heading" className="text-3xl font-bold metal-text tracking-tight">Welcome to NeuroRVU</h1>
+            <h1 id="onboarding-heading" className="text-3xl font-bold metal-text tracking-tight">Welcome to RadRVU</h1>
             <p className="mt-4 text-slate-300 leading-relaxed">
               Photograph your worklist and it becomes a priced, dated record of what you read —
               scored against CMS 2026 and against your own reported productivity.
@@ -345,7 +348,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
                 <label htmlFor="ob-rate" className={label}>$ per wRVU</label>
                 <input id="ob-rate" type="number" min="0" inputMode="decimal" className={input}
                        value={rate} onChange={(e) => setRate(e.target.value)} />
-                <p className={hint}>FY26 extra-coverage rate is about $78. Clear the box to leave it unset.</p>
+                <p className={hint}>FY26 extra-coverage rate is about $78. Leave it blank and dollar figures stay hidden.</p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -399,7 +402,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
             <div className="mt-7 flex items-center gap-3">
               <button onClick={finish} disabled={saving}
                       className="metal-btn rounded-xl px-5 py-2.5 font-semibold flex items-center gap-2 disabled:opacity-60">
-                {saving ? "Saving…" : "Open NeuroRVU"} <ArrowRight className="w-4 h-4" />
+                {saving ? "Saving…" : "Open RadRVU"} <ArrowRight className="w-4 h-4" />
               </button>
               <button onClick={back} className="text-sm text-slate-400 hover:text-slate-200 px-2 py-2">Back</button>
             </div>
