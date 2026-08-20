@@ -34,6 +34,7 @@ const EXEMPT = [
   "generated clients match the contract",
   "contract change is additive",
   "specialty tags rank but never restrict",
+  "onboarding stays skippable",
   "no modality is guessed into a paid bucket",
   "one price table only",
   "OCR prompt prices match the reference",

@@ -67,6 +67,8 @@ jobs:
       - name: specialty tags rank but never restrict
         # 78 is PENDING: the completeness half needs a reachable reference database.
         run: node scripts/verify/taxonomy-never-restricts.mjs || [ $? -eq 78 ]
+      - name: onboarding stays skippable
+        run: node scripts/verify/onboarding-skip.mjs
       - name: no modality is guessed into a paid bucket
         run: node scripts/verify/no-guessed-modality.mjs
       - name: one price table only

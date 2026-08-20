@@ -189,7 +189,7 @@ export async function prepareDoc(file, profile) {
 // lib/analytics/baseline.js (N06b), under characterisation tests — the epsilons are the
 // part N18 must not disturb while generalising institutions.
 
-export const KEY_LABEL = { nrv_baseline: "reported baseline", nrv_settings: "settings", nrv_explorer: "saved date range" };
+export const KEY_LABEL = { nrv_baseline: "reported baseline", nrv_settings: "settings", nrv_explorer: "saved date range", nrv_onboarding: "setup progress" };
 // Returns { value, error } — a read that failed is NEVER indistinguishable from
 // an empty one, because the caller renders `error` (INV-NO-SWALLOW).
 export async function loadKey(k, fb) {

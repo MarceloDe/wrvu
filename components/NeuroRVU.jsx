@@ -7,6 +7,7 @@ import { buildTimeline } from "@/lib/analytics/timeline.js";
 import { buildAnalytics, buildRange } from "@/lib/analytics/tracked.js";
 import { PPC_BUCKET, bucketCounts, buildExtraDuty } from "@/lib/analytics/extra-duty.js";
 import { TabBtn, InstitutionCards, Kpi, Empty, StatTile, InstRow, NumCell } from "./analytics/primitives.jsx";
+import Onboarding from "./onboarding/Onboarding.jsx";
 import {
   CODES, codeByCpt, MOD_COLORS, usePriceBook, callClaude, apiFailure, networkFailure,
   textOf, ocrErrorMessage, prepareDoc, KEY_LABEL, loadKey, saveKey,
@@ -87,6 +88,18 @@ function migrateLog(raw) {
    No seed data. Each user's reported baseline starts EMPTY and is stored
    per-user in the database (/api/store, scoped to the Clerk user id). Users
    build their own months in the Timeline tab; nothing is shared across users. */
+
+// settingsWithInstitutions injects three keys at the root so every builder gets them
+// without a call-site change. None of them may be PERSISTED: institutions and their site
+// mappings live in their own table, and ytdByInstitution is derived from it. Writing any of
+// them into nrv_settings creates a second, staler copy of the thing the table owns.
+// (ytdByInstitution was in fact leaking before N33 — the destructure listed only two.)
+const INJECTED_KEYS = ["institutions", "siteOverrides", "ytdByInstitution"];
+export function stripInjected(settings) {
+  const out = { ...settings };
+  for (const k of INJECTED_KEYS) delete out[k];
+  return out;
+}
 
 // ratePerWrvu starts NULL, not 78. A brand-new user has not told us what they are paid,
 // and showing dollars computed from someone else's rate is worse than showing none (D35).
@@ -183,6 +196,39 @@ export default function NeuroRVU() {
     [settings, inst.institutions, inst.siteOverrides],
   );
   const [ready, setReady] = useState(false);
+  const [onboarding, setOnboarding] = useState({ done: true, loaded: false });
+
+  // Shown only to someone who genuinely has nothing: no recorded setup, no institutions of
+  // their own, and no exams. The two production accounts have all three, so neither is ever
+  // interrupted by this.
+  const needsOnboarding =
+    onboarding.loaded && !onboarding.done && !inst.loading &&
+    !(inst.institutions?.length) && exams.length === 0;
+
+  const finishOnboarding = async ({ institutions, siteOverrides, settings: patch, skipped }) => {
+    if (institutions?.length) {
+      const problem = await saveInstitutions(institutions, siteOverrides);
+      if (problem) return problem;
+    }
+    if (patch) {
+      const merged = { ...settings, ...patch };
+      setSettings(merged);
+      const err = await saveKey("nrv_settings", stripInjected(merged));
+      if (err) return err;
+    }
+    const err = await saveKey("nrv_onboarding", { version: 1, completedAt: new Date().toISOString(), skipped: skipped ?? [] });
+    if (err) return err;
+    setOnboarding({ done: true, loaded: true });
+    await reloadExams();
+    return null;
+  };
+
+  const dismissOnboarding = async (skippedAll) => {
+    setOnboarding({ done: true, loaded: true });
+    // Best-effort: if this write fails the wizard reappears next load, which is annoying
+    // but not wrong. It must never block the user from reaching the app.
+    await saveKey("nrv_onboarding", { version: 1, completedAt: new Date().toISOString(), skipped: skippedAll ?? ["all"] });
+  };
   const [showSettings, setShowSettings] = useState(false);
   // Extra-duty (paid separately from the wRVU target): aggregate period records
   // + the user's pay rates. Both live in dedicated DB tables, per Clerk user.
@@ -243,6 +289,11 @@ export default function NeuroRVU() {
       const st = await loadKey("nrv_settings", DEFAULTS);
       if (st.error) loadErrors.push(st.error);
       setSettings({ ...DEFAULTS, ...(st.value || {}) });
+      const ob = await loadKey("nrv_onboarding", null);
+      if (ob.error) loadErrors.push(ob.error);
+      // A read that FAILED must not be mistaken for "never onboarded" — that would throw
+      // the wizard at an existing user because the network blipped (INV-NO-SWALLOW).
+      setOnboarding({ done: ob.error ? true : !!ob.value, loaded: true });
       const ex = await loadKey("nrv_explorer", null);
       if (ex.error) loadErrors.push(ex.error);
       if (ex.value && typeof ex.value === "object") setExplorer({ gran: ex.value.gran === "month" ? "month" : "week", start: ex.value.start || "", end: ex.value.end || "" });
@@ -268,9 +319,7 @@ export default function NeuroRVU() {
   // banner reflects the true state of the write.
   const updateBaseline = (n) => { setBaseline(n); saveKey("nrv_baseline", n).then(setSyncError); };
   const updateSettings = (n) => {
-    // Strip the injected keys before persisting: institutions live in their own table,
-    // and writing them into nrv_settings would create a second, staler copy.
-    const { institutions, siteOverrides, ...persistable } = n;
+    const persistable = stripInjected(n);
     setSettings(persistable);
     saveKey("nrv_settings", persistable).then(setSyncError);
   };
@@ -329,6 +378,13 @@ export default function NeuroRVU() {
         </div>
       </nav>
 
+      {needsOnboarding && (
+        <Onboarding
+          existingSites={[...new Set(exams.map((e) => (e.site || "").trim()).filter(Boolean))].sort().slice(0, 12)}
+          onFinish={finishOnboarding}
+          onDismiss={dismissOnboarding}
+        />
+      )}
       {showSettings && <SettingsDrawer settings={settingsWithInstitutions} onSave={updateSettings} extraRates={extraRates} onSaveExtraRates={saveExtraRates} onSaveInstitutions={saveInstitutions} onClose={() => setShowSettings(false)} />}
 
       <footer className="max-w-6xl mx-auto px-5 py-6 text-[11px] text-slate-400 leading-relaxed">
