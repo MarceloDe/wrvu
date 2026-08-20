@@ -1,12 +1,13 @@
 "use client";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { consolidateBaseline, BASELINE_FIELDS, FIELD_LABEL } from "@/lib/analytics/baseline.js";
-import { num, fmt, monthKey, pad2, localDay, localMonth, daysAgo, MONTH_LABEL, weekStartKey, WEEK_LABEL } from "@/lib/analytics/format.js";
+import { num, fmt, monthKey, pad2, localDay, localMonth, daysAgo, MONTH_LABEL, weekStartKey, WEEK_LABEL, hasRate, comp } from "@/lib/analytics/format.js";
 import { classifyInstitution, instMeta, DEFAULT_INSTITUTIONS } from "@/lib/analytics/institutions.js";
 import { buildTimeline } from "@/lib/analytics/timeline.js";
 import { buildAnalytics, buildRange } from "@/lib/analytics/tracked.js";
 import { PPC_BUCKET, bucketCounts, buildExtraDuty } from "@/lib/analytics/extra-duty.js";
 import { TabBtn, InstitutionCards, Kpi, Empty, StatTile, InstRow, NumCell } from "./analytics/primitives.jsx";
+import Onboarding from "./onboarding/Onboarding.jsx";
 import {
   CODES, codeByCpt, MOD_COLORS, usePriceBook, callClaude, apiFailure, networkFailure,
   textOf, ocrErrorMessage, prepareDoc, KEY_LABEL, loadKey, saveKey,
@@ -46,7 +47,7 @@ import RedactionTagger from "./RedactionTagger";
 // INV-SITE-NEVER-FAILS applies to a brand-new account too.
 let institutionsPromise = null;
 function useInstitutions() {
-  const [state, setState] = useState({ institutions: null, siteOverrides: {}, loading: true });
+  const [state, setState] = useState({ institutions: null, siteOverrides: {}, loading: true, error: false });
   // Bumping this busts the module-level cache after a save, so the dashboard reflects a
   // renamed institution immediately instead of on the next full page load.
   const [nonce, setNonce] = useState(0);
@@ -63,9 +64,12 @@ function useInstitutions() {
           prefix: DEFAULT_INSTITUTIONS.find(d => d.key === i.name)?.prefix,
           match: DEFAULT_INSTITUTIONS.find(d => d.key === i.name)?.match ?? null,
         }));
-        setState({ institutions: list.length ? list : null, siteOverrides: d.siteOverrides || {}, loading: false });
+        setState({ institutions: list.length ? list : null, siteOverrides: d.siteOverrides || {}, loading: false, error: false });
       })
-      .catch(() => { if (alive) setState(s => ({ ...s, loading: false })); });
+      // A read that FAILED is not the same as a user with no institutions. Conflating them
+      // put the onboarding wizard in front of an existing user the moment the API blipped —
+      // caught on the preview the first time this shipped (INV-NO-SWALLOW).
+      .catch(() => { if (alive) setState(s => ({ ...s, loading: false, error: true })); });
     return () => { alive = false; };
   }, [nonce]);
   return { ...state, reload: () => { institutionsPromise = null; setNonce(n => n + 1); } };
@@ -88,7 +92,22 @@ function migrateLog(raw) {
    per-user in the database (/api/store, scoped to the Clerk user id). Users
    build their own months in the Timeline tab; nothing is shared across users. */
 
-const DEFAULTS = { ratePerWrvu: 78, cFTE: 1.0, monthlyBenchmark: 578, privateMult: 1.6, umYTD: 0, jhsYTD: 0 };
+// settingsWithInstitutions injects three keys at the root so every builder gets them
+// without a call-site change. None of them may be PERSISTED: institutions and their site
+// mappings live in their own table, and ytdByInstitution is derived from it. Writing any of
+// them into nrv_settings creates a second, staler copy of the thing the table owns.
+// (ytdByInstitution was in fact leaking before N33 — the destructure listed only two.)
+const INJECTED_KEYS = ["institutions", "siteOverrides", "ytdByInstitution"];
+export function stripInjected(settings) {
+  const out = { ...settings };
+  for (const k of INJECTED_KEYS) delete out[k];
+  return out;
+}
+
+// ratePerWrvu starts NULL, not 78. A brand-new user has not told us what they are paid,
+// and showing dollars computed from someone else's rate is worse than showing none (D35).
+// Only new accounts see null: anyone with a saved nrv_settings already has a number.
+const DEFAULTS = { ratePerWrvu: null, cFTE: 1.0, monthlyBenchmark: 578, privateMult: 1.6, umYTD: 0, jhsYTD: 0, specialty: "all" };
 
 
 
@@ -180,6 +199,39 @@ export default function NeuroRVU() {
     [settings, inst.institutions, inst.siteOverrides],
   );
   const [ready, setReady] = useState(false);
+  const [onboarding, setOnboarding] = useState({ done: true, loaded: false });
+
+  // Shown only to someone who genuinely has nothing: no recorded setup, no institutions of
+  // their own, and no exams. The two production accounts have all three, so neither is ever
+  // interrupted by this.
+  const needsOnboarding =
+    onboarding.loaded && !onboarding.done && !inst.loading && !inst.error &&
+    !(inst.institutions?.length) && exams.length === 0;
+
+  const finishOnboarding = async ({ institutions, siteOverrides, settings: patch, skipped }) => {
+    if (institutions?.length) {
+      const problem = await saveInstitutions(institutions, siteOverrides);
+      if (problem) return problem;
+    }
+    if (patch) {
+      const merged = { ...settings, ...patch };
+      setSettings(merged);
+      const err = await saveKey("nrv_settings", stripInjected(merged));
+      if (err) return err;
+    }
+    const err = await saveKey("nrv_onboarding", { version: 1, completedAt: new Date().toISOString(), skipped: skipped ?? [] });
+    if (err) return err;
+    setOnboarding({ done: true, loaded: true });
+    await reloadExams();
+    return null;
+  };
+
+  const dismissOnboarding = async (skippedAll) => {
+    setOnboarding({ done: true, loaded: true });
+    // Best-effort: if this write fails the wizard reappears next load, which is annoying
+    // but not wrong. It must never block the user from reaching the app.
+    await saveKey("nrv_onboarding", { version: 1, completedAt: new Date().toISOString(), skipped: skippedAll ?? ["all"] });
+  };
   const [showSettings, setShowSettings] = useState(false);
   // Extra-duty (paid separately from the wRVU target): aggregate period records
   // + the user's pay rates. Both live in dedicated DB tables, per Clerk user.
@@ -240,6 +292,11 @@ export default function NeuroRVU() {
       const st = await loadKey("nrv_settings", DEFAULTS);
       if (st.error) loadErrors.push(st.error);
       setSettings({ ...DEFAULTS, ...(st.value || {}) });
+      const ob = await loadKey("nrv_onboarding", null);
+      if (ob.error) loadErrors.push(ob.error);
+      // A read that FAILED must not be mistaken for "never onboarded" — that would throw
+      // the wizard at an existing user because the network blipped (INV-NO-SWALLOW).
+      setOnboarding({ done: ob.error ? true : !!ob.value, loaded: true });
       const ex = await loadKey("nrv_explorer", null);
       if (ex.error) loadErrors.push(ex.error);
       if (ex.value && typeof ex.value === "object") setExplorer({ gran: ex.value.gran === "month" ? "month" : "week", start: ex.value.start || "", end: ex.value.end || "" });
@@ -265,9 +322,7 @@ export default function NeuroRVU() {
   // banner reflects the true state of the write.
   const updateBaseline = (n) => { setBaseline(n); saveKey("nrv_baseline", n).then(setSyncError); };
   const updateSettings = (n) => {
-    // Strip the injected keys before persisting: institutions live in their own table,
-    // and writing them into nrv_settings would create a second, staler copy.
-    const { institutions, siteOverrides, ...persistable } = n;
+    const persistable = stripInjected(n);
     setSettings(persistable);
     saveKey("nrv_settings", persistable).then(setSyncError);
   };
@@ -326,11 +381,18 @@ export default function NeuroRVU() {
         </div>
       </nav>
 
+      {needsOnboarding && (
+        <Onboarding
+          existingSites={[...new Set(exams.map((e) => (e.site || "").trim()).filter(Boolean))].sort().slice(0, 12)}
+          onFinish={finishOnboarding}
+          onDismiss={dismissOnboarding}
+        />
+      )}
       {showSettings && <SettingsDrawer settings={settingsWithInstitutions} onSave={updateSettings} extraRates={extraRates} onSaveExtraRates={saveExtraRates} onSaveInstitutions={saveInstitutions} onClose={() => setShowSettings(false)} />}
 
       <footer className="max-w-6xl mx-auto px-5 py-6 text-[11px] text-slate-400 leading-relaxed">
         Two data layers, one tool: <span className="text-slate-500 font-medium">Reported</span> (FY26 monthly baseline, authoritative) and <span className="text-slate-500 font-medium">Tracked</span> (your daily screenshot logs, granular).
-        They measure the same work at different resolutions and are shown side by side — never summed. Institution loop: <span className="font-mono">UM*</span>/UHealth → UM, Jackson/JHS/JHM → JHS. Not official billing advice.
+        They measure the same work at different resolutions and are shown side by side — never summed. A study whose site matches nothing still counts, against {(settingsWithInstitutions.institutions ?? DEFAULT_INSTITUTIONS).find(i => i.isDefault)?.label ?? "your default institution"}. Not official billing advice.
       </footer>
     </div>
   );
@@ -904,7 +966,7 @@ function ExamsView({ log, settings }) {
                       ))}
                       <td className="py-2 px-2 text-right font-mono text-slate-400 text-xs">{r.perStudy.toFixed(2)}</td>
                       <td className="py-2 px-2 text-right font-mono font-semibold">{fmt(showWrvu, 1)}</td>
-                      <td className="py-2 px-4 text-right font-mono text-slate-600">${fmt(showWrvu * settings.ratePerWrvu, 0)}</td>
+                      <td className="py-2 px-4 text-right font-mono text-slate-600">{comp(showWrvu, settings.ratePerWrvu) ?? <span className="text-slate-300">—</span>}</td>
                     </tr>
                   );
                 })}
@@ -912,7 +974,7 @@ function ExamsView({ log, settings }) {
               <tfoot><tr className="border-t-2 border-slate-200 font-mono bg-slate-50/50">
                 <td className="py-2.5 px-4 font-sans font-semibold" colSpan={3}>{rows.length} exam types · {inst === "ALL" ? "all sites" : instMeta(inst).label}</td>
                 <td className="py-2.5 px-2 text-right font-bold">{fmt(totals.count, 0)}</td><td colSpan={3}></td>
-                <td className="py-2.5 px-2 text-right font-bold">{fmt(totals.wrvu, 1)}</td><td className="py-2.5 px-4 text-right font-bold">${fmt(totals.wrvu * settings.ratePerWrvu, 0)}</td>
+                <td className="py-2.5 px-2 text-right font-bold">{fmt(totals.wrvu, 1)}</td><td className="py-2.5 px-4 text-right font-bold">{comp(totals.wrvu, settings.ratePerWrvu) ?? <span className="text-slate-300">—</span>}</td>
               </tr></tfoot>
             </table>
           </div>
@@ -967,7 +1029,7 @@ function Reference({ settings }) {
                     // "this study is worth nothing", which is the opposite of the truth
                     // for a contractor-priced code.
                     if (prices.loading || !p || p.workRvu === null) return <span className="text-slate-300">—</span>;
-                    return `$${fmt(p.workRvu * settings.ratePerWrvu, 0)}`; })()}</td>
+                    return comp(p.workRvu, settings.ratePerWrvu) ?? <span className="text-slate-300">—</span>; })()}</td>
                 </tr>
               ))}
             </tbody>
@@ -975,7 +1037,9 @@ function Reference({ settings }) {
         </div>
         {!rows.length && <div className="py-10 text-center text-sm text-slate-400">No codes match.</div>}
       </div>
-      <p className="text-[11px] text-slate-400 px-1">Comp $ = wRVU × your ${settings.ratePerWrvu}/wRVU rate.</p>
+      <p className="text-[11px] text-slate-400 px-1">{hasRate(settings.ratePerWrvu)
+        ? `Comp $ = wRVU × your $${settings.ratePerWrvu}/wRVU rate.`
+        : "Set your $/wRVU rate in Settings to see compensation."}</p>
     </div>
   );
 }
@@ -1128,6 +1192,31 @@ function SettingsDrawer({ settings, onSave, extraRates = { perDiemRate: 0, ppcMr
     <div><label className="text-sm font-medium text-slate-700">{label}</label>{sub && <p className="text-[11px] text-slate-400 mb-1">{sub}</p>}
       <input type="number" step={step} value={s[k]} onChange={e => setS({ ...s, [k]: Number(e.target.value) })} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono mt-1" /></div>
   );
+  // The rate is the one field that can legitimately be EMPTY. Clearing it means "I have
+  // not told you what I am paid", and every dollar figure disappears rather than showing a
+  // number derived from a guess (D35). Number("") is 0, which would read as a real rate of
+  // zero, so this deliberately does not go through the shared `field` factory.
+  const rateField = () => (
+    <div>
+      <label htmlFor="rate-per-wrvu" className="text-sm font-medium text-slate-700">Your $/wRVU rate</label>
+      <p className="text-[11px] text-slate-400 mb-1">
+        FY26 extra-coverage rate ≈ $78. Leave this empty and the app shows wRVUs without dollar figures.
+      </p>
+      <input
+        id="rate-per-wrvu" type="number" step={1} min="0" inputMode="decimal"
+        placeholder="not set"
+        value={s.ratePerWrvu ?? ""}
+        onChange={(e) => {
+          const raw = e.target.value.trim();
+          setS({ ...s, ratePerWrvu: raw === "" ? null : Math.max(0, Number(raw) || 0) });
+        }}
+        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono mt-1"
+      />
+      {!hasRate(s.ratePerWrvu) && (
+        <p className="text-[11px] text-amber-600 mt-1">Dollar figures are hidden until you set a rate.</p>
+      )}
+    </div>
+  );
   const erField = (k, label, sub, step = 0.01) => (
     <div><label className="text-sm font-medium text-slate-700">{label}</label>{sub && <p className="text-[11px] text-slate-400 mb-1">{sub}</p>}
       <input type="number" min="0" step={step} value={er[k]} onChange={e => setER({ ...er, [k]: Math.max(0, Number(e.target.value) || 0) })} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono mt-1" /></div>
@@ -1138,7 +1227,7 @@ function SettingsDrawer({ settings, onSave, extraRates = { perDiemRate: 0, ppcMr
       <div className="relative w-full max-w-sm bg-white h-full shadow-xl p-6 overflow-y-auto">
         <div className="flex items-center justify-between mb-5"><h2 className="font-semibold text-lg">Settings</h2><button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"><X className="w-4 h-4" /></button></div>
         <div className="space-y-4">
-          {field("ratePerWrvu", "Your $/wRVU rate", "FY26 extra-coverage rate ≈ $78")}
+          {rateField()}
           {field("monthlyBenchmark", "Monthly benchmark (1.0 cFTE)", "AAARAD 65th ≈ 578 wRVU")}
           {field("cFTE", "Current clinical FTE", "Scales monthly + annual targets", 0.01)}
           {field("privateMult", "Private vs Medicare multiplier", "Commercial ≈ Medicare × this", 0.05)}

@@ -5,7 +5,7 @@
 // no fetch, no arithmetic beyond a percentage. Keeping them together means a change to
 // a KPI tile cannot reach the money path, and it takes ~90 lines of noise out of the
 // file where the money path lives.
-import { fmt } from "@/lib/analytics/format.js";
+import { fmt, comp } from "@/lib/analytics/format.js";
 import { instMeta, DEFAULT_INSTITUTIONS } from "@/lib/analytics/institutions.js";
 import { Activity, Building2, TrendingUp, TrendingDown } from "lucide-react";
 
@@ -29,7 +29,7 @@ export function InstitutionCards({ split, settings }) {
               <span className="text-[11px] font-mono text-slate-400">{fmt(pct, 0)}%</span>
             </div>
             <div className="mt-2 text-2xl font-bold font-mono tracking-tight">{fmt(d.wrvu, 0)}</div>
-            <div className="mt-1 flex items-center justify-between text-[11px] text-slate-400"><span>{fmt(d.studies, 0)} studies</span><span className="font-mono">${fmt(d.wrvu * settings.ratePerWrvu, 0)}</span></div>
+            <div className="mt-1 flex items-center justify-between text-[11px] text-slate-400"><span>{fmt(d.studies, 0)} studies</span><span className="font-mono">{comp(d.wrvu, settings.ratePerWrvu) ?? ""}</span></div>
             <div className="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: inst.color }} /></div>
           </div>
         );

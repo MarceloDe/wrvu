@@ -50,6 +50,8 @@ jobs:
         run: npm run test:analytics
       - name: npm run test:extra-duty
         run: npm run test:extra-duty
+      - name: npm run test:comp-display
+        run: npm run test:comp-display
       - name: next build
         # A syntactically valid but unreachable URL. The build only needs the driver to
         # construct without throwing at import; it never opens a connection. Using a real
@@ -65,6 +67,8 @@ jobs:
       - name: specialty tags rank but never restrict
         # 78 is PENDING: the completeness half needs a reachable reference database.
         run: node scripts/verify/taxonomy-never-restricts.mjs || [ $? -eq 78 ]
+      - name: onboarding stays skippable
+        run: node scripts/verify/onboarding-skip.mjs
       - name: no modality is guessed into a paid bucket
         run: node scripts/verify/no-guessed-modality.mjs
       - name: one price table only

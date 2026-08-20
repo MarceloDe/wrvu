@@ -184,7 +184,7 @@ invariants:
           Feeds unmapped, empty and adversarial site strings through the pipeline and asserts
           every exam still lands, priced, with the raw site preserved.
       - kind: runtime
-        cmd: pnpm test:onboarding-skip
+        cmd: npm run test:onboarding-skip
         detail: >
           Completes a fresh install skipping every onboarding step and asserts the Tracker is
           usable, exams can be captured, and no dollar figure is shown as zero rather than hidden.

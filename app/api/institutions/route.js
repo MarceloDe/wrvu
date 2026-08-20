@@ -33,6 +33,7 @@ export const GET = withErrorEnvelope("/api/institutions", async (req, ctx) => {
       institutions: await sql`
         select i.id, i.name, i.label, i.short_label as "shortLabel", i.color,
                i.ytd_wrvu::float as "ytdWrvu", i.sort_order as "sortOrder", i.is_default as "isDefault",
+               i.practice_state as "practiceState", i.address, i.is_primary as "isPrimary",
                count(e.id)::int as "examCount"
         from institutions i left join exams e on e.institution_id = i.id
         group by i.id order by i.sort_order, i.name`,
@@ -57,6 +58,13 @@ export const GET = withErrorEnvelope("/api/institutions", async (req, ctx) => {
 // would drop studies on the floor (INV-SITE-NEVER-FAILS). A partial unique index enforces
 // the "at most one" half in the database; this enforces the "at least one" half, which an
 // index cannot express.
+// "" and "   " are the same as absent. An empty text input must not persist as an empty
+// string that later reads as "the user answered" — they skipped (D35).
+const blank = (v) => {
+  const t = typeof v === "string" ? v.trim() : v;
+  return t === "" || t === undefined ? null : t ?? null;
+};
+
 function validate(institutions) {
   if (!Array.isArray(institutions) || institutions.length === 0) {
     return "at least one institution is required";
@@ -69,6 +77,13 @@ function validate(institutions) {
   const defaults = institutions.filter((i) => i.isDefault).length;
   if (defaults !== 1) {
     return `exactly one institution must be the default for unmapped sites (got ${defaults})`;
+  }
+  // At MOST one principal — deliberately not "exactly one". A user who never named a
+  // principal institution is normal; a user with no default is broken. Different rules
+  // for different flags (N33).
+  const primaries = institutions.filter((i) => i.isPrimary).length;
+  if (primaries > 1) {
+    return `only one institution can be your principal one (got ${primaries})`;
   }
   return null;
 }
@@ -106,13 +121,17 @@ export const PUT = withErrorEnvelope("/api/institutions", async (req, ctx) => {
 
       for (const [idx, i] of institutions.entries()) {
         await sql`
-          insert into institutions (user_id, name, label, short_label, color, ytd_wrvu, sort_order, is_default)
+          insert into institutions (user_id, name, label, short_label, color, ytd_wrvu, sort_order,
+                                    is_default, practice_state, address, is_primary)
           values (${userId}, ${String(i.name).trim()}, ${String(i.label ?? i.name).trim()},
                   ${String(i.shortLabel ?? i.name).trim()}, ${i.color ?? null},
-                  ${Number(i.ytdWrvu) || 0}, ${idx}, ${!!i.isDefault})
+                  ${Number(i.ytdWrvu) || 0}, ${idx}, ${!!i.isDefault},
+                  ${blank(i.practiceState)}, ${blank(i.address)}, ${!!i.isPrimary})
           on conflict (user_id, name) do update set
             label = excluded.label, short_label = excluded.short_label, color = excluded.color,
-            ytd_wrvu = excluded.ytd_wrvu, sort_order = excluded.sort_order, is_default = excluded.is_default`;
+            ytd_wrvu = excluded.ytd_wrvu, sort_order = excluded.sort_order, is_default = excluded.is_default,
+            practice_state = excluded.practice_state, address = excluded.address,
+            is_primary = excluded.is_primary`;
       }
 
       // Patterns are stored uppercased because that is how the classifier looks them up.

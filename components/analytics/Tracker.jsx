@@ -9,7 +9,7 @@
 //     `amount` is frozen at save time so editing a rate later cannot re-price a past
 //     shift. The arithmetic lives in lib/analytics/extra-duty.js and is under test.
 import { useState, useEffect, useMemo, useRef } from "react";
-import { fmt, localDay, localMonth } from "@/lib/analytics/format.js";
+import { fmt, localDay, localMonth, hasRate, comp } from "@/lib/analytics/format.js";
 import { classifyInstitution, instMeta, DEFAULT_INSTITUTIONS } from "@/lib/analytics/institutions.js";
 import { buildAnalytics } from "@/lib/analytics/tracked.js";
 import { bucketCounts } from "@/lib/analytics/extra-duty.js";
@@ -257,7 +257,9 @@ export function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate
         <Kpi icon={Calendar} label="Tracked this month" value={fmt(a.thisMonth.actual, 0)} sub={`vs ${fmt(a.thisMonth.bench, 0)} target`} delta={a.thisMonth.variancePct} />
         <Kpi icon={TrendingUp} label="Tracked YTD" value={fmt(a.ytd.actual, 0)} sub={`${fmt(a.ytd.studies, 0)} studies logged`} />
         <Kpi icon={Target} label="Annual projection" value={fmt(a.annual.projected, 0)} sub={`vs ${fmt(a.annual.bench, 0)} target`} delta={a.annual.variancePct} />
-        <Kpi icon={DollarSign} label="Tracked comp value" value={`$${fmt(a.ytd.actual * settings.ratePerWrvu, 0)}`} sub={`@ $${settings.ratePerWrvu}/wRVU`} accent />
+        <Kpi icon={DollarSign} label="Tracked comp value"
+             value={comp(a.ytd.actual, settings.ratePerWrvu) ?? "—"}
+             sub={hasRate(settings.ratePerWrvu) ? `@ $${settings.ratePerWrvu}/wRVU` : "Set your rate in Settings"} accent />
         <Kpi icon={Zap} label="Extra-duty pay" value={`$${fmt(exStats.month, 0)}`} sub={`$${fmt(exStats.ytd, 0)} YTD · this month`} />
       </div>
 
