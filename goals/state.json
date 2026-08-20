@@ -432,7 +432,7 @@
       "size": "components/NeuroRVU.jsx 1835 -> 1800 lines"
     },
     "N18-n-institution-model": {
-      "status": "partial",
+      "status": "pass",
       "phase": "B",
       "decisions": {
         "reported_split": "Proportional, generalised N-way",
@@ -446,35 +446,42 @@
         "seed-institutions.mjs \u2014 dry-run by default",
         "16 analytics tests: the 10 legacy ones pass UNCHANGED, which is the proof the generalisation altered nothing",
         "/api/institutions serves the user's rows and site overrides; /api/exams stamps institution_id on new rows",
-        "The PWA reads institutions at the root and injects them into settings, so every builder gets them with no call-site change; falls back to the built-ins when the API returns nothing"
+        "The PWA reads institutions at the root and injects them into settings, so every builder gets them with no call-site change; falls back to the built-ins when the API returns nothing",
+        "PUT /api/institutions \u2014 the whole set in one transaction; validation refuses a set with no default or duplicate names",
+        "Settings editor: create/rename/recolour institutions, set YTD per institution, choose the default, map sites",
+        "Removal of an institution with exams is refused BEFORE the save, using a count GET now returns \u2014 the error envelope carries a code and nothing else, so a 409 cannot explain itself afterwards",
+        "Every UI surface generalised: InstitutionCards, donut, split KPI, stacked reported chart, amber estimate note, Tracker picker, Exams filter AND the Exams per-institution table columns",
+        "timeline.js emits flat rep_<KEY>/trk_<KEY> series \u2014 a stacked chart cannot read a nested object",
+        "settings.umYTD/jhsYTD superseded: YTD lives on institutions.ytd_wrvu, with the legacy scalars as fallback until a row carries a figure"
       ],
       "why_remainder_to_last": "Independently computed shares do not sum to 1 in floating point \u2014 1/3+1/3+1/3 is not 1 \u2014 and the difference is wRVU that vanishes from the reported split. The old two-institution code already did this with jhsShare = 1 - umShare; generalising means keeping the habit.",
       "inv_site_never_fails": "Enforced by a partial unique index: exactly one default institution per user. An unmapped site always has somewhere to land.",
       "new_capability": "A user-defined site mapping now beats every built-in pattern \u2014 the iOS nrv_sites behaviour, which the PWA lacked.",
       "remaining": [
-        "iOS Institution enum becomes data-driven",
-        "a Settings UI to create/rename institutions and map sites",
-        "move settings.umYTD/jhsYTD onto institutions.ytd_wrvu (the column exists and is served)"
+        "iOS Institution enum becomes data-driven (N18d)"
       ],
       "production": "0008 applied and seeded: 6 institutions across 2 users, 887 exams linked. UM 541 / JHS 346 / Other 0 \u2014 identical to the pre-migration distribution.",
-      "fallback": "A user who has never opened Settings has no rows; the client falls back to the built-in UM/JHS/Other so the dashboard still works. INV-SITE-NEVER-FAILS applies to a brand-new account too."
+      "fallback": "A user who has never opened Settings has no rows; the client falls back to the built-in UM/JHS/Other so the dashboard still works. INV-SITE-NEVER-FAILS applies to a brand-new account too.",
+      "gui_verified": "Verified end-to-end on fella.cc with real data (869 exams). Created a third institution 'Baptist Health' with YTD 500: the split KPI went 81/19 -> 75/17/8, the donut gained a third slice, the stacked chart gained a third series, the amber note read 'UM 75% / JHS 17% / BAP 8%', the Exams tab gained a fourth card, a BAP filter and a BAP column, and the YTD-vs-baseline mismatch warning fired. Removed it and saved again; every surface returned to the exact prior state."
     },
     "N06-decompose-dashboard": {
       "status": "partial",
       "phase": "A1",
       "done": [
         "N06b \u2014 consolidateBaseline + format helpers -> lib/analytics/baseline.js, format.js (10 tests)",
-        "analytics extraction \u2014 INSTITUTIONS/classifyInstitution -> institutions.js, buildTimeline -> timeline.js, buildAnalytics/buildRange -> tracked.js (10 tests)"
+        "analytics extraction \u2014 INSTITUTIONS/classifyInstitution -> institutions.js, buildTimeline -> timeline.js, buildAnalytics/buildRange -> tracked.js (10 tests)",
+        "N06d \u2014 PPC_BUCKET/bucketCounts/buildExtraDuty -> lib/analytics/extra-duty.js, with the 7 tests they never had",
+        "components/analytics/client.jsx \u2014 price book hook, callClaude, loadKey/saveKey, the two error translators",
+        "components/analytics/primitives.jsx \u2014 TabBtn, Kpi, Empty, StatTile, InstRow, NumCell, InstitutionCards",
+        "N06a \u2014 components/analytics/Tracker.jsx",
+        "N06c \u2014 components/analytics/Uploads.jsx"
       ],
-      "size": "components/NeuroRVU.jsx 1835 -> 1689 lines",
+      "size": "components/NeuroRVU.jsx 1906 -> 1156 lines; /app bundle 142 kB before and after",
       "why_this_order": "The founder chose N06 before N18. institutions.js IS the module N18 replaces, and timeline.js holds the share arithmetic it generalises \u2014 both are now small files under characterisation tests instead of 71 references scattered through a 1,800-line component.",
       "pinned": "Shares sum to EXACTLY 1 (jhsShare is 1 - umShare, not jhsYTD/denom \u2014 independently computed thirds do not sum to 1 in floating point). The `|| 1` denominator guard keeps shares finite when no YTD figures exist. INV-SITE-NEVER-FAILS: no input to classifyInstitution is rejected.",
       "remaining": [
-        "N06a extract tracker (UI)",
-        "N06c extract uploads/OCR (UI)",
-        "N06d extract extra duty (UI)",
         "N06e extract explorer (UI)",
-        "N06g delete the dead users table"
+        "N06g delete the dead users table \u2014 migration 0009 written with a refuse-if-non-empty guard; apply blocked by the permission classifier, needs operator approval"
       ],
       "note": "The remaining extractions are UI components, not arithmetic. N18's prerequisite \u2014 the money math out of the monolith and under test \u2014 is met."
     },
@@ -519,6 +526,25 @@
       ],
       "cost": "macOS runners bill at 10x Linux minutes; the suite is ~4 minutes of build+test per run",
       "rollback": "delete .github/workflows/ci.yml and remove the protection rule"
+    },
+    "N06h-production-crash": {
+      "status": "pass",
+      "phase": "A1",
+      "priority": 6.1,
+      "merged": "PR #35 (8adefb8), PR #36 (afea913), PR #37 (a3d361b)",
+      "found": [
+        "settingsWithInstitutions referenced from Tracker, ExamsView and Timeline's ImportReview, where it was never in scope. Shipped in 48e9e9f at 18:30; production deployed 19:18. The Tracker tab \u2014 the DEFAULT tab \u2014 threw for every signed-in user for roughly an hour.",
+        "eslint extends next/core-web-vitals, which leaves no-undef OFF. Lint passed on #31 and CI was green while a guaranteed runtime crash shipped.",
+        "Turning no-undef on immediately found four more: ExamsView referenced the deleted INSTITUTIONS map for table columns hardcoded to UM and JHS.",
+        "The reported institution split rendered 0 / 100 while its own subtitle read UM 4,963 \u00b7 JHS 1,146 \u2014 0008 seeded ytd_wrvu = 0 and the root passed those zeros to sharesFor, so the denominator was zero. Display had a fallback the arithmetic did not."
+      ],
+      "verified": [
+        "no-undef is on and gated in ci.yml and shippable.mjs; poisoning it back reproduces \"'settingsWithInstitutions' is not defined\"",
+        "no-guessed-modality rewritten to walk the whole client surface and require exactly one PPC_BUCKET; poisoned three ways",
+        "GUI walk of all five tabs plus the Settings drawer on fella.cc: zero application console errors",
+        "reported split measured 0%/100% before, 81%/19% after, on the real production figures"
+      ],
+      "lesson": "Every check was green while the default tab was crashing. The gap was not a missing test but a disabled lint rule, and only opening the app found it."
     }
   },
   "statuses": {
