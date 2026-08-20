@@ -21,7 +21,8 @@
     "test:analytics": "node --test tests/analytics-extraction.test.mjs",
     "test:extra-duty": "node --test tests/extra-duty.test.mjs",
     "test:comp-display": "node --test tests/comp-display.test.mjs",
-    "test:onboarding-skip": "node scripts/verify/onboarding-skip.mjs"
+    "test:onboarding-skip": "node scripts/verify/onboarding-skip.mjs",
+    "test:search": "node --test tests/search.test.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^5.7.5",

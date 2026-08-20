@@ -52,6 +52,9 @@ jobs:
         run: npm run test:extra-duty
       - name: npm run test:comp-display
         run: npm run test:comp-display
+
+      - name: npm run test:search
+        run: npm run test:search
       - name: next build
         # A syntactically valid but unreachable URL. The build only needs the driver to
         # construct without throwing at import; it never opens a connection. Using a real

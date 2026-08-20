@@ -17,10 +17,17 @@ import { Camera, Search, Plus, TrendingUp, Sparkles, X, FileImage, Calendar, Tar
 import { REDACTION_SURFACES, buildRedactedImageBlock, buildRedactionProfile, redactionProfileKey } from "../../lib/redact/captureRedaction";
 import { InstitutionCards, Kpi } from "./primitives.jsx";
 import { CODES, codeByCpt, usePriceBook, callClaude, apiFailure, networkFailure, textOf, ocrErrorMessage, loadKey, saveKey } from "./client.jsx";
+import { mergeCatalog, searchCodes } from "@/lib/analytics/search.js";
 import RedactionTagger from "../RedactionTagger";
 
 export function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate: 0, ppcMri: 0, ppcCt: 0, ppcXr: 0 }, extraPeriods = [], reloadExtra }) {
   const prices = usePriceBook();
+  // Everything searchable: the whole price book, wearing the display taxonomy's names
+  // where it has one. Both search boxes used to read the 61-code taxonomy alone, so
+  // 607 of the 668 codes could not be found by any query — and the specialty the user
+  // picks during onboarding had nothing to order.
+  const catalog = useMemo(() => mergeCatalog(prices, CODES), [prices]);
+  const specialty = settings?.specialty ?? "all";
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [draft, setDraft] = useState(null);
@@ -200,7 +207,7 @@ export function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate
       // stored, so this can never be the figure of record — but it must still agree,
       // and it must not invent one where CMS has none.
       const p = prices.byCpt[code.cpt];
-      const item = { uid: Date.now() + Math.random(), cpt: code.cpt, desc: `${code.desc} ${code.con}`, mod: code.mod,
+      const item = { uid: Date.now() + Math.random(), cpt: code.cpt, desc: [code.desc, code.con].filter(Boolean).join(" "), mod: code.mod,
         wrvu: p?.workRvu ?? 0, est: p ? p.workRvu === null : true, inst: curInst, site: "", date: manualDate, examDate: `${manualDate}T00:00:00`, needsPrice: false };
       return { ...base, items: [...base.items, item] };
     });
@@ -214,7 +221,7 @@ export function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate
   function assignCode(it, code) {
     const p = prices.byCpt[code.cpt];   // preview; the server re-prices on commit
     setDraft(d => ({ ...d, items: d.items.map(i => i.uid === it.uid
-      ? { ...i, cpt: code.cpt, desc: `${code.desc} ${code.con}`, mod: code.mod, wrvu: p?.workRvu ?? 0, est: p ? p.workRvu === null : true, needsPrice: false }
+      ? { ...i, cpt: code.cpt, desc: [code.desc, code.con].filter(Boolean).join(" "), mod: code.mod, wrvu: p?.workRvu ?? 0, est: p ? p.workRvu === null : true, needsPrice: false }
       : i) }));
   }
   async function commitDraft() {
@@ -305,7 +312,7 @@ export function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate
               <Camera className="w-4 h-4" /> Take photo
             </label>
           </div>
-          <ManualAdd onAdd={addManual} />
+          <ManualAdd onAdd={addManual} catalog={catalog} specialty={specialty} />
         </div>
         {status && !busy && <div className="mt-3 text-xs text-slate-500 flex items-center gap-1.5"><Zap className="w-3.5 h-3.5 text-teal-500" />{status}</div>}
 
@@ -321,7 +328,7 @@ export function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate
                   <span className="font-mono text-[10px] text-slate-400 w-[68px] shrink-0">{i.date}</span>
                   <span className="font-mono text-xs text-slate-500 w-14 shrink-0">{i.cpt}</span>
                   <span className="flex-1 truncate">{i.desc}{i.est && !i.needsPrice && <span className="text-amber-500 text-[10px] ml-1">est.</span>}{i.needsPrice && <span className="text-amber-600 text-[10px] ml-1 font-semibold uppercase tracking-wide">needs code</span>}</span>
-                  {i.needsPrice && <CodeAssign onPick={(c) => assignCode(i, c)} />}
+                  {i.needsPrice && <CodeAssign onPick={(c) => assignCode(i, c)} catalog={catalog} specialty={specialty} />}
                   <button onClick={() => cycleInst(i)} className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0" style={{ background: instMeta(i.inst).color + "22", color: instMeta(i.inst).color }}>{instMeta(i.inst).short}</button>
                   <span className="font-mono text-xs text-slate-400 w-12 text-right shrink-0">{i.wrvu.toFixed(2)}</span>
                   <button onClick={() => removeDraftItem(i)} className="text-slate-300 hover:text-red-500 shrink-0"><X className="w-3.5 h-3.5" /></button>
@@ -401,29 +408,42 @@ export function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate
   );
 }
 
-export function CodeAssign({ onPick }) {
+// A code with no national wRVU is a real thing — contractor-priced, or a status code
+// CMS does not pay. Rendering it as "—" is the same rule the rest of the app follows:
+// never a zero we cannot explain. This used to be `c.wrvu.toFixed(2)` against the
+// display taxonomy, which carries NO price at all, so the FIRST search result of any
+// kind threw and took the whole page down with it.
+const wrvuLabel = (w) => (Number.isFinite(w) ? w.toFixed(2) : "—");
+
+export function CodeAssign({ onPick, catalog = [], specialty = "all" }) {
   const [q, setQ] = useState("");
-  const results = useMemo(() => { if (!q.trim()) return []; const t = q.toLowerCase(); return CODES.filter(c => c.cpt.includes(t) || c.desc.toLowerCase().includes(t) || c.region.toLowerCase().includes(t)).slice(0, 5); }, [q]);
+  const results = useMemo(
+    () => (q.trim() ? searchCodes(q, { catalog, specialty, limit: 5 }) : []),
+    [q, catalog, specialty],
+  );
   return (
     <div className="relative">
       <input value={q} onChange={e => setQ(e.target.value)} placeholder="assign code…" className="text-xs border border-amber-300 bg-white rounded px-2 py-1 w-28 outline-none focus:border-amber-500" />
       {results.length > 0 && (
         <div className="absolute z-20 mt-1 w-64 right-0 bg-white border border-slate-200 rounded-lg shadow-lg p-1">
-          {results.map(c => <button key={c.cpt} onClick={() => { onPick(c); setQ(""); }} className="w-full flex items-center gap-2 text-left text-xs px-2 py-1 rounded hover:bg-teal-50"><span className="font-mono text-slate-400 w-12">{c.cpt}</span><span className="flex-1 truncate">{c.desc} {c.con}</span><span className="font-mono">{c.wrvu.toFixed(2)}</span></button>)}
+          {results.map(c => <button key={c.cpt} onClick={() => { onPick(c); setQ(""); }} className="w-full flex items-center gap-2 text-left text-xs px-2 py-1 rounded hover:bg-teal-50"><span className="font-mono text-slate-400 w-12">{c.cpt}</span><span className="flex-1 truncate">{c.desc} {c.con}</span><span className="font-mono">{wrvuLabel(c.wrvu)}</span></button>)}
         </div>
       )}
     </div>
   );
 }
-export function ManualAdd({ onAdd }) {
+export function ManualAdd({ onAdd, catalog = [], specialty = "all" }) {
   const [q, setQ] = useState("");
-  const results = useMemo(() => { if (!q.trim()) return []; const t = q.toLowerCase(); return CODES.filter(c => c.cpt.includes(t) || c.desc.toLowerCase().includes(t) || c.region.toLowerCase().includes(t) || c.mod.toLowerCase() === t).slice(0, 7); }, [q]);
+  const results = useMemo(
+    () => (q.trim() ? searchCodes(q, { catalog, specialty, limit: 7 }) : []),
+    [q, catalog, specialty],
+  );
   return (
     <div className="relative">
       <div className="flex items-center gap-2 h-32 rounded-xl border border-slate-200 bg-slate-50/60 p-3 flex-col justify-start">
         <div className="w-full flex items-center gap-2 bg-white rounded-lg border border-slate-200 px-3 py-2"><Search className="w-4 h-4 text-slate-400" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Quick add by CPT, name, or modality…" className="flex-1 text-sm outline-none bg-transparent" /></div>
         <div className="w-full flex-1 overflow-y-auto space-y-1">
-          {results.map(c => <button key={c.cpt} onClick={() => { onAdd(c); setQ(""); }} className="w-full flex items-center gap-2 text-left text-sm px-2 py-1 rounded hover:bg-teal-50"><span className="font-mono text-xs text-slate-400 w-12">{c.cpt}</span><span className="flex-1 truncate">{c.desc} <span className="text-slate-400">{c.con}</span></span><span className="font-mono text-xs">{c.wrvu.toFixed(2)}</span><Plus className="w-3.5 h-3.5 text-teal-500" /></button>)}
+          {results.map(c => <button key={c.cpt} onClick={() => { onAdd(c); setQ(""); }} className="w-full flex items-center gap-2 text-left text-sm px-2 py-1 rounded hover:bg-teal-50"><span className="font-mono text-xs text-slate-400 w-12">{c.cpt}</span><span className="flex-1 truncate">{c.desc} <span className="text-slate-400">{c.con}</span></span><span className="font-mono text-xs">{wrvuLabel(c.wrvu)}</span><Plus className="w-3.5 h-3.5 text-teal-500" /></button>)}
           {q && !results.length && <div className="text-xs text-slate-400 px-2 py-2">No match.</div>}
         </div>
       </div>
