@@ -1,6 +1,6 @@
-# NeuroRVU
+# RadRVU
 
-A multi-user, invite-only Next.js (App Router) PWA for tracking neuroradiology
+A multi-user, invite-only Next.js (App Router) PWA for tracking radiology
 productivity against CMS-2026 wRVU benchmarks. Doctors upload daily worklist
 screenshots; AI (Claude vision) extracts each study, looks up its wRVU, and the
 app reconciles the running total against monthly/annual benchmarks per
@@ -9,6 +9,22 @@ institution (UHealth / UM vs Jackson / JHS).
 - **Live:** https://fella.cc  (Vercel alias `https://project-m6jfw-brainsty.vercel.app`)
 - **Repo:** `MarceloDe/wrvu`  ·  **Vercel project:** `brainsty/project-m6jfw`
 - **Status:** Production (Clerk production instance on `fella.cc`, Vercel Pro, Neon Postgres)
+
+## Patient data — read this first
+
+**RadRVU stores no patient information.** No patient-identifier column exists in the
+database or in the iOS local store: no name, no MRN, no date of birth, no accession
+number. There is no patient dimension at all — the record is *what the physician read*,
+never *who they read it on*.
+
+Physicians are instructed in-product not to capture patient identifiers, during onboarding
+and again at the point of capture. On the web, images are pixel-masked in the browser
+before any network call and cannot be uploaded otherwise. On iOS, OCR runs on-device and
+no image is ever transmitted or retained.
+
+**Full statement, with the code behind every claim and its limitations stated:
+[`docs/PHI-POSTURE.md`](docs/PHI-POSTURE.md).** Read it before changing anything in
+`lib/redact/`, the onboarding privacy step, or any table definition.
 
 ---
 

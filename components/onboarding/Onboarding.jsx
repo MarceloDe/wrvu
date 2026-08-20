@@ -19,7 +19,7 @@
 import React, { useMemo, useState } from "react";
 import {
   Brain, Building2, MapPin, Stethoscope, DollarSign, Check, ArrowRight, ArrowLeft,
-  Plus, X, Sparkles,
+  Plus, X, Sparkles, ShieldAlert,
 } from "lucide-react";
 import { US_STATES } from "./states.js";
 import { hasRate } from "@/lib/analytics/format.js";
@@ -31,7 +31,7 @@ const SPECIALTIES = [
   ["all", "All codes", "No ordering preference. Every code weighted the same."],
 ];
 
-const STEPS = ["Welcome", "Your institution", "Where you read", "Specialty", "Pay", "Ready"];
+const STEPS = ["Welcome", "Patient privacy", "Your institution", "Where you read", "Specialty", "Pay", "Ready"];
 
 // "Jackson Memorial Hospital" -> "JMH", "University of Miami" -> "UM", "Baptist" -> "BAPT".
 // A blind slice(0,6) produced "JACKSO" and "UNIVER" in the column headers, which is how it
@@ -70,6 +70,10 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
   const [focusSite, setFocusSite] = useState(-1);
   // Steps 4-5.
   const [specialty, setSpecialty] = useState("all");
+  // ISO timestamp when the physician acknowledged the privacy instruction, or null if
+  // they skipped it. A date rather than a bool: the question Beta App Review asks is
+  // "were users told", and a date answers it (G4.5).
+  const [privacyAcknowledgedAt, setPrivacyAcknowledgedAt] = useState(null);
   // Empty, not "78". A value pre-filled into a field the user never looked at is
   // indistinguishable from an answer once it is saved — which is exactly how
   // "$0 @ $78/wRVU" reached a new user's screen. They type it, or it stays unset.
@@ -137,7 +141,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
 
   async function finish() {
     setSaving(true); setError(null);
-    const problem = await onFinish({ ...collect(), settings: settingsPatch(), skipped });
+    const problem = await onFinish({ ...collect(), settings: settingsPatch(), skipped, privacyAcknowledgedAt });
     setSaving(false);
     if (problem) { setError(problem); return; }
   }
@@ -193,6 +197,40 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
         {step === 1 && (
           <section className={card}>
             <span className="grid place-items-center w-12 h-12 rounded-2xl bg-teal-400/10 border border-teal-300/20 mb-5">
+              <ShieldAlert className="w-6 h-6 text-teal-300" />
+            </span>
+            <h1 id="onboarding-heading" className="text-2xl font-bold metal-text tracking-tight">
+              Do not capture patient identifiers
+            </h1>
+            <p className="mt-4 text-slate-300 leading-relaxed">
+              Upload only the procedure, site and date columns of your worklist. Never include
+              patient names, medical record numbers, dates of birth or accession numbers.
+            </p>
+            <p className="mt-3 text-slate-400 text-sm leading-relaxed">
+              RadRVU records what you read, not who you read it on. It has no field to store a
+              patient identifier in. Before an image is uploaded you are asked to mask the
+              name and MRN columns, and those pixels are destroyed on this device first — but
+              that is a backstop, not a licence to include them.
+            </p>
+            <p className="mt-3 text-slate-400 text-sm leading-relaxed">
+              Photographing a worklist may also breach your institution&apos;s own media or IT
+              policy, separately from any patient-privacy rule. Check before you do.
+            </p>
+            {/* Same Nav as every other step, so the escape hatch is the one D35 describes
+                and onboarding-skip.mjs can see it. Only the label changes: continuing
+                here is an acknowledgement, not just navigation. */}
+            <Nav
+              onBack={back}
+              onSkip={() => skip("privacy")}
+              onNext={() => { setPrivacyAcknowledgedAt(new Date().toISOString()); next(); }}
+              nextLabel="I understand"
+            />
+          </section>
+        )}
+
+        {step === 2 && (
+          <section className={card}>
+            <span className="grid place-items-center w-12 h-12 rounded-2xl bg-teal-400/10 border border-teal-300/20 mb-5">
               <Building2 className="w-6 h-6 text-teal-300" />
             </span>
             <h1 id="onboarding-heading" className="text-2xl font-bold metal-text tracking-tight">Where do you mostly work?</h1>
@@ -231,7 +269,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
           </section>
         )}
 
-        {step === 2 && (
+        {step === 3 && (
           <section className={card}>
             <span className="grid place-items-center w-12 h-12 rounded-2xl bg-teal-400/10 border border-teal-300/20 mb-5">
               <MapPin className="w-6 h-6 text-teal-300" />
@@ -302,7 +340,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
           </section>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <section className={card}>
             <span className="grid place-items-center w-12 h-12 rounded-2xl bg-teal-400/10 border border-teal-300/20 mb-5">
               <Stethoscope className="w-6 h-6 text-teal-300" />
@@ -337,7 +375,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
           </section>
         )}
 
-        {step === 4 && (
+        {step === 5 && (
           <section className={card}>
             <span className="grid place-items-center w-12 h-12 rounded-2xl bg-teal-400/10 border border-teal-300/20 mb-5">
               <DollarSign className="w-6 h-6 text-teal-300" />
@@ -379,7 +417,7 @@ export default function Onboarding({ existingSites = [], onFinish, onDismiss }) 
           </section>
         )}
 
-        {step === 5 && (
+        {step === 6 && (
           <section className={card}>
             <span className="grid place-items-center w-12 h-12 rounded-2xl bg-teal-400/10 border border-teal-300/20 mb-5">
               <Sparkles className="w-6 h-6 text-teal-300" />

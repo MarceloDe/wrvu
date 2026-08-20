@@ -34,6 +34,7 @@ const EXEMPT = [
   "generated clients match the contract",
   "contract change is additive",
   "specialty tags rank but never restrict",
+  "no patient-shaped column is declared in the schema",
   "the iOS bundled specialty tags are not stale",
   "onboarding stays skippable",
   "no modality is guessed into a paid bucket",

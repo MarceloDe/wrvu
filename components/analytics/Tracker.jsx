@@ -13,7 +13,7 @@ import { fmt, localDay, localMonth, hasRate, comp } from "@/lib/analytics/format
 import { classifyInstitution, instMeta, DEFAULT_INSTITUTIONS } from "@/lib/analytics/institutions.js";
 import { buildAnalytics } from "@/lib/analytics/tracked.js";
 import { bucketCounts } from "@/lib/analytics/extra-duty.js";
-import { Camera, Search, Plus, TrendingUp, Sparkles, X, FileImage, Calendar, Target, DollarSign, Zap, Check, Building2, Layers, Info, Loader2, Upload } from "lucide-react";
+import { Camera, Search, Plus, TrendingUp, Sparkles, X, FileImage, Calendar, Target, DollarSign, Zap, Check, Building2, Layers, Info, Loader2, Upload, ShieldAlert } from "lucide-react";
 import { REDACTION_SURFACES, buildRedactedImageBlock, buildRedactionProfile, redactionProfileKey } from "../../lib/redact/captureRedaction";
 import { InstitutionCards, Kpi } from "./primitives.jsx";
 import { CODES, codeByCpt, usePriceBook, callClaude, apiFailure, networkFailure, textOf, ocrErrorMessage, loadKey, saveKey } from "./client.jsx";
@@ -311,6 +311,13 @@ export function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate
             <label htmlFor="cam" className="mt-2 cursor-pointer flex items-center justify-center gap-2 h-10 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
               <Camera className="w-4 h-4" /> Take photo
             </label>
+            {/* Restated where it matters. Onboarding is seen once and is skippable; this
+                sits above the dropzone every time, which is the moment the instruction
+                is actually about. */}
+            <p className="mt-2 text-[11px] text-slate-500 flex items-start gap-1.5">
+              <ShieldAlert className="w-3.5 h-3.5 mt-px shrink-0 text-slate-400" />
+              Capture the procedure, site and date columns only — no patient names or MRNs.
+            </p>
           </div>
           <ManualAdd onAdd={addManual} catalog={catalog} specialty={specialty} />
         </div>
