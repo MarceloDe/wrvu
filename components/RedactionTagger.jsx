@@ -102,11 +102,11 @@ export default function RedactionTagger({
           <div>
             <div className="font-semibold flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-teal-600" />
-              Mark what must never leave this device
+              Backstop: mask anything identifying
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              {reasonMessage || "Mark the patient-name and MRN columns once per institution."} These pixels are erased from
-              the image before anything is uploaded. This screenshot has not been uploaded.
+              {reasonMessage || "Your capture should not contain patient names or MRNs at all. If those columns are present, mark them here — once per institution."} These pixels are
+              erased from the image before anything is uploaded. This screenshot has not been uploaded.
             </p>
           </div>
           <button onClick={onCancel} className="p-1.5 rounded-lg hover:bg-slate-100" aria-label="Cancel upload">

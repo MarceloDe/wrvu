@@ -26,6 +26,15 @@ const ALLOW = new Map([
   ["users.email",           "PHYSICIAN identity mirrored from Clerk, not patient data. Table is DEAD (0 rows, no code reads it) and N06g deletes it."],
   ["users.first_name",      "PHYSICIAN identity mirrored from Clerk. Same dead table."],
   ["users.last_name",       "PHYSICIAN identity mirrored from Clerk. Same dead table."],
+  // Added by 0010 for the onboarding institution profile. This is the street address of
+  // a HOSPITAL, typed by the physician about their own workplace — "1611 NW 12th Ave",
+  // not anybody's home. It is optional, never validated, and drives nothing today; it is
+  // captured for a future CMS locality derivation (N10).
+  //
+  // Allowlisted rather than renamed: `practice_address` would dodge the regex without
+  // changing what the column holds, and a check you rename your way around is not a
+  // check. The scan was right to stop on it; this is the answer, recorded and printed.
+  ["institutions.address",  "INSTITUTION street address (the physician's workplace), captured in onboarding for a future CMS locality derivation. Optional, never validated. No patient dimension exists on this table."],
 ]);
 
 const { neon } = await import("@neondatabase/serverless");

@@ -70,6 +70,13 @@ jobs:
       - name: specialty tags rank but never restrict
         # 78 is PENDING: the completeness half needs a reachable reference database.
         run: node scripts/verify/taxonomy-never-restricts.mjs || [ $? -eq 78 ]
+      - name: no patient-shaped column is declared in the schema
+        # The static half of INV-NO-PHI-IN-CLOUD. phi-schema-scan.mjs introspects the
+        # LIVE schema and deliberately FAILS without a database, so it cannot run here —
+        # which is why institutions.address (migration 0010) sat failing it on developer
+        # machines while gating nothing. This half reads the migrations, so a
+        # patient-shaped column fails in the PR that introduces it.
+        run: node scripts/verify/phi-columns-static.mjs
       - name: the iOS bundled specialty tags are not stale
         # 78 is PENDING: needs both a reference database and a sibling ../neurorvu-ios
         # checkout, and CI for this repo clones neither.

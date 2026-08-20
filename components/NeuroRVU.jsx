@@ -209,7 +209,7 @@ export default function NeuroRVU() {
     onboarding.loaded && !onboarding.done && !inst.loading && !inst.error &&
     !(inst.institutions?.length) && exams.length === 0;
 
-  const finishOnboarding = async ({ institutions, siteOverrides, settings: patch, skipped }) => {
+  const finishOnboarding = async ({ institutions, siteOverrides, settings: patch, skipped, privacyAcknowledgedAt }) => {
     if (institutions?.length) {
       const problem = await saveInstitutions(institutions, siteOverrides);
       if (problem) return problem;
@@ -220,7 +220,16 @@ export default function NeuroRVU() {
       const err = await saveKey("nrv_settings", stripInjected(merged));
       if (err) return err;
     }
-    const err = await saveKey("nrv_onboarding", { version: 1, completedAt: new Date().toISOString(), skipped: skipped ?? [] });
+    // version 2 adds privacyAcknowledgedAt: when the physician acknowledged the
+    // patient-privacy instruction, or null if they skipped it (G4.5). Null rather than
+    // false, and never a value nobody produced — a fabricated acknowledgement is worse
+    // than none, because it is a compliance record that is not true.
+    const err = await saveKey("nrv_onboarding", {
+      version: 2,
+      completedAt: new Date().toISOString(),
+      skipped: skipped ?? [],
+      privacyAcknowledgedAt: privacyAcknowledgedAt ?? null,
+    });
     if (err) return err;
     setOnboarding({ done: true, loaded: true });
     await reloadExams();
@@ -231,7 +240,12 @@ export default function NeuroRVU() {
     setOnboarding({ done: true, loaded: true });
     // Best-effort: if this write fails the wizard reappears next load, which is annoying
     // but not wrong. It must never block the user from reaching the app.
-    await saveKey("nrv_onboarding", { version: 1, completedAt: new Date().toISOString(), skipped: skippedAll ?? ["all"] });
+    await saveKey("nrv_onboarding", {
+      version: 2,
+      completedAt: new Date().toISOString(),
+      skipped: skippedAll ?? ["all"],
+      privacyAcknowledgedAt: null,   // dismissing the wizard is not an acknowledgement
+    });
   };
   const [showSettings, setShowSettings] = useState(false);
   // Extra-duty (paid separately from the wRVU target): aggregate period records
