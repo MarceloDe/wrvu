@@ -32,7 +32,38 @@ export const REQUIRED_REGION_IDS: RedactionRegionId[] = ["name", "mrn"];
  * registered an UNREDACTED image as approved — the exact hand-construction
  * bypass N00c contract 2 asks us to close.
  */
-export function assertRegionsCoverRequired(regions: RedactionRegion[]): void {
+export function assertRegionsCoverRequired(
+  regions: RedactionRegion[],
+  opts: { noPatientColumns?: boolean } = {},
+): void {
+  // A capture with no patient-name and no MRN column to mark.
+  //
+  // This is the normal case now, not an edge case. Onboarding tells the
+  // physician "Photograph only the procedure, site and date columns — never
+  // include patient names, medical record numbers, dates of birth or accession
+  // numbers", and the capture screen repeats it. A worklist captured that way
+  // has nothing to mask, and demanding two boxes over columns that do not exist
+  // left the upload permanently disabled: Save & redact greyed out, no way
+  // forward. Following the instruction exactly made the feature unusable.
+  //
+  // The escape is an explicit statement by the person looking at the image, not
+  // a default and not an inference — the app cannot see what a column contains.
+  // It is stored on the profile and therefore inherits the aspect-ratio
+  // staleness check, so a differently shaped screenshot re-prompts rather than
+  // silently inheriting the attestation.
+  //
+  // It deliberately does NOT weaken the hand-construction bypass this function
+  // exists to close: redactImageBlock(bitmap, []) with no attestation still
+  // throws. Only an explicit noPatientColumns admits an unmasked image.
+  if (opts.noPatientColumns) {
+    if (regions.length) {
+      throw new RedactionError(
+        "profile-incomplete",
+        "A capture declared free of patient columns cannot also carry mask regions.",
+      );
+    }
+    return;
+  }
   for (const id of REQUIRED_REGION_IDS) {
     if (!regions.some((r) => r && r.id === id)) {
       throw new RedactionError(
@@ -176,10 +207,10 @@ export function redactImage(
 export function redactImageBlock(
   bitmap: RedactableBitmap,
   regions: RedactionRegion[],
-  options: RedactOptions = {},
+  options: RedactOptions & { noPatientColumns?: boolean } = {},
 ): AnthropicImageBlock {
   assertGeometryOnly(regions);
-  assertRegionsCoverRequired(regions);
+  assertRegionsCoverRequired(regions, { noPatientColumns: options.noPatientColumns });
   const encoded = encodeRedacted(bitmap, regions, options);
   const block: AnthropicImageBlock = {
     type: "image",

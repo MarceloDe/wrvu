@@ -461,6 +461,7 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
     try {
       const profile = buildRedactionProfile({
         surface: REDACTION_SURFACES.REPORT, institution: impInst, regions, aspect: meta.aspect,
+        noPatientColumns: meta.noPatientColumns === true,
       });
       setReportProfile(profile);
       setImpTagger(null);

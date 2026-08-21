@@ -191,6 +191,22 @@ export default function RedactionTagger({
               <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm text-slate-600 hover:bg-slate-100">
                 Cancel upload
               </button>
+              {/* The instruction this app now gives is "capture the procedure, site and
+                  date columns only — no patient names or MRNs". A capture that follows it
+                  has nothing to mark, and without this the upload was permanently
+                  disabled: two boxes demanded over columns that do not exist. Following
+                  the instruction exactly made the feature unusable.
+                  Explicit, never a default, and stored on the profile so the aspect-ratio
+                  staleness check re-prompts if the layout changes. */}
+              <button
+                data-testid="redaction-no-patient-columns"
+                disabled={!preview || regions.length > 0}
+                onClick={() => onSave([], { aspect: preview.aspect, noPatientColumns: true })}
+                title={regions.length ? "Start over to clear the boxes you have drawn" : undefined}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-700 border border-slate-300 hover:bg-slate-50 disabled:opacity-40"
+              >
+                No patient columns here
+              </button>
               <button
                 data-testid="redaction-save"
                 disabled={!done || !preview}
