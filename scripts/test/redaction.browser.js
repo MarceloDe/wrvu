@@ -130,6 +130,52 @@ test("buildRedactionProfile refuses a profile that is missing a required column"
   );
 });
 
+// N60 — a capture that FOLLOWS the instruction had no way through.
+//
+// Onboarding tells the physician to photograph the procedure, site and date columns
+// only, never patient names or MRNs. A worklist captured that way has no name column
+// and no MRN column to mark, and the gate demanded both — leaving "Save & redact"
+// permanently disabled with no way forward. Following the instruction exactly made the
+// upload impossible. Found by uploading a real PHI-free worklist on production.
+test("an image with no patient columns uploads once the user says so", () => {
+  const bmp = makeImageData(40, 20);
+  // No attestation: still refused. The hand-construction bypass stays closed.
+  assertThrows(() => redactImageBlock(bmp, []), "profile-incomplete");
+
+  const block = redactImageBlock(bmp, [], { noPatientColumns: true });
+  assertEqual(block.type, "image");
+  // Clears the upload gate: the same check callClaude runs before the fetch.
+  assertNoUnredactedImages([{ role: "user", content: [block] }]);
+});
+
+test("an attested capture may not also carry mask regions", () => {
+  // "There are no patient columns" plus a box over one is contradictory input.
+  // Refusing is honest; silently ignoring either half would not be.
+  assertThrows(
+    () => redactImageBlock(makeImageData(40, 20), [FULL_REGIONS[0]], { noPatientColumns: true }),
+    "profile-incomplete",
+  );
+});
+
+test("the attestation lives on the profile and inherits the staleness check", () => {
+  const profile = buildRedactionProfile({
+    surface: "worklist", institution: "UM", regions: [], aspect: 1.5, noPatientColumns: true,
+  });
+  assertEqual(profile.noPatientColumns, true);
+  assertEqual(profile.regions, []);
+  assertEqual(profileStatus(profile, { aspect: 1.5 }), { ok: true });
+  // A differently shaped screenshot re-prompts rather than inheriting somebody's
+  // earlier statement about a different layout.
+  assertEqual(profileStatus(profile, { aspect: 2.4 }), { ok: false, reason: "stale-geometry" });
+});
+
+test("a profile with no regions and no attestation still blocks", () => {
+  const profile = buildRedactionProfile({
+    surface: "worklist", institution: "UM", regions: FULL_REGIONS, aspect: 1.5,
+  });
+  assertEqual(profileStatus({ ...profile, regions: [] }, { aspect: 1.5 }), { ok: false, reason: "incomplete" });
+});
+
 test("profileStatus: a missing profile blocks", () => {
   assertEqual(profileStatus(null, { aspect: 1.5 }), { ok: false, reason: "missing" });
 });

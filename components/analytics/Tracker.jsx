@@ -189,6 +189,7 @@ export function Tracker({ log, reloadExams, settings, extraRates = { perDiemRate
     try {
       const profile = buildRedactionProfile({
         surface: REDACTION_SURFACES.WORKLIST, institution: curInst, regions, aspect: meta.aspect,
+        noPatientColumns: meta.noPatientColumns === true,
       });
       setRedactionProfile(profile);
       setTagger(null);
