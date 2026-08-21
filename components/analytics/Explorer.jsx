@@ -102,7 +102,7 @@ export function TrackedExplorer({
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" }} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <ReferenceLine yAxisId="l" y={range.bench} stroke={C.bench} strokeDasharray="5 4" strokeWidth={1.5} />
-              <Bar yAxisId="l" dataKey="wrvu" name={gran === "week" ? "Tracked wRVU / week" : "Tracked wRVU / month"} fill={C.trk} radius={[5, 5, 0, 0]} />
+              <Bar yAxisId="l" dataKey="wrvu" name={gran === "week" ? "Tracked wRVU / week" : "Tracked wRVU / month"} fill={C.trk} radius={[5, 5, 0, 0]} isAnimationActive={false} />
               <Line yAxisId="r" type="monotone" dataKey="cum" name="Cumulative" stroke={C.cum} strokeWidth={2} dot={{ r: 2.5 }} />
             </ComposedChart>
           </ResponsiveContainer>

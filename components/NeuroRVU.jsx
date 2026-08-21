@@ -623,21 +623,31 @@ function Timeline({ baseline, updateBaseline, updateSettings, log, settings, ext
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" }} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <ReferenceLine yAxisId="l" y={Math.round(settings.monthlyBenchmark * settings.cFTE)} stroke={C.bench} strokeDasharray="5 4" strokeWidth={1.5} />
+              {/* isAnimationActive={false} on every Bar, deliberately.
+                  Recharts computed correct geometry for these bars — x, y, width and a
+                  height of 159.6 for a value of 607 — and then painted nothing: the
+                  <g class="recharts-bar-rectangle"> groups existed with no shape inside.
+                  Bar animation goes through react-smooth, whose mount effect React 18
+                  StrictMode double-invokes; the animation is cancelled and the rectangle
+                  is left at its zero-height initial state and never repaints. The Line in
+                  the same chart renders because its animation ends visible either way.
+                  Intermittent, which is worse than broken: an imported month would
+                  silently not appear on the chart while showing correctly in the table. */}
               {view === "coverage" && <>
-                <Bar yAxisId="l" dataKey="reported" name="Base actual" stackId="a" fill={C.base} />
-                <Bar yAxisId="l" dataKey="extra" name="Extra coverage" stackId="a" fill={C.extra} radius={[5, 5, 0, 0]} />
+                <Bar yAxisId="l" dataKey="reported" name="Base actual" stackId="a" fill={C.base} isAnimationActive={false} />
+                <Bar yAxisId="l" dataKey="extra" name="Extra coverage" stackId="a" fill={C.extra} radius={[5, 5, 0, 0]} isAnimationActive={false} />
                 <Line yAxisId="r" type="monotone" dataKey="cumReported" name="Cumulative" stroke={C.cum} strokeWidth={2} dot={{ r: 2.5 }} />
               </>}
               {view === "institution" && <>
                 {reportable.map((i, n) => (
                   <Bar key={i.key} yAxisId="l" dataKey={`rep_${i.key}`} name={`${i.label}*`} stackId="a"
-                       fill={i.color} radius={n === reportable.length - 1 ? [5, 5, 0, 0] : undefined} />
+                       fill={i.color} radius={n === reportable.length - 1 ? [5, 5, 0, 0] : undefined} isAnimationActive={false} />
                 ))}
                 <Line yAxisId="r" type="monotone" dataKey="cumReported" name="Cumulative" stroke={C.cum} strokeWidth={2} dot={{ r: 2.5 }} />
               </>}
               {view === "reconcile" && <>
-                <Bar yAxisId="l" dataKey="reported" name="Reported (official)" fill={C.base} radius={[5, 5, 0, 0]} />
-                <Bar yAxisId="l" dataKey="tracked" name="Tracked (your logs)" fill="#fbbf24" radius={[5, 5, 0, 0]} />
+                <Bar yAxisId="l" dataKey="reported" name="Reported (official)" fill={C.base} radius={[5, 5, 0, 0]} isAnimationActive={false} />
+                <Bar yAxisId="l" dataKey="tracked" name="Tracked (your logs)" fill="#fbbf24" radius={[5, 5, 0, 0]} isAnimationActive={false} />
                 <Line yAxisId="r" type="monotone" dataKey="cumReported" name="Cum. reported" stroke={C.cum} strokeWidth={2} dot={{ r: 2.5 }} />
               </>}
             </ComposedChart>
