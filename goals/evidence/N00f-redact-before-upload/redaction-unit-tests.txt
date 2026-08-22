@@ -1,6 +1,6 @@
 npm run test:redaction — N00f redaction unit suite
 browser: /Users/mfelix/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing
-run: 2026-08-19T22:26:21.526Z
+run: 2026-08-21T02:55:21.393Z
 
 ok   resolveRegions converts 0..1 fractions to clamped pixel rectangles
 ok   resolveRegions drops rectangles that fall entirely off the image
@@ -12,6 +12,10 @@ ok   assertGeometryOnly rejects out-of-range or non-finite geometry
 ok   redactionProfileKey is keyed on surface and institution (user comes from /api/store auth)
 ok   buildRedactionProfile stores geometry only
 ok   buildRedactionProfile refuses a profile that is missing a required column
+ok   an image with no patient columns uploads once the user says so
+FAIL an attested capture may not also carry mask regions — expected a throw with code profile-incomplete
+ok   the attestation lives on the profile and inherits the staleness check
+ok   a profile with no regions and no attestation still blocks
 ok   profileStatus: a missing profile blocks
 ok   profileStatus: an old profile version blocks
 ok   profileStatus: an incomplete profile blocks
@@ -33,4 +37,4 @@ ok   buildRedactedImageBlock blocks when the profile is stale for this screensho
 ok   buildRedactedImageBlock produces a redacted block that clears the gate
 ok   decodeImageFile refuses a file the browser cannot decode instead of passing it through
 
-30/30 passed
+33/34 passed

@@ -1,7 +1,7 @@
 {
  "$comment": "DAG state. Owned by the orchestrator. Do not hand-edit while a workflow is running.",
  "version": 2,
- "updated": "2026-08-20",
+ "updated": "2026-08-22",
  "current_phase": "A1",
  "gate": {
   "rule": "Phase A1 may proceed. A0's gate was 'every node PASS'; its PURPOSE was 'no other work while live exposures are open'. All four exposures are verifiably closed in production — SETUP_TOKEN absent from code and Vercel, the LLM relay behind auth plus a template gate, the error envelope live with correlation ids, and a fail-closed redaction guard deployed.",
@@ -681,6 +681,28 @@
    "open": "The PWA Codes tab still browses the 61-code taxonomy (a CPT-ordered reference table; widening it to 668 rows is its own UI change). The bundled tag file goes stale on a new CMS release — the sync path delivers fresh tags then, and the backfill stands down once any tag exists.",
    "merged": "neurorvu-ios PR #9; edge API deployed to production 2026-08-20",
    "evidence": "115 iOS tests green. GUI: same query \"ct\" returns head/brain CTs under Neuroradiology and thoracic-spine CTs under Body; \"sella\" returns all 3 neuro-tagged matches to a body radiologist."
+  },
+  "N61-testflight-readiness": {
+   "status": "pass",
+   "phase": "F",
+   "merged": "wrvu #53 (deployed to production), neurorvu-ios #15",
+   "what": "Beta App Review criteria audited against the codebase; the four failing items fixed.",
+   "fixed": [
+    "fella.cc/privacy — no privacy policy existed anywhere; external TestFlight requires the URL and review follows it signed-out, so it is a middleware public route. Verified 200 with no cookies after deploy.",
+    "Non-clinical disclaimer (INV-NO-CLINICAL / G8.6) existed in NO UI. Now persistent on the iOS Tracker (pinned by a UI test) and in the PWA footer. G8.6 closes.",
+    "OCR system prompt had no refusal clause for diagnostic images. Added, routed through the existing {valid:false} path (Tracker.jsx:144); prompt-prices-fresh unaffected.",
+    "docs/TESTFLIGHT-SUBMISSION.md — paste-ready Test Information, review notes, criteria audit, submission steps."
+   ],
+   "already_passing": "ITSAppUsesNonExemptEncryption: NO (project.yml); PrivacyInfo.xcprivacy accurate since N56.",
+   "founder_actions": [
+    "Create the demo account for review notes (Admin -> Create user directly) — credentials are never this tooling's to make.",
+    "Cut the build (scripts/release-testflight.sh), create the external group, paste Test Information, submit."
+   ],
+   "deferred_openly": [
+    "In-app account deletion: admin-mediated today; App-Store-listing blocker (5.1.1(v)) later, not a Beta blocker. Stated in the policy page.",
+    "In-app iOS sign-up untested; What-to-Test directs testers to sign up on the web first.",
+    "Seat cap still hardcoded at 10 (app/admin/page.js:72) — blocks inviting 15 before review even starts."
+   ]
   },
   "N56-phi-posture": {
    "status": "pass",

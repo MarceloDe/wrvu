@@ -22,6 +22,10 @@ const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/health",
+  // The privacy policy must be reachable signed-out: TestFlight external testing
+  // requires a privacy-policy URL in the Test Information, and Beta App Review
+  // follows it without an account. A policy behind a login wall fails review.
+  "/privacy",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
