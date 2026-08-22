@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { inviteUser, createUser, revokeInvitation, setRole, deleteUser } from "../app/admin/actions";
 
-export default function AdminClient({ users, invitations, seatLimit = 10 }) {
+export default function AdminClient({ users, invitations, seatLimit = 100 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [banner, setBanner] = useState(null); // { ok } | { error }
