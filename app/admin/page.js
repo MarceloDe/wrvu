@@ -69,7 +69,11 @@ export default async function AdminPage() {
         {invitationsError && (
           <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{invitationsError}</p>
         )}
-        <AdminClient users={users} invitations={invitations} seatLimit={10} />
+        {/* 100, raised from 10 for the 15-tester TestFlight rollout. UI-only guard —
+            nothing server-side enforces it — so its job is honesty in the header and
+            disabling the buttons, not security. Sign-ups stay gated by the Clerk
+            allowlist regardless. */}
+        <AdminClient users={users} invitations={invitations} seatLimit={100} />
       </main>
     </div>
   );
